@@ -1,0 +1,382 @@
+{
+  "mumu": {
+    "install_dir": "D:\\MuMuPlayer",
+    "vm_index": 0,
+    "auto_launch": true,
+    "startup_timeout_s": 120
+  },
+  "game": {
+    "package": "com.tencent.tmgp.supercell.clashroyale",
+    "allowed_mode": "offline_ai_only"
+  },
+  "safety": {
+    "offline_gate_consecutive_frames": 3,
+    "offline_gate_fresh_s": 6
+  },
+  "automation": {
+    "chest_screen_enabled": true,
+    "chest_screen_tap_interval_s": 0.8,
+    "chest_screen_taps_per_detection": 5,
+    "chest_screen_tap_burst_delay_s": 0.28,
+    "single_marker_mode": true,
+    "start_battle_point": [
+      0.515741,
+      0.776302
+    ],
+    "start_retry_s": 8,
+    "matchmaking_status_interval_s": 60,
+    "battle_ui_roi": [
+      0.1,
+      0.94,
+      0.99,
+      0.999
+    ],
+    "battle_ui_threshold": 0.72,
+    "battle_end_consecutive_frames": 4,
+    "post_battle_confirm_interval_s": 0.75,
+    "post_battle_timeout_s": 35
+  },
+  "timing": {
+    "poll_interval_s": 0.7,
+    "navigation_delay_s": 2.2,
+    "battle_action_cooldown_s": [
+      1.8,
+      3.2
+    ],
+    "unknown_timeout_s": 45
+  },
+  "dataset": {
+    "enabled": true,
+    "battle_frame_interval_s": 2.0,
+    "jpeg_quality": 65,
+    "event_jpeg_quality": 65,
+    "max_long_edge": 960,
+    "event_frame_policy": "key_events",
+    "max_run_image_mb": 200,
+    "card_catalog": "data/cards.json"
+  },
+  "replay": {
+    "enabled": true,
+    "allow_bot_training": false,
+    "gamma": 0.99,
+    "minimum_result_confidence": 0.75,
+    "terminal_win_reward": 1.0,
+    "terminal_loss_reward": -1.0,
+    "terminal_draw_reward": 0.0,
+    "crown_difference_reward": 0.1,
+    "minimum_verified_episodes": 50,
+    "minimum_wins": 10,
+    "minimum_losses": 10,
+    "minimum_verified_transitions": 300,
+    "minimum_distinct_cards_for_training": 8,
+    "training_policy_version": "adaptive_counterpush_v5",
+    "validation_fraction": 0.25,
+    "training_seed": 20260903,
+    "training_neighbors": 31,
+    "battlefield_visual_weight": 0.08,
+    "minimum_validation_episodes": 12,
+    "minimum_validation_wins": 3,
+    "minimum_validation_losses": 6,
+    "minimum_balanced_accuracy": 0.55,
+    "minimum_auc": 0.58,
+    "minimum_brier_improvement": 0.005,
+    "minimum_rank_separation": 0.53,
+    "maximum_win_deploy_mae": 0.14,
+    "require_temporal_validation": true,
+    "temporal_validation_fraction": 0.25,
+    "minimum_temporal_balanced_accuracy": 0.55,
+    "minimum_temporal_auc": 0.58,
+    "minimum_temporal_brier_improvement": 0.0,
+    "minimum_temporal_rank_separation": 0.53,
+    "minimum_score_improvement": 0.01,
+    "assisted_policy_weight_scale": 0.1,
+    "policy_card_weight": 2.0,
+    "policy_deploy_weight": 0.2
+  },
+  "vision": {
+    "min_probe_score": 0.78,
+    "motion_threshold": 0.045,
+    "elixir_roi": [
+      0.1,
+      0.94,
+      0.99,
+      0.999
+    ],
+    "friendly_left_roi": [
+      0.07,
+      0.52,
+      0.49,
+      0.81
+    ],
+    "friendly_right_roi": [
+      0.51,
+      0.52,
+      0.93,
+      0.81
+    ],
+    "card_slot_centers": [
+      [
+        0.3,
+        0.89
+      ],
+      [
+        0.5,
+        0.89
+      ],
+      [
+        0.69,
+        0.89
+      ],
+      [
+        0.875,
+        0.89
+      ]
+    ],
+    "card_roi_half_width": 0.09,
+    "card_roi_top": 0.825,
+    "card_roi_bottom": 0.955,
+    "card_match_ratio": 0.78,
+    "card_match_min_good": 35,
+    "card_match_min_margin": 1.45,
+    "card_empty_max_keypoints": 150
+  },
+  "policy": {
+    "mode": "reactive_catalog",
+    "version": "adaptive_counterpush_v5",
+    "fallback_mode": "hold",
+    "min_elixir_to_act": 4,
+    "unknown_card_cost": 3,
+    "initial_elixir": 5,
+    "seconds_per_elixir": 2.8,
+    "enemy_pressure_threshold": 0.17,
+    "defense_min_card_score": 1.25,
+    "defense_elixir_reserve": 0.15,
+    "early_defense_elixir_reserve": 1.5,
+    "engaged_defense_elixir_reserve": 0.75,
+    "emergency_threat_score": 0.75,
+    "defense_reaction_cooldown_s": 4.2,
+    "defense_score_escalation": 0.18,
+    "defense_proximity_escalation": 0.09,
+    "own_deploy_indicator_s": 2.8,
+    "push_min_elixir": 6,
+    "push_min_card_score": 2.5,
+    "support_min_elixir": 4,
+    "counterpush_min_elixir": 3,
+    "support_min_card_score": 1.5,
+    "formation_min_card_score": 1.0,
+    "support_window_s": 11,
+    "maximum_push_supports": 2,
+    "counterpush_window_s": 11,
+    "overflow_elixir": 9,
+    "left_x": [
+      0.22,
+      0.4
+    ],
+    "right_x": [
+      0.6,
+      0.78
+    ],
+    "defense_y": [
+      0.61,
+      0.74
+    ],
+    "defense_deploy_bounds": [
+      0.5,
+      0.72
+    ],
+    "intercept_y": [
+      0.52,
+      0.67
+    ],
+    "ranged_defense_y": [
+      0.56,
+      0.69
+    ],
+    "building_defense_y": [
+      0.55,
+      0.63
+    ],
+    "push_y": [
+      0.68,
+      0.74
+    ],
+    "pressure_y": [
+      0.55,
+      0.62
+    ],
+    "support_y": [
+      0.64,
+      0.69
+    ],
+    "seed": 20260831
+  },
+  "training": {
+    "minimum_human_frames": 200,
+    "minimum_human_boxes": 300,
+    "minimum_human_battles": 10,
+    "minimum_distinct_cards": 12,
+    "validation_fraction": 0.2,
+    "seed": 20260902,
+    "base_model": "yolo11n.pt",
+    "epochs": 50,
+    "image_size": 640,
+    "batch": 8,
+    "device": "cpu",
+    "include_pseudo_labels": true,
+    "pseudo_confidence": 0.94,
+    "runtime_confidence": 0.7,
+    "maximum_pseudo_frame_ratio": 0.5,
+    "maximum_pseudo_box_ratio": 0.5,
+    "cycle_auto_label_limit": 500,
+    "promotion": {
+      "minimum_precision": 0.75,
+      "minimum_recall": 0.65,
+      "minimum_map50": 0.7,
+      "minimum_map50_95": 0.4,
+      "minimum_score_improvement": 0.005
+    }
+  },
+  "demonstration": {
+    "screen_interval_s": 0.35,
+    "after_action_delay_s": 0.45,
+    "card_region_top": 0.82,
+    "pending_selection_timeout_s": 5.0,
+    "minimum_actions_for_imitation": 100,
+    "minimum_battles_for_imitation": 10,
+    "minimum_distinct_cards_for_imitation": 12,
+    "minimum_selected_card_confidence": 0.45,
+    "validation_fraction": 0.2,
+    "seed": 20260902,
+    "neighbors": 15,
+    "minimum_validation_actions": 20,
+    "minimum_selection_accuracy": 0.55,
+    "maximum_deploy_mae": 0.12,
+    "minimum_assisted_selection_lift": 0.1,
+    "minimum_assisted_top2_accuracy": 0.65,
+    "minimum_assisted_role_agreement": 0.55,
+    "maximum_assisted_deploy_y_mae": 0.12,
+    "assisted_policy_weight_scale": 0.3,
+    "battlefield_visual_weight": 0.1,
+    "minimum_score_improvement": 0.01,
+    "auto_train_after_recording": true,
+    "policy_card_weight": 4.0,
+    "policy_deploy_weight": 0.5
+  },
+  "workflow": [
+    {
+      "name": "result_continue",
+      "description": "结算后的继续按钮",
+      "kind": "tap",
+      "priority": 100,
+      "requires_offline_gate": true,
+      "requires_battle_seen": true,
+      "template": "templates/result_continue.png",
+      "roi": [
+        0.42963,
+        0.855729,
+        0.568519,
+        0.892708
+      ],
+      "click": [
+        0.499074,
+        0.874219
+      ]
+    },
+    {
+      "name": "play_again",
+      "description": "结算后的再来一局按钮",
+      "kind": "tap",
+      "priority": 95,
+      "requires_offline_gate": true,
+      "requires_battle_seen": true,
+      "template": "templates/play_again.png",
+      "roi": null,
+      "click": null
+    },
+    {
+      "name": "battle_marker",
+      "description": "战斗中稳定存在的固定 UI",
+      "kind": "battle_marker",
+      "priority": 90,
+      "requires_offline_gate": true,
+      "template": "templates/battle_marker.png",
+      "roi": [
+        0.02037,
+        0.824479,
+        0.162963,
+        0.924479
+      ],
+      "click": null
+    },
+    {
+      "name": "start_battle",
+      "description": "离线人机页面里的开始按钮",
+      "kind": "tap",
+      "priority": 80,
+      "requires_offline_gate": true,
+      "template": "templates/start_battle.png",
+      "roi": [
+        0.406481,
+        0.748437,
+        0.625,
+        0.804167
+      ],
+      "click": [
+        0.515741,
+        0.776302
+      ]
+    },
+    {
+      "name": "offline_ai_marker",
+      "description": "能明确证明是离线人机模式的文字或图标",
+      "kind": "offline_gate",
+      "priority": 70,
+      "threshold": 0.86,
+      "requires_offline_gate": false,
+      "template": "templates/offline_ai_marker.png",
+      "roi": [
+        0.875926,
+        0.082292,
+        0.94537,
+        0.127083
+      ],
+      "click": null
+    },
+    {
+      "name": "open_training_menu",
+      "description": "进入训练或人机菜单的按钮",
+      "kind": "tap",
+      "priority": 50,
+      "requires_offline_gate": false,
+      "template": "templates/open_training_menu.png",
+      "roi": [
+        0.406481,
+        0.747396,
+        0.601852,
+        0.775521
+      ],
+      "click": [
+        0.504167,
+        0.761458
+      ]
+    },
+    {
+      "name": "open_mode_menu",
+      "description": "从主页打开模式菜单的按钮",
+      "kind": "tap",
+      "priority": 40,
+      "requires_offline_gate": false,
+      "template": "templates/open_mode_menu.png",
+      "roi": [
+        0.75463,
+        0.771354,
+        0.825,
+        0.802604
+      ],
+      "click": [
+        0.789815,
+        0.786979
+      ]
+    }
+  ]
+}

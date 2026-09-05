@@ -1,0 +1,1421 @@
+from __future__ import annotations
+
+import contextlib
+import os
+import queue
+import sys
+import threading
+import traceback
+from datetime import datetime
+from pathlib import Path
+from tkinter import messagebox
+import tkinter as tk
+from typing import Any, Callable
+
+from PIL import Image, ImageTk
+
+from . import __version__
+from .adb import MumuDevice
+from .annotate import AnnotationWindow
+from .calibrate import CalibrationWindow
+from .cards import CardCatalog
+from .config import load_config, resolve_project_path
+from .demonstration import DemonstrationRecorder
+from .engine import BotEngine
+from .learning import ModelRegistry, audit_learning_data
+from .imitation import (
+    ImitationRegistry,
+    audit_demonstrations,
+    train_imitation_policy,
+)
+from .replay import audit_replay
+from .replay_learning import (
+    ReplayPolicyRegistry,
+    audit_replay_learning,
+    train_replay_policy,
+)
+from .vision import WorkflowRecognizer
+
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = APP_ROOT / "config.json"
+
+
+class Palette:
+    BG = "#090C17"
+    SURFACE = "#101522"
+    CARD = "#151B2B"
+    CARD_ALT = "#1A2133"
+    BORDER = "#273149"
+    TEXT = "#F4F7FF"
+    MUTED = "#8F9BB3"
+    FAINT = "#5F6B82"
+    BLUE = "#4D8DFF"
+    BLUE_HOVER = "#6AA0FF"
+    PURPLE = "#8B6DFF"
+    CYAN = "#44D7E8"
+    GREEN = "#43D6A0"
+    AMBER = "#FFBE55"
+    RED = "#FF647C"
+    LOG = "#0B0F1B"
+
+
+FONT = "Microsoft YaHei UI"
+MONO = "Cascadia Mono"
+
+
+class QueueWriter:
+    """Line-buffered stream that forwards worker output to Tk's main thread."""
+
+    def __init__(self, messages: queue.Queue[tuple[str, Any]]):
+        self.messages = messages
+        self.buffer = ""
+
+    def write(self, value: str) -> int:
+        self.buffer += value.replace("\r\n", "\n").replace("\r", "\n")
+        while "\n" in self.buffer:
+            line, self.buffer = self.buffer.split("\n", 1)
+            if line.strip():
+                self.messages.put(("log", line))
+        return len(value)
+
+    def flush(self) -> None:
+        if self.buffer.strip():
+            self.messages.put(("log", self.buffer.strip()))
+        self.buffer = ""
+
+
+class HoverButton(tk.Button):
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        background: str,
+        hover: str,
+        foreground: str = Palette.TEXT,
+        **kwargs: Any,
+    ):
+        self.normal_background = background
+        self.hover_background = hover
+        kwargs.setdefault("font", (FONT, 10, "bold"))
+        kwargs.setdefault("padx", 16)
+        kwargs.setdefault("pady", 11)
+        super().__init__(
+            master,
+            background=background,
+            activebackground=hover,
+            foreground=foreground,
+            activeforeground=foreground,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            cursor="hand2",
+            **kwargs,
+        )
+        self.bind("<Enter>", self._enter, add="+")
+        self.bind("<Leave>", self._leave, add="+")
+
+    def _enter(self, _event: tk.Event[Any]) -> None:
+        if str(self["state"]) != "disabled":
+            self.configure(background=self.hover_background)
+
+    def _leave(self, _event: tk.Event[Any]) -> None:
+        self.configure(background=self.normal_background)
+
+
+class RoyalTrainerApp:
+    def __init__(self, root: tk.Tk, config_path: Path = DEFAULT_CONFIG):
+        self.root = root
+        self.config_path = config_path.resolve()
+        self.messages: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self.stop_event = threading.Event()
+        self.bot_thread: threading.Thread | None = None
+        self.engine: BotEngine | None = None
+        self.run_mode = "automation"
+        self.background_busy = False
+        self.current_image: Image.Image | None = None
+        self.preview_photo: ImageTk.PhotoImage | None = None
+        self.last_frame_identity: int | None = None
+        self.closing = False
+
+        self._configure_window()
+        self._build_interface()
+        self._bind_shortcuts()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(100, self._poll_messages)
+        self.root.after(700, self._passive_status_check)
+
+    def _configure_window(self) -> None:
+        self.root.title("Royal Lab · 离线人机训练控制台")
+        self.root.configure(background=Palette.BG)
+        width, height = 1260, 860
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        width = min(width, max(1060, screen_w - 100))
+        height = min(height, max(720, screen_h - 100))
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 2)
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.minsize(1040, 700)
+
+    def _build_interface(self) -> None:
+        header = tk.Frame(self.root, background=Palette.SURFACE, height=76)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        brand = tk.Frame(header, background=Palette.SURFACE)
+        brand.pack(side="left", padx=(24, 0), pady=12)
+        logo = tk.Canvas(brand, width=48, height=48, background=Palette.SURFACE, highlightthickness=0)
+        logo.pack(side="left")
+        logo.create_polygon(8, 7, 40, 7, 43, 30, 24, 44, 5, 30, fill=Palette.BLUE, outline=Palette.PURPLE, width=2)
+        logo.create_polygon(14, 20, 17, 11, 23, 18, 30, 10, 34, 20, fill="#FFD76A", outline="")
+        logo.create_rectangle(14, 20, 34, 25, fill="#FFD76A", outline="")
+
+        brand_text = tk.Frame(brand, background=Palette.SURFACE)
+        brand_text.pack(side="left", padx=(11, 0))
+        tk.Label(
+            brand_text,
+            text="ROYAL LAB",
+            font=("Segoe UI", 16, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.SURFACE,
+        ).pack(anchor="w")
+        tk.Label(
+            brand_text,
+            text="OFFLINE AI TRAINING CONSOLE",
+            font=("Segoe UI", 8, "bold"),
+            foreground=Palette.PURPLE,
+            background=Palette.SURFACE,
+        ).pack(anchor="w")
+
+        self.header_badge = tk.Label(
+            header,
+            text="●  尚未连接",
+            font=(FONT, 9, "bold"),
+            foreground=Palette.MUTED,
+            background=Palette.CARD_ALT,
+            padx=15,
+            pady=8,
+        )
+        self.header_badge.pack(side="right", padx=24)
+
+        body = tk.Frame(self.root, background=Palette.BG)
+        body.pack(fill="both", expand=True, padx=24, pady=20)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
+
+        self._build_sidebar(body)
+        self._build_dashboard(body)
+
+    def _build_sidebar(self, parent: tk.Frame) -> None:
+        sidebar = tk.Frame(
+            parent,
+            background=Palette.SURFACE,
+            width=208,
+            highlightbackground=Palette.BORDER,
+            highlightthickness=1,
+        )
+        sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 18))
+        sidebar.grid_propagate(False)
+
+        tk.Label(
+            sidebar,
+            text="控制中心",
+            font=(FONT, 10, "bold"),
+            foreground=Palette.FAINT,
+            background=Palette.SURFACE,
+        ).pack(anchor="w", padx=18, pady=(22, 10))
+
+        self.dashboard_button = HoverButton(
+            sidebar,
+            text="  ◈   训练总览",
+            anchor="w",
+            background="#243152",
+            hover="#2B3B62",
+            command=lambda: None,
+        )
+        self.dashboard_button.pack(fill="x", padx=10, pady=4)
+
+        HoverButton(
+            sidebar,
+            text="  ◫   画面标定",
+            anchor="w",
+            background=Palette.SURFACE,
+            hover=Palette.CARD_ALT,
+            foreground=Palette.MUTED,
+            command=self.open_calibration,
+        ).pack(fill="x", padx=10, pady=4)
+
+        HoverButton(
+            sidebar,
+            text="  ◧   训练数据",
+            anchor="w",
+            background=Palette.SURFACE,
+            hover=Palette.CARD_ALT,
+            foreground=Palette.MUTED,
+            command=self.open_runs_folder,
+        ).pack(fill="x", padx=10, pady=4)
+
+        HoverButton(
+            sidebar,
+            text="  ✎   精确标注（可选）",
+            anchor="w",
+            background=Palette.SURFACE,
+            hover=Palette.CARD_ALT,
+            foreground=Palette.MUTED,
+            command=self.open_annotation,
+        ).pack(fill="x", padx=10, pady=4)
+
+        HoverButton(
+            sidebar,
+            text="  ◉   无标注自学",
+            anchor="w",
+            background=Palette.SURFACE,
+            hover=Palette.CARD_ALT,
+            foreground=Palette.MUTED,
+            command=self.check_learning_status,
+        ).pack(fill="x", padx=10, pady=4)
+
+        HoverButton(
+            sidebar,
+            text="  ●   示范学习",
+            anchor="w",
+            background=Palette.SURFACE,
+            hover=Palette.CARD_ALT,
+            foreground=Palette.MUTED,
+            command=self.start_demonstration,
+        ).pack(fill="x", padx=10, pady=4)
+
+        about = tk.Frame(sidebar, background=Palette.CARD, highlightbackground=Palette.BORDER, highlightthickness=1)
+        about.pack(side="bottom", fill="x", padx=12, pady=14)
+        tk.Label(
+            about,
+            text="受限安全模式",
+            font=(FONT, 10, "bold"),
+            foreground=Palette.GREEN,
+            background=Palette.CARD,
+        ).pack(anchor="w", padx=13, pady=(12, 3))
+        tk.Label(
+            about,
+            text="仅允许离线人机\n全局处理确定与奖励宝箱",
+            justify="left",
+            font=(FONT, 8),
+            foreground=Palette.MUTED,
+            background=Palette.CARD,
+        ).pack(anchor="w", padx=13, pady=(0, 11))
+        tk.Label(
+            sidebar,
+            text=f"Royal Trainer  v{__version__}",
+            font=("Segoe UI", 8),
+            foreground=Palette.FAINT,
+            background=Palette.SURFACE,
+        ).pack(side="bottom", pady=(0, 5))
+
+    def _build_dashboard(self, parent: tk.Frame) -> None:
+        content = tk.Frame(parent, background=Palette.BG)
+        content.grid(row=0, column=1, sticky="nsew")
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(3, weight=1)
+
+        heading = tk.Frame(content, background=Palette.BG)
+        heading.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        title_box = tk.Frame(heading, background=Palette.BG)
+        title_box.pack(side="left")
+        tk.Label(
+            title_box,
+            text="训练总览",
+            font=(FONT, 22, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.BG,
+        ).pack(anchor="w")
+        tk.Label(
+            title_box,
+            text="连接 MuMu，从这里启动离线人机自动训练。",
+            font=(FONT, 9),
+            foreground=Palette.MUTED,
+            background=Palette.BG,
+        ).pack(anchor="w", pady=(3, 0))
+
+        self.check_button = HoverButton(
+            heading,
+            text="连接并检测",
+            background=Palette.CARD_ALT,
+            hover="#25304A",
+            foreground=Palette.TEXT,
+            command=self.run_doctor,
+        )
+        self.check_button.pack(side="right", pady=4)
+
+        stats = tk.Frame(content, background=Palette.BG)
+        stats.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        for column in range(3):
+            stats.grid_columnconfigure(column, weight=1, uniform="stats")
+
+        self.device_value, self.device_note = self._stat_card(
+            stats, 0, "模拟器", "未检测", "等待连接设备", Palette.BLUE
+        )
+        self.safety_value, self.safety_note = self._stat_card(
+            stats, 1, "安全门", "待确认", "等待识别离线标志", Palette.PURPLE
+        )
+        self.battle_value, self.battle_note = self._stat_card(
+            stats, 2, "已完成", "0 局", "本次运行统计", Palette.GREEN
+        )
+
+        workspace = tk.Frame(content, background=Palette.BG)
+        workspace.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
+        workspace.grid_columnconfigure(0, weight=3)
+        workspace.grid_columnconfigure(1, weight=2)
+        workspace.grid_rowconfigure(0, weight=1)
+        self._build_preview_card(workspace)
+        self._build_control_card(workspace)
+
+        self._build_log_card(content)
+
+    def _stat_card(
+        self,
+        parent: tk.Frame,
+        column: int,
+        title: str,
+        value: str,
+        note: str,
+        accent: str,
+    ) -> tuple[tk.Label, tk.Label]:
+        card = tk.Frame(
+            parent,
+            background=Palette.CARD,
+            highlightbackground=Palette.BORDER,
+            highlightthickness=1,
+        )
+        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 7, 0 if column == 2 else 7))
+        accent_bar = tk.Frame(card, background=accent, width=4, height=62)
+        accent_bar.pack(side="left", fill="y")
+        info = tk.Frame(card, background=Palette.CARD)
+        info.pack(fill="both", expand=True, padx=15, pady=11)
+        tk.Label(
+            info,
+            text=title,
+            font=(FONT, 8, "bold"),
+            foreground=Palette.MUTED,
+            background=Palette.CARD,
+        ).pack(anchor="w")
+        value_label = tk.Label(
+            info,
+            text=value,
+            font=(FONT, 15, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD,
+        )
+        value_label.pack(anchor="w", pady=(2, 0))
+        note_label = tk.Label(
+            info,
+            text=note,
+            font=(FONT, 8),
+            foreground=Palette.FAINT,
+            background=Palette.CARD,
+        )
+        note_label.pack(anchor="w")
+        return value_label, note_label
+
+    def _build_preview_card(self, parent: tk.Frame) -> None:
+        card = tk.Frame(
+            parent,
+            background=Palette.CARD,
+            highlightbackground=Palette.BORDER,
+            highlightthickness=1,
+        )
+        card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        card.grid_rowconfigure(1, weight=1)
+        card.grid_columnconfigure(0, weight=1)
+
+        top = tk.Frame(card, background=Palette.CARD)
+        top.grid(row=0, column=0, sticky="ew", padx=16, pady=(13, 9))
+        tk.Label(
+            top,
+            text="设备画面",
+            font=(FONT, 11, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD,
+        ).pack(side="left")
+        self.preview_state = tk.Label(
+            top,
+            text="●  等待画面",
+            font=(FONT, 8),
+            foreground=Palette.FAINT,
+            background=Palette.CARD,
+        )
+        self.preview_state.pack(side="left", padx=12)
+        HoverButton(
+            top,
+            text="刷新",
+            background=Palette.CARD_ALT,
+            hover="#26314B",
+            foreground=Palette.MUTED,
+            command=self.refresh_preview,
+            padx=11,
+            pady=6,
+        ).pack(side="right")
+
+        preview_frame = tk.Frame(card, background="#070A12", highlightbackground="#20293D", highlightthickness=1)
+        preview_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        preview_frame.grid_rowconfigure(0, weight=1)
+        preview_frame.grid_columnconfigure(0, weight=1)
+        self.preview_canvas = tk.Canvas(
+            preview_frame,
+            width=590,
+            height=265,
+            background="#070A12",
+            highlightthickness=0,
+        )
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        self.preview_canvas.bind("<Configure>", lambda _event: self._render_preview())
+        self._draw_preview_placeholder()
+
+    def _build_control_card(self, parent: tk.Frame) -> None:
+        card = tk.Frame(
+            parent,
+            background=Palette.CARD,
+            highlightbackground=Palette.BORDER,
+            highlightthickness=1,
+        )
+        card.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+
+        control_header = tk.Frame(card, background=Palette.CARD)
+        control_header.pack(fill="x", padx=18, pady=(13, 9))
+        tk.Label(
+            control_header,
+            text="运行控制",
+            font=(FONT, 11, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD,
+        ).pack(side="left")
+        self.run_state_label = tk.Label(
+            control_header,
+            text="当前状态：待机",
+            font=(FONT, 8),
+            foreground=Palette.MUTED,
+            background=Palette.CARD,
+        )
+        self.run_state_label.pack(side="right")
+
+        options = tk.Frame(card, background=Palette.CARD_ALT, highlightbackground=Palette.BORDER, highlightthickness=1)
+        options.pack(fill="x", padx=18, pady=(0, 9))
+
+        row_one = tk.Frame(options, background=Palette.CARD_ALT)
+        row_one.pack(fill="x", padx=13, pady=(8, 3))
+        tk.Label(
+            row_one,
+            text="本次局数",
+            font=(FONT, 9, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD_ALT,
+        ).pack(side="left")
+        self.max_battles_var = tk.StringVar(value="3")
+        self.max_battles_input = tk.Spinbox(
+            row_one,
+            from_=0,
+            to=99,
+            textvariable=self.max_battles_var,
+            width=5,
+            justify="center",
+            font=("Segoe UI", 10, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.SURFACE,
+            buttonbackground=Palette.CARD_ALT,
+            insertbackground=Palette.TEXT,
+            relief="flat",
+            highlightbackground=Palette.BORDER,
+            highlightcolor=Palette.BLUE,
+            highlightthickness=1,
+        )
+        self.max_battles_input.pack(side="right")
+
+        row_two = tk.Frame(options, background=Palette.CARD_ALT)
+        row_two.pack(fill="x", padx=13, pady=(2, 7))
+        labels = tk.Frame(row_two, background=Palette.CARD_ALT)
+        labels.pack(side="left")
+        tk.Label(
+            labels,
+            text="试运行",
+            font=(FONT, 9, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD_ALT,
+        ).pack(anchor="w")
+        tk.Label(
+            labels,
+            text="只识别和记录，不会点击",
+            font=(FONT, 7),
+            foreground=Palette.FAINT,
+            background=Palette.CARD_ALT,
+        ).pack(anchor="w")
+        self.dry_run_var = tk.BooleanVar(value=True)
+        self.dry_run_toggle = tk.Checkbutton(
+            row_two,
+            variable=self.dry_run_var,
+            text="开启",
+            onvalue=True,
+            offvalue=False,
+            indicatoron=False,
+            selectcolor=Palette.BLUE,
+            background=Palette.SURFACE,
+            activebackground=Palette.BLUE,
+            foreground=Palette.MUTED,
+            activeforeground=Palette.TEXT,
+            font=(FONT, 8, "bold"),
+            relief="flat",
+            borderwidth=0,
+            padx=11,
+            pady=5,
+            cursor="hand2",
+        )
+        self.dry_run_toggle.pack(side="right")
+
+        action_row = tk.Frame(card, background=Palette.CARD)
+        action_row.pack(fill="x", padx=18, pady=(1, 8))
+        action_row.grid_columnconfigure(0, weight=1, uniform="run-actions")
+        self.start_button = HoverButton(
+            action_row,
+            text="▶  离线训练",
+            background=Palette.BLUE,
+            hover=Palette.BLUE_HOVER,
+            command=self.start_bot,
+            padx=8,
+        )
+        self.start_button.grid(row=0, column=0, sticky="ew")
+        self.stop_button = HoverButton(
+            card,
+            text="■  安全停止",
+            background="#352033",
+            hover="#47263B",
+            foreground=Palette.RED,
+            command=self.stop_bot,
+            state="disabled",
+        )
+        self.stop_button.pack(fill="x", padx=18)
+
+    def _build_log_card(self, parent: tk.Frame) -> None:
+        card = tk.Frame(
+            parent,
+            background=Palette.CARD,
+            highlightbackground=Palette.BORDER,
+            highlightthickness=1,
+        )
+        card.grid(row=3, column=0, sticky="nsew")
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(1, weight=1)
+
+        top = tk.Frame(card, background=Palette.CARD)
+        top.grid(row=0, column=0, sticky="ew", padx=16, pady=(11, 7))
+        tk.Label(
+            top,
+            text="运行日志",
+            font=(FONT, 10, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD,
+        ).pack(side="left")
+        self.log_counter = tk.Label(
+            top,
+            text="0 条事件",
+            font=(FONT, 8),
+            foreground=Palette.FAINT,
+            background=Palette.CARD,
+        )
+        self.log_counter.pack(side="right")
+
+        log_wrap = tk.Frame(card, background=Palette.LOG)
+        log_wrap.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 14))
+        log_wrap.grid_columnconfigure(0, weight=1)
+        log_wrap.grid_rowconfigure(0, weight=1)
+        self.log_text = tk.Text(
+            log_wrap,
+            height=5,
+            background=Palette.LOG,
+            foreground="#C7D1E6",
+            insertbackground=Palette.TEXT,
+            selectbackground="#2D4778",
+            relief="flat",
+            borderwidth=0,
+            font=(MONO, 9),
+            padx=10,
+            pady=8,
+            wrap="word",
+            state="disabled",
+        )
+        scroll = tk.Scrollbar(log_wrap, orient="vertical", command=self.log_text.yview, relief="flat")
+        self.log_text.configure(yscrollcommand=scroll.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.log_text.tag_configure("time", foreground=Palette.FAINT)
+        self.log_text.tag_configure("success", foreground=Palette.GREEN)
+        self.log_text.tag_configure("action", foreground=Palette.CYAN)
+        self.log_text.tag_configure("warning", foreground=Palette.AMBER)
+        self.log_text.tag_configure("error", foreground=Palette.RED)
+        self.log_text.tag_configure("normal", foreground="#C7D1E6")
+        self.log_count = 0
+        self._append_log("控制台已就绪。可开始离线人机训练。", "normal")
+
+    def _bind_shortcuts(self) -> None:
+        self.root.bind("<F5>", lambda _event: self.refresh_preview())
+        self.root.bind("<Control-Return>", lambda _event: self.start_bot())
+        self.root.bind("<Escape>", lambda _event: self.stop_bot())
+
+    def _set_header(self, text: str, color: str) -> None:
+        self.header_badge.configure(text=f"●  {text}", foreground=color)
+
+    def _set_run_state(self, text: str, color: str = Palette.MUTED) -> None:
+        self.run_state_label.configure(text=f"当前状态：{text}", foreground=color)
+
+    def _append_log(self, line: str, tag: str | None = None) -> None:
+        if self.closing:
+            return
+        if tag is None:
+            lowered = line.lower()
+            if "错误" in line or "失败" in line or "error" in lowered:
+                tag = "error"
+            elif "[安全门]" in line or "已连接" in line or "通过" in line:
+                tag = "success"
+            elif any(
+                marker in line
+                for marker in (
+                    "[战斗]",
+                    "[开局]",
+                    "[匹配]",
+                    "[下牌]",
+                    "[导航]",
+                    "[宝箱]",
+                    "[确定]",
+                )
+            ):
+                tag = "action"
+            elif any(marker in line for marker in ("[结算]", "警告", "未安装", "缺少")):
+                tag = "warning"
+            else:
+                tag = "normal"
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", f"{stamp}  ", "time")
+        self.log_text.insert("end", line + "\n", tag)
+        self.log_count += 1
+        if int(self.log_text.index("end-1c").split(".")[0]) > 900:
+            self.log_text.delete("1.0", "120.0")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+        self.log_counter.configure(text=f"{self.log_count} 条事件")
+        self._interpret_log(line)
+
+    def _interpret_log(self, line: str) -> None:
+        if "[安全门]" in line:
+            self.safety_value.configure(text="验证通过", foreground=Palette.GREEN)
+            self.safety_note.configure(text="已确认离线人机页面")
+            self._set_run_state("离线入口已验证", Palette.GREEN)
+        elif "[战斗]" in line:
+            self._set_run_state("战斗中", Palette.CYAN)
+            self.preview_state.configure(text="●  实时画面", foreground=Palette.GREEN)
+        elif "[开局]" in line:
+            self._set_run_state("正在进入战斗", Palette.BLUE)
+        elif "[匹配]" in line:
+            self._set_run_state("匹配时间较长，继续等待", Palette.BLUE)
+        elif "[结算]" in line:
+            self._set_run_state("正在处理结算", Palette.AMBER)
+        elif "[宝箱]" in line:
+            self._set_run_state("正在处理奖励宝箱", Palette.AMBER)
+        elif "[确定]" in line:
+            self._set_run_state("正在点击确定", Palette.AMBER)
+        elif "[停止]" in line or "已达到 max_battles" in line:
+            self._set_run_state("已停止", Palette.MUTED)
+
+    def _set_running_controls(self, running: bool) -> None:
+        self.start_button.configure(state="disabled" if running else "normal")
+        self.stop_button.configure(state="normal" if running else "disabled")
+        self.max_battles_input.configure(state="disabled" if running else "normal")
+        self.dry_run_toggle.configure(state="disabled" if running else "normal")
+        self.check_button.configure(state="disabled" if running else "normal")
+        if running:
+            self._set_header("任务运行中", Palette.GREEN)
+        elif self.device_value.cget("text") == "已连接":
+            self._set_header("设备已就绪", Palette.GREEN)
+
+    def _start_background(self, target: Callable[[], None], name: str) -> bool:
+        if self.background_busy:
+            messagebox.showinfo("请稍候", "正在处理上一项操作，请稍候。", parent=self.root)
+            return False
+        self.background_busy = True
+        thread = threading.Thread(target=target, name=name, daemon=True)
+        thread.start()
+        return True
+
+    def _passive_status_check(self) -> None:
+        if self.background_busy or self._bot_is_running():
+            return
+
+        def worker() -> None:
+            try:
+                config, config_path = load_config(self.config_path)
+                device = MumuDevice(config)
+                info = device.info()
+                payload: dict[str, Any] = {
+                    "started": bool(info.get("is_android_started")),
+                    "connected": False,
+                    "installed": None,
+                    "serial": None,
+                    "screen": None,
+                    "image": None,
+                }
+                recognizer = WorkflowRecognizer(config, config_path)
+                payload["calibrated"] = recognizer.calibrated_names()
+                if payload["started"]:
+                    payload["serial"] = device.connect()
+                    payload["connected"] = True
+                    payload["installed"] = device.package_installed(config["game"]["package"])
+                    image = device.screenshot()
+                    payload["image"] = image
+                    payload["screen"] = f"{image.width}×{image.height}"
+                self.messages.put(("device_status", payload))
+            except Exception as exc:
+                self.messages.put(("passive_error", str(exc)))
+            finally:
+                self.messages.put(("background_done", None))
+
+        self._start_background(worker, "passive-device-check")
+
+    def run_doctor(self) -> None:
+        if self._bot_is_running():
+            messagebox.showinfo("训练进行中", "请先安全停止训练，再执行环境检测。", parent=self.root)
+            return
+        self._append_log("正在连接 MuMu 并检查运行环境…", "action")
+        self.check_button.configure(state="disabled", text="检测中…")
+
+        def worker() -> None:
+            try:
+                config, config_path = load_config(self.config_path)
+                device = MumuDevice(config)
+                serial = device.connect()
+                info = device.info()
+                installed = device.package_installed(config["game"]["package"])
+                image = device.screenshot()
+                recognizer = WorkflowRecognizer(config, config_path)
+                calibrated = recognizer.calibrated_names()
+                required = {"offline_ai_marker"} if config.get("automation", {}).get("single_marker_mode") else {
+                    "offline_ai_marker",
+                    "start_battle",
+                    "battle_marker",
+                }
+                payload = {
+                    "started": bool(info.get("is_android_started")),
+                    "connected": True,
+                    "installed": installed,
+                    "serial": serial,
+                    "screen": f"{image.width}×{image.height}",
+                    "image": image,
+                    "calibrated": calibrated,
+                    "missing": sorted(required - set(calibrated)),
+                }
+                self.messages.put(("doctor_result", payload))
+            except Exception as exc:
+                self.messages.put(("operation_error", ("环境检测失败", str(exc))))
+            finally:
+                self.messages.put(("background_done", None))
+
+        if not self._start_background(worker, "environment-check"):
+            self.check_button.configure(state="normal", text="连接并检测")
+
+    def start_bot(self) -> None:
+        if self._bot_is_running():
+            return
+        if self.background_busy:
+            messagebox.showinfo("请稍候", "设备操作正在进行，请稍候再开始。", parent=self.root)
+            return
+        try:
+            max_battles = int(self.max_battles_var.get().strip())
+            if not 0 <= max_battles <= 99:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("局数无效", "请输入 0 到 99 之间的整数；0 表示持续运行。", parent=self.root)
+            return
+
+        dry_run = bool(self.dry_run_var.get())
+        self.stop_event = threading.Event()
+        self.engine = None
+        self.run_mode = "automation"
+        self.battle_value.configure(text="0 局", foreground=Palette.TEXT)
+        mode_text = "试运行" if dry_run else "正式运行"
+        count_text = "持续" if max_battles == 0 else f"{max_battles} 局"
+        self._append_log(f"准备启动：{mode_text} · {count_text}", "action")
+        self._set_run_state("正在连接设备", Palette.BLUE)
+        self._set_running_controls(True)
+
+        def worker() -> None:
+            writer = QueueWriter(self.messages)
+            error: str | None = None
+            try:
+                with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+                    config, config_path = load_config(self.config_path)
+                    device = MumuDevice(config)
+                    serial = device.connect()
+                    print(f"[设备] 已连接 MuMu：{serial}")
+                    if self.stop_event.is_set():
+                        print("[停止] 启动已取消，未打开游戏。")
+                        return
+                    engine = BotEngine(
+                        device,
+                        config,
+                        config_path,
+                        dry_run=dry_run,
+                        max_battles=max_battles,
+                        stop_event=self.stop_event,
+                    )
+                    self.engine = engine
+                    engine.run()
+            except Exception as exc:
+                error = str(exc)
+                writer.write(f"错误：{exc}\n")
+                if os.environ.get("CRBOT_DEBUG") == "1":
+                    writer.write(traceback.format_exc())
+            finally:
+                writer.flush()
+                self.messages.put(("bot_done", error))
+
+        self.bot_thread = threading.Thread(target=worker, name="royal-trainer", daemon=True)
+        self.bot_thread.start()
+
+    def start_demonstration(self) -> None:
+        if self._bot_is_running():
+            messagebox.showinfo(
+                "已有任务运行中",
+                "请先安全停止当前任务。",
+                parent=self.root,
+            )
+            return
+        if self.background_busy:
+            messagebox.showinfo("请稍候", "设备操作正在进行，请稍候。", parent=self.root)
+            return
+        if not messagebox.askokcancel(
+            "开始示范学习",
+            "请先进入已标定的离线人机入口。\n\n"
+            "启动后由你手动选牌和落牌；程序只监控画面与触摸，不会自动点击。"
+            "菜单操作会被忽略，只有离线人机战斗中的出牌才会成为专家示范。",
+            parent=self.root,
+        ):
+            return
+        self.stop_event = threading.Event()
+        self.engine = None
+        self.run_mode = "demonstration"
+        self.battle_value.configure(text="0 局", foreground=Palette.TEXT)
+        self._append_log("准备启动手动示范学习；等待离线入口验证…", "action")
+        self._set_run_state("正在连接触摸监控", Palette.BLUE)
+        self._set_running_controls(True)
+
+        def worker() -> None:
+            writer = QueueWriter(self.messages)
+            error: str | None = None
+            try:
+                with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+                    config, config_path = load_config(self.config_path)
+                    device = MumuDevice(config)
+                    serial = device.connect()
+                    print(f"[设备] 已连接 MuMu：{serial}")
+                    recorder = DemonstrationRecorder(
+                        device,
+                        config,
+                        config_path,
+                        stop_event=self.stop_event,
+                    )
+                    self.engine = recorder  # type: ignore[assignment]
+                    recorder.run()
+            except Exception as exc:
+                error = str(exc)
+                writer.write(f"错误：{exc}\n")
+                if os.environ.get("CRBOT_DEBUG") == "1":
+                    writer.write(traceback.format_exc())
+            finally:
+                writer.flush()
+                self.messages.put(("bot_done", error))
+
+        self.bot_thread = threading.Thread(
+            target=worker,
+            name="human-demonstration",
+            daemon=True,
+        )
+        self.bot_thread.start()
+
+    def stop_bot(self) -> None:
+        if not self._bot_is_running():
+            return
+        self._append_log("正在请求安全停止，请等待当前设备操作完成…", "warning")
+        self._set_run_state("正在安全停止", Palette.AMBER)
+        self.stop_button.configure(state="disabled", text="正在停止…")
+        self.stop_event.set()
+        if self.engine is not None:
+            self.engine.request_stop()
+
+    def refresh_preview(self) -> None:
+        if self.engine is not None and self.engine.latest_frame is not None:
+            self._show_image(self.engine.latest_frame)
+            return
+        if self.background_busy:
+            return
+        self.preview_state.configure(text="●  获取画面中", foreground=Palette.AMBER)
+
+        def worker() -> None:
+            try:
+                config, _config_path = load_config(self.config_path)
+                device = MumuDevice(config)
+                device.connect()
+                image = device.screenshot()
+                self.messages.put(("preview", image))
+            except Exception as exc:
+                self.messages.put(("operation_error", ("刷新画面失败", str(exc))))
+            finally:
+                self.messages.put(("background_done", None))
+
+        self._start_background(worker, "preview-refresh")
+
+    def open_calibration(self) -> None:
+        if self._bot_is_running():
+            messagebox.showinfo("训练进行中", "请先安全停止训练，再打开画面标定。", parent=self.root)
+            return
+        self._append_log("正在连接设备并准备标定窗口…", "action")
+
+        def worker() -> None:
+            try:
+                config, config_path = load_config(self.config_path)
+                device = MumuDevice(config)
+                device.connect()
+                self.messages.put(("calibration_ready", (device, config, config_path)))
+            except Exception as exc:
+                self.messages.put(("operation_error", ("无法打开标定", str(exc))))
+            finally:
+                self.messages.put(("background_done", None))
+
+        self._start_background(worker, "calibration-connect")
+
+    def _show_calibration(self, payload: tuple[MumuDevice, dict[str, Any], Path]) -> None:
+        device, config, config_path = payload
+        window = tk.Toplevel(self.root)
+        window.transient(self.root)
+        CalibrationWindow(window, device, config, config_path)
+        window.bind(
+            "<Destroy>",
+            lambda event: self.root.after(300, self._passive_status_check) if event.widget is window else None,
+            add="+",
+        )
+        self._append_log("标定窗口已打开。", "success")
+
+    def open_runs_folder(self) -> None:
+        runs = self.config_path.parent / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(runs)  # type: ignore[attr-defined]
+        except OSError as exc:
+            messagebox.showerror("无法打开目录", str(exc), parent=self.root)
+
+    def open_annotation(self) -> None:
+        if self._bot_is_running():
+            messagebox.showinfo(
+                "训练进行中",
+                "请先安全停止训练，再打开数据标注工具。",
+                parent=self.root,
+            )
+            return
+        window = tk.Toplevel(self.root)
+        window.transient(self.root)
+        AnnotationWindow(window, self.config_path.parent)
+        self._append_log("可选的精确敌军标注窗口已打开。", "success")
+
+    def check_learning_status(self) -> None:
+        if self._bot_is_running():
+            messagebox.showinfo(
+                "训练进行中",
+                "请先安全停止训练，再检查或训练模型。",
+                parent=self.root,
+            )
+            return
+        self._append_log("正在检查无需标注的示范数据与模型…", "action")
+
+        def worker() -> None:
+            try:
+                config, config_path = load_config(self.config_path)
+                catalog_value = config.get("dataset", {}).get(
+                    "card_catalog", "data/cards.json"
+                )
+                catalog = CardCatalog.load(
+                    resolve_project_path(config_path, str(catalog_value))
+                )
+                demonstration_config = dict(config.get("demonstration", {}))
+                imitation_audit = audit_demonstrations(
+                    config_path.parent,
+                    catalog,
+                    demonstration_config,
+                )
+                imitation_registry = ImitationRegistry(config_path.parent)
+                imitation_state = imitation_registry.load()
+                trained_counts = [
+                    int(
+                        dict(candidate.get("manifest", {})).get(
+                            "human_train_actions", 0
+                        )
+                    )
+                    for candidate in imitation_state.get("candidates", [])
+                    if isinstance(candidate, dict)
+                ]
+                last_trained_actions = max(trained_counts, default=0)
+                imitation_training = None
+                if (
+                    imitation_audit.ready
+                    and imitation_audit.usable_actions > last_trained_actions
+                ):
+                    imitation_training = train_imitation_policy(
+                        config_path.parent,
+                        catalog,
+                        demonstration_config,
+                    )
+
+                exact_registry = ModelRegistry(config_path.parent)
+                exact_champion = exact_registry.champion()
+                exact_champion_version = (
+                    str(exact_champion.get("version", ""))
+                    if exact_champion
+                    else ""
+                )
+                exact_audit = audit_learning_data(
+                    config_path.parent,
+                    catalog,
+                    dict(config.get("training", {})),
+                    champion_version=exact_champion_version,
+                )
+                replay_config = dict(config.get("replay", {}))
+                replay_learning_audit = audit_replay_learning(
+                    config_path.parent,
+                    catalog,
+                    replay_config,
+                )
+                replay_registry = ReplayPolicyRegistry(config_path.parent)
+                replay_state = replay_registry.load()
+                replay_trained_counts = [
+                    int(dict(candidate.get("manifest", {})).get("total_actions", 0))
+                    for candidate in replay_state.get("candidates", [])
+                    if isinstance(candidate, dict)
+                ]
+                last_replay_trained_actions = max(replay_trained_counts, default=0)
+                replay_training = None
+                if (
+                    replay_learning_audit.ready
+                    and replay_learning_audit.actions > last_replay_trained_actions
+                ):
+                    replay_training = train_replay_policy(
+                        config_path.parent,
+                        catalog,
+                        replay_config,
+                    )
+                payload = {
+                    "imitation": imitation_audit.to_dict(),
+                    "imitation_training": imitation_training,
+                    "replay": audit_replay(
+                        config_path.parent,
+                        replay_config,
+                    ).to_dict(),
+                    "replay_learning": replay_learning_audit.to_dict(),
+                    "replay_training": replay_training,
+                    "exact_detector": exact_audit.to_dict(),
+                }
+                self.messages.put(("learning_audit", payload))
+            except Exception as exc:
+                self.messages.put(("operation_error", ("学习数据审计失败", str(exc))))
+            finally:
+                self.messages.put(("background_done", None))
+
+        self._start_background(worker, "learning-audit")
+
+    def _show_learning_audit(self, payload: dict[str, Any]) -> None:
+        imitation = dict(payload.get("imitation", {}))
+        imitation_champion = ImitationRegistry(self.config_path.parent).champion()
+        training_result = payload.get("imitation_training")
+        maturity_names = {"assisted": "辅助级", "full": "完整级"}
+        if imitation_champion:
+            maturity = str(imitation_champion.get("maturity", "full"))
+            status = f"已启用（{maturity_names.get(maturity, maturity)}）"
+            imitation_model_status = str(imitation_champion.get("version"))
+        elif imitation.get("ready"):
+            status = "数据已训练，但候选模型尚未通过安全验证"
+            imitation_model_status = "尚无已验证模型"
+        else:
+            status = "正在积累示范操作"
+            imitation_model_status = "尚无已验证模型"
+
+        detail = (
+            f"无需人工标注的自我学习：{status}\n\n"
+            f"有效出牌：{imitation.get('usable_actions', 0)}\n"
+            f"覆盖：{imitation.get('battles', 0)} 局 / "
+            f"{imitation.get('distinct_selected_cards', 0)} 种卡牌\n"
+            f"自动复原：{imitation.get('automatically_reconstructed_actions', 0)} 次\n"
+            f"当前模型：{imitation_model_status}"
+        )
+        imitation_reasons = list(imitation.get("blocking_reasons", []))
+        if imitation_reasons:
+            detail += "\n\n继续进行‘示范学习’即可补足：\n- " + "\n- ".join(
+                str(value) for value in imitation_reasons
+            )
+        if isinstance(training_result, dict):
+            candidate = dict(training_result.get("candidate", {}))
+            if candidate.get("promoted"):
+                detail += "\n\n本次新增数据已自动训练并通过验证。"
+            else:
+                rejection = list(candidate.get("rejection_reasons", []))
+                detail += "\n\n本次候选模型未通过验证，已保留原策略。"
+                if rejection:
+                    detail += "\n- " + "\n- ".join(str(value) for value in rejection)
+
+        replay = dict(payload.get("replay", {}))
+        replay_learning = dict(payload.get("replay_learning", {}))
+        replay_training = payload.get("replay_training")
+        replay_champion = ReplayPolicyRegistry(self.config_path.parent).champion()
+        collection_status = (
+            "数据量达到试验门槛"
+            if replay.get("collection_ready")
+            else "正在安全积累"
+        )
+        detail += (
+            "\n\n自动战斗经验回放（无需标注）："
+            f"{collection_status}\n"
+            f"可信结算：{replay.get('verified_episodes', 0)} 局 "
+            f"（胜 {replay.get('wins', 0)} / 负 {replay.get('losses', 0)} / "
+            f"平 {replay.get('draws', 0)}）\n"
+            f"可信状态—动作经验：{replay.get('verified_transitions', 0)} 条\n"
+            f"同版本可训练：{replay_learning.get('verified_episodes', 0)} 局 / "
+            f"{replay_learning.get('actions', 0)} 个动作\n"
+        )
+        if replay_champion:
+            detail += f"已启用低权重回放策略：{replay_champion.get('version')}"
+        else:
+            detail += "当前为影子模式；未通过验证的经验不会改写策略。"
+        replay_reasons = list(replay.get("blocking_reasons", []))
+        if replay_reasons:
+            detail += "\n尚缺：\n- " + "\n- ".join(
+                str(value) for value in replay_reasons
+            )
+        learning_reasons = list(replay_learning.get("blocking_reasons", []))
+        if learning_reasons:
+            detail += "\n同版本训练尚缺：\n- " + "\n- ".join(
+                str(value) for value in learning_reasons
+            )
+        if isinstance(replay_training, dict):
+            candidate = dict(replay_training.get("candidate", {}))
+            if candidate.get("promoted"):
+                detail += "\n\n本次回放候选已通过影子验证并低权重晋升。"
+            elif candidate.get("quality_passed"):
+                detail += "\n\n本次回放候选通过质量验证，但安全开关保持影子模式。"
+            else:
+                detail += "\n\n本次回放候选未通过验证，实战策略没有变化。"
+            candidate_reasons = list(candidate.get("rejection_reasons", []))
+            if candidate_reasons:
+                detail += "\n- " + "\n- ".join(
+                    str(value) for value in candidate_reasons
+                )
+
+        exact = dict(payload.get("exact_detector", {}))
+        exact_champion = ModelRegistry(self.config_path.parent).champion()
+        exact_status = (
+            f"已启用：{exact_champion.get('version')}"
+            if exact_champion
+            else "未启用（不影响自动战斗和上方自学模型）"
+        )
+        detail += (
+            "\n\n可选增强：精确识别敌方卡名\n"
+            f"状态：{exact_status}\n"
+            f"人工框选：{exact.get('human_frames', 0)} 帧 / "
+            f"{exact.get('human_boxes', 0)} 个目标\n"
+            "只有这个可选增强需要框选；可以完全跳过。"
+        )
+        self._append_log(
+            f"无标注自学：{status} · 有效出牌 "
+            f"{imitation.get('usable_actions', 0)} · "
+            f"卡牌 {imitation.get('distinct_selected_cards', 0)}",
+            "success" if imitation_champion else "warning",
+        )
+        messagebox.showinfo("无标注自我学习", detail, parent=self.root)
+
+    def _apply_device_status(self, payload: dict[str, Any], announce: bool = False) -> None:
+        calibrated = set(payload.get("calibrated") or [])
+        if payload.get("connected"):
+            self.device_value.configure(text="已连接", foreground=Palette.GREEN)
+            serial = payload.get("serial") or "ADB 在线"
+            screen = payload.get("screen")
+            self.device_note.configure(text=f"{serial} · {screen}" if screen else str(serial))
+            if payload.get("installed") is False:
+                self.device_value.configure(text="缺少游戏", foreground=Palette.AMBER)
+                self.device_note.configure(text="MuMu 在线，但未检测到游戏包")
+                self._set_header("等待安装游戏", Palette.AMBER)
+            else:
+                self._set_header("设备已就绪", Palette.GREEN)
+        elif payload.get("started"):
+            self.device_value.configure(text="连接失败", foreground=Palette.RED)
+            self.device_note.configure(text="MuMu 已启动，ADB 尚未连接")
+            self._set_header("ADB 未连接", Palette.RED)
+        else:
+            self.device_value.configure(text="未启动", foreground=Palette.MUTED)
+            self.device_note.configure(text="点击“连接并检测”可自动启动")
+            self._set_header("MuMu 未启动", Palette.MUTED)
+
+        if "offline_ai_marker" in calibrated:
+            self.safety_value.configure(text="已标定", foreground=Palette.GREEN)
+            self.safety_note.configure(text="运行时连续 3 帧校验")
+        else:
+            self.safety_value.configure(text="需标定", foreground=Palette.AMBER)
+            self.safety_note.configure(text="请先打开画面标定")
+
+        image = payload.get("image")
+        if isinstance(image, Image.Image):
+            self._show_image(image)
+        if announce:
+            installed_text = "游戏已安装" if payload.get("installed") else "未检测到游戏"
+            missing = payload.get("missing") or []
+            calibration_text = "标定完整" if not missing else "缺少标定：" + ", ".join(missing)
+            self._append_log(f"环境检测完成：{installed_text} · {calibration_text}", "success" if not missing and payload.get("installed") else "warning")
+
+    def _show_image(self, image: Image.Image) -> None:
+        self.current_image = image.copy()
+        self.preview_state.configure(
+            text=f"●  {image.width} × {image.height}",
+            foreground=Palette.GREEN,
+        )
+        self._render_preview()
+
+    def _draw_preview_placeholder(self) -> None:
+        self.preview_canvas.delete("all")
+        width = max(400, self.preview_canvas.winfo_width())
+        height = max(220, self.preview_canvas.winfo_height())
+        cx, cy = width / 2, height / 2
+        self.preview_canvas.create_rectangle(cx - 36, cy - 31, cx + 36, cy + 21, outline=Palette.BORDER, width=2)
+        self.preview_canvas.create_line(cx - 20, cy + 31, cx + 20, cy + 31, fill=Palette.BORDER, width=2)
+        self.preview_canvas.create_text(
+            cx,
+            cy + 57,
+            text="连接 MuMu 后显示实时画面",
+            fill=Palette.FAINT,
+            font=(FONT, 9),
+        )
+
+    def _render_preview(self) -> None:
+        if self.current_image is None:
+            self._draw_preview_placeholder()
+            return
+        canvas_w = max(100, self.preview_canvas.winfo_width())
+        canvas_h = max(100, self.preview_canvas.winfo_height())
+        scale = min(canvas_w / self.current_image.width, canvas_h / self.current_image.height)
+        size = (
+            max(1, round(self.current_image.width * scale)),
+            max(1, round(self.current_image.height * scale)),
+        )
+        display = self.current_image.resize(size, Image.Resampling.LANCZOS)
+        self.preview_photo = ImageTk.PhotoImage(display)
+        self.preview_canvas.delete("all")
+        self.preview_canvas.create_image(canvas_w // 2, canvas_h // 2, image=self.preview_photo, anchor="center")
+
+    def _bot_is_running(self) -> bool:
+        return self.bot_thread is not None and self.bot_thread.is_alive()
+
+    def _poll_messages(self) -> None:
+        if self.closing:
+            return
+        try:
+            while True:
+                kind, payload = self.messages.get_nowait()
+                if kind == "log":
+                    self._append_log(str(payload))
+                elif kind == "device_status":
+                    self._apply_device_status(payload)
+                elif kind == "doctor_result":
+                    self._apply_device_status(payload, announce=True)
+                elif kind == "preview":
+                    self._show_image(payload)
+                elif kind == "calibration_ready":
+                    self._show_calibration(payload)
+                elif kind == "learning_audit":
+                    self._show_learning_audit(payload)
+                elif kind == "background_done":
+                    self.background_busy = False
+                    self.check_button.configure(state="normal", text="连接并检测")
+                elif kind == "passive_error":
+                    self.device_value.configure(text="不可用", foreground=Palette.RED)
+                    self.device_note.configure(text=str(payload))
+                    self._set_header("环境未就绪", Palette.RED)
+                elif kind == "operation_error":
+                    title, detail = payload
+                    self._append_log(f"{title}：{detail}", "error")
+                    messagebox.showerror(title, detail, parent=self.root)
+                elif kind == "bot_done":
+                    self._finish_bot(payload)
+        except queue.Empty:
+            pass
+
+        if self.engine is not None and self._bot_is_running():
+            self.battle_value.configure(text=f"{self.engine.completed_battles} 局")
+            if self.engine.in_battle:
+                self.battle_note.configure(text="当前正在战斗")
+            elif self.engine.offline_verified:
+                self.battle_note.configure(text="已验证离线入口")
+            else:
+                self.battle_note.configure(text="等待识别")
+            frame = self.engine.latest_frame
+            if frame is not None and id(frame) != self.last_frame_identity:
+                self.last_frame_identity = id(frame)
+                self._show_image(frame)
+
+        self.root.after(100, self._poll_messages)
+
+    def _finish_bot(self, error: str | None) -> None:
+        battles = self.engine.completed_battles if self.engine is not None else 0
+        self.battle_value.configure(text=f"{battles} 局")
+        self.battle_note.configure(text="本次运行已结束")
+        self._set_running_controls(False)
+        self.stop_button.configure(text="■  安全停止")
+        if error:
+            self._set_run_state("发生错误", Palette.RED)
+            self._set_header("训练已停止", Palette.RED)
+        else:
+            self._set_run_state("已停止", Palette.MUTED)
+            if self.device_value.cget("text") == "已连接":
+                self._set_header("设备已就绪", Palette.GREEN)
+            if self.run_mode == "demonstration" and self.engine is not None:
+                actions = int(getattr(self.engine, "action_count", 0))
+                self._append_log(
+                    f"示范学习结束：{battles} 局，记录 {actions} 次有效出牌。",
+                    "success",
+                )
+            else:
+                self._append_log(f"本次训练结束，共完成 {battles} 局。", "success")
+
+    def _on_close(self) -> None:
+        if self._bot_is_running():
+            if not messagebox.askyesno(
+                "训练仍在运行",
+                "关闭窗口会停止本次训练。确认关闭吗？",
+                parent=self.root,
+            ):
+                return
+            self.stop_event.set()
+            if self.engine is not None:
+                self.engine.request_stop()
+        self.closing = True
+        self.root.destroy()
+
+
+def enable_windows_dpi_awareness() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+
+
+def main() -> None:
+    enable_windows_dpi_awareness()
+    root = tk.Tk()
+    RoyalTrainerApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

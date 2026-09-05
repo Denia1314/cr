@@ -1,0 +1,360 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+from crbot.battle_perception import LaneThreat
+from crbot.cards import CardCatalog, CardDefinition
+from crbot.replay import ExperienceReplayRecorder, audit_replay
+from crbot.replay_learning import (
+    ReplayPolicyRegistry,
+    ReplayPolicyModel,
+    audit_replay_learning,
+    train_replay_policy,
+)
+from crbot.vision import BattleResult, detect_battle_result
+
+
+def result_screen(player_crowns: int, opponent_crowns: int) -> Image.Image:
+    height, width = 1000, 600
+    data = np.full((height, width, 3), (18, 25, 38), dtype=np.uint8)
+    x_ranges = ((0.14, 0.36), (0.39, 0.61), (0.64, 0.86))
+    for index in range(opponent_crowns):
+        left, right = x_ranges[index]
+        data[125:245, int(left * width) : int(right * width)] = (230, 170, 30)
+    for index in range(player_crowns):
+        left, right = x_ranges[index]
+        data[445:565, int(left * width) : int(right * width)] = (230, 170, 30)
+    image = Image.fromarray(data)
+    template_path = Path(__file__).resolve().parents[1] / "templates" / "result_continue.png"
+    with Image.open(template_path) as source:
+        scale = width / 1080.0
+        template = source.convert("RGB").resize(
+            (round(source.width * scale), round(source.height * scale)),
+            Image.Resampling.LANCZOS,
+        )
+    image.paste(template, (round(width / 2 - template.width / 2), 872))
+    return image
+
+
+def action_payload(slot_index: int = 1) -> dict[str, object]:
+    return {
+        "slot_index": slot_index,
+        "card_id": "synthetic-card",
+        "deploy_point": [0.3, 0.7],
+        "lane": "left",
+        "reason": "defend_left",
+        "elixir": 6.0,
+        "elixir_source": "estimated",
+        "hand": ["a", "b", "c", "d"],
+        "left_threat": 0.7,
+        "right_threat": 0.1,
+        "left_threat_type": "heavy",
+        "right_threat_type": "none",
+        "left_threat_proximity": 0.48,
+        "left_unit_count": 2,
+        "battle_elapsed_s": 42.0,
+        "threat_type": "single",
+        "enemy_cards": [],
+    }
+
+
+class BattleResultTests(unittest.TestCase):
+    def test_detects_player_win_from_fixed_crown_slots(self) -> None:
+        result = detect_battle_result(result_screen(2, 1))
+
+        self.assertEqual(result.outcome, "win")
+        self.assertEqual(result.player_crowns, 2)
+        self.assertEqual(result.opponent_crowns, 1)
+        self.assertGreaterEqual(result.confidence, 0.75)
+
+    def test_detects_player_loss_from_fixed_crown_slots(self) -> None:
+        result = detect_battle_result(result_screen(0, 3))
+
+        self.assertEqual(result.outcome, "loss")
+        self.assertEqual(result.player_crowns, 0)
+        self.assertEqual(result.opponent_crowns, 3)
+
+    def test_requires_result_confirmation_button(self) -> None:
+        image = result_screen(2, 1)
+        data = np.asarray(image).copy()
+        data[780:960] = (18, 25, 38)
+
+        result = detect_battle_result(Image.fromarray(data))
+
+        self.assertEqual(result.outcome, "unknown")
+        self.assertEqual(result.confidence, 0.0)
+
+
+class ExperienceReplayTests(unittest.TestCase):
+    def test_writes_discounted_verified_episode_without_enabling_training(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "runs" / "run-1"
+            recorder = ExperienceReplayRecorder(
+                run_dir,
+                {
+                    "enabled": True,
+                    "allow_bot_training": False,
+                    "gamma": 0.9,
+                    "crown_difference_reward": 0.1,
+                },
+                policy_metadata={"mode": "test"},
+            )
+            image = Image.new("RGB", (600, 1000), (20, 30, 40))
+            recorder.start_battle(1)
+            recorder.record_action(1, image, action_payload(0), "frames/one.jpg")
+            recorder.record_action(1, image, action_payload(1), "frames/two.jpg")
+            episode = recorder.finish_battle(
+                1,
+                BattleResult("win", 2, 1, 1.0, (1.0, 1.0, 0.0), (1.0, 0.0, 0.0)),
+                "frames/result.jpg",
+            )
+
+            self.assertIsNotNone(episode)
+            assert episode is not None
+            self.assertEqual(episode["terminal_reward"], 1.1)
+            rows = [
+                json.loads(line)
+                for line in (run_dir / "replay_transitions.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["reward"], 0.0)
+            self.assertEqual(rows[0]["return_to_go"], 0.99)
+            self.assertEqual(rows[0]["state"]["left_threat_type"], "heavy")
+            self.assertEqual(rows[0]["state"]["left_unit_count"], 2)
+            self.assertEqual(rows[0]["state"]["battle_elapsed_s"], 42.0)
+            self.assertFalse(rows[0]["done"])
+            self.assertEqual(rows[1]["reward"], 1.1)
+            self.assertTrue(rows[1]["done"])
+            self.assertTrue(rows[1]["reward_verified"])
+            self.assertFalse(rows[1]["eligible_for_training"])
+
+            audit = audit_replay(
+                root,
+                {
+                    "allow_bot_training": False,
+                    "minimum_verified_episodes": 1,
+                    "minimum_wins": 1,
+                    "minimum_losses": 0,
+                    "minimum_verified_transitions": 2,
+                },
+            )
+            self.assertEqual(audit.verified_episodes, 1)
+            self.assertEqual(audit.verified_transitions, 2)
+            self.assertTrue(audit.collection_ready)
+            self.assertEqual(audit.training_eligible_transitions, 0)
+            self.assertEqual(audit.policy_breakdown["test"]["wins"], 1)
+            self.assertEqual(
+                audit.policy_breakdown["test"]["verified_transitions"], 2
+            )
+
+    def test_uncertain_result_is_retained_but_never_training_eligible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "runs" / "run-1"
+            recorder = ExperienceReplayRecorder(
+                run_dir,
+                {"enabled": True, "allow_bot_training": True},
+            )
+            image = Image.new("RGB", (600, 1000), (20, 30, 40))
+            recorder.start_battle(1)
+            recorder.record_action(1, image, action_payload(), "frames/one.jpg")
+            recorder.finish_battle(
+                1,
+                BattleResult(
+                    "unknown",
+                    None,
+                    None,
+                    0.0,
+                    (0.1, 0.1, 0.1),
+                    (0.1, 0.1, 0.1),
+                ),
+                "frames/result.jpg",
+            )
+
+            row = json.loads(
+                (run_dir / "replay_transitions.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()[0]
+            )
+            self.assertEqual(row["reward"], 0.0)
+            self.assertFalse(row["reward_verified"])
+            self.assertFalse(row["eligible_for_training"])
+
+
+class ReplayPolicyLearningTests(unittest.TestCase):
+    @staticmethod
+    def _card(card_id: str, kind: str, roles: tuple[str, ...]) -> CardDefinition:
+        return CardDefinition(
+            card_id=card_id,
+            official_id=None,
+            name_zh="",
+            name_en=card_id,
+            elixir=4,
+            rarity="common",
+            max_level=None,
+            icon_url="",
+            icon_path="",
+            icon_variants=(),
+            kind=kind,
+            targets=(),
+            roles=roles,
+            counters=(),
+            synergies=(),
+        )
+
+    def _dataset(self, root: Path) -> CardCatalog:
+        catalog = CardCatalog(
+            [
+                self._card("tank", "troop", ("tank", "win_condition")),
+                self._card("spell", "spell", ("spell", "splash")),
+            ]
+        )
+        run = root / "runs" / "learning-run"
+        run.mkdir(parents=True)
+        rows: list[dict[str, object]] = []
+        for battle_index in range(1, 9):
+            outcome = "win" if battle_index <= 4 else "loss"
+            selected = "tank" if outcome == "win" else "spell"
+            point = [0.3, 0.7] if outcome == "win" else [0.7, 0.55]
+            for action_index in range(2):
+                rows.append(
+                    {
+                        "schema_version": 1,
+                        "transition_id": f"b{battle_index}-a{action_index}",
+                        "reward_verified": True,
+                        "outcome": outcome,
+                        "return_to_go": 1.0 if outcome == "win" else -1.0,
+                        "battle_index": battle_index,
+                        "policy": {"rule_version": "v4"},
+                        "state": {
+                            "elixir": 8.0,
+                            "hand": ["tank", "spell", None, None],
+                            "left_threat": 0.1,
+                            "right_threat": 0.0,
+                            "threat_type": "single",
+                            "threat_proximity": 0.3,
+                            "threat_approach_rate": 0.0,
+                            "battlefield_edges": [0.0] * 96,
+                        },
+                        "action": {
+                            "card_id": selected,
+                            "slot_index": 0 if selected == "tank" else 1,
+                            "deploy_point": point,
+                            "lane": "left",
+                        },
+                    }
+                )
+        with (run / "replay_transitions.jsonl").open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row) + "\n")
+        return catalog
+
+    @staticmethod
+    def _config(allow: bool) -> dict[str, object]:
+        return {
+            "allow_bot_training": allow,
+            "training_policy_version": "v4",
+            "minimum_verified_episodes": 4,
+            "minimum_wins": 2,
+            "minimum_losses": 2,
+            "minimum_verified_transitions": 8,
+            "minimum_distinct_cards_for_training": 2,
+            "validation_fraction": 0.25,
+            "training_seed": 7,
+            "training_neighbors": 1,
+            "battlefield_visual_weight": 0.0,
+            "minimum_validation_episodes": 2,
+            "minimum_validation_wins": 1,
+            "minimum_validation_losses": 1,
+            "minimum_balanced_accuracy": 0.9,
+            "minimum_auc": 0.9,
+            "minimum_brier_improvement": 0.1,
+            "minimum_rank_separation": 0.9,
+            "maximum_win_deploy_mae": 0.01,
+            "assisted_policy_weight_scale": 0.1,
+        }
+
+    def test_candidate_stays_shadow_until_bot_training_is_explicitly_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            config = self._config(False)
+
+            audit = audit_replay_learning(root, catalog, config)
+            result = train_replay_policy(root, catalog, config)
+
+            self.assertTrue(audit.ready)
+            self.assertTrue(result["candidate"]["quality_passed"])
+            self.assertEqual(result["candidate"]["status"], "shadow_pass")
+            self.assertFalse(result["candidate"]["promoted"])
+            self.assertFalse(ReplayPolicyModel(root).available)
+            self.assertTrue(
+                result["candidate"]["manifest"]["validation_groups_are_disjoint"]
+            )
+
+    def test_valid_candidate_can_promote_and_score_unseen_hand_by_role(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+
+            result = train_replay_policy(root, catalog, self._config(True))
+            model = ReplayPolicyModel(root)
+
+            self.assertTrue(result["candidate"]["promoted"])
+            self.assertTrue(model.available)
+            quiet = LaneThreat("left", 0.0, 0, 0.0, "none", ())
+            threats = {"left": quiet, "right": LaneThreat("right", 0.0, 0, 0.0, "none", ())}
+            tank = catalog.get("tank")
+            spell = catalog.get("spell")
+            assert tank is not None and spell is not None
+            self.assertGreater(
+                model.card_score(tank, 8.0, threats),
+                model.card_score(spell, 8.0, threats),
+            )
+
+    def test_temporal_regression_blocks_an_otherwise_valid_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model_path = root / "candidate.npz"
+            np.savez_compressed(model_path, placeholder=np.asarray([1]))
+            metrics = {
+                "validation_episodes": 20,
+                "validation_wins": 5,
+                "validation_losses": 15,
+                "balanced_accuracy": 0.62,
+                "auc": 0.65,
+                "brier_improvement": 0.02,
+                "rank_separation": 0.58,
+                "win_deploy_mae": 0.08,
+                "temporal_balanced_accuracy": 0.51,
+                "temporal_auc": 0.57,
+                "temporal_brier_improvement": -0.01,
+                "temporal_rank_separation": 0.50,
+            }
+            config = {
+                "allow_bot_training": True,
+                "require_temporal_validation": True,
+            }
+
+            candidate = ReplayPolicyRegistry(root).register(
+                model_path, metrics, config, {"test": True}
+            )
+
+            self.assertFalse(candidate["quality_passed"])
+            self.assertFalse(candidate["promoted"])
+            self.assertTrue(
+                any("时间外推" in reason for reason in candidate["rejection_reasons"])
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

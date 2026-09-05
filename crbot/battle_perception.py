@@ -1,0 +1,300 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from PIL import Image
+
+from .cards import CardCatalog, CardDefinition
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - exercised only on incomplete installations
+    cv2 = None  # type: ignore[assignment]
+
+
+@dataclass(frozen=True)
+class HandCardMatch:
+    slot_index: int
+    card_id: str | None
+    confidence: float
+    good_matches: int
+    second_good_matches: int
+    keypoints: int
+    empty: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LaneThreat:
+    lane: str
+    score: float
+    unit_count: int
+    proximity: float
+    threat: str
+    centers: tuple[tuple[float, float], ...]
+    enemy_cards: tuple[str, ...] = ()
+    approach_rate: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["centers"] = [list(center) for center in self.centers]
+        value["enemy_cards"] = list(self.enemy_cards)
+        return value
+
+
+class UniversalHandRecognizer:
+    """Match hand art against a catalog without assuming the player's deck."""
+
+    def __init__(self, catalog: CardCatalog, vision_config: dict[str, Any]):
+        self.catalog = catalog
+        self.vision = vision_config
+        self.available = cv2 is not None
+        self.templates: dict[str, tuple[CardDefinition, Any]] = {}
+        if not self.available:
+            return
+        self.orb = cv2.ORB_create(
+            nfeatures=500,
+            scaleFactor=1.15,
+            nlevels=8,
+            edgeThreshold=10,
+            patchSize=21,
+            fastThreshold=8,
+        )
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+        for card in catalog.cards:
+            for variant_index, path in enumerate(catalog.local_icon_paths(card)):
+                if not path.is_file():
+                    continue
+                image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+                if image is None:
+                    continue
+                image = cv2.resize(image, (180, 220), interpolation=cv2.INTER_AREA)
+                _keypoints, descriptors = self.orb.detectAndCompute(image, None)
+                if descriptors is not None and len(descriptors) >= 20:
+                    template_id = f"{card.card_id}:{variant_index}"
+                    self.templates[template_id] = (card, descriptors)
+
+    def _slot_image(self, image: Image.Image, center: list[float]) -> np.ndarray:
+        half_width = float(self.vision.get("card_roi_half_width", 0.09))
+        top = float(self.vision.get("card_roi_top", 0.825))
+        bottom = float(self.vision.get("card_roi_bottom", 0.955))
+        x = float(center[0])
+        left_px = max(0, round((x - half_width) * image.width))
+        right_px = min(image.width, round((x + half_width) * image.width))
+        top_px = max(0, round(top * image.height))
+        bottom_px = min(image.height, round(bottom * image.height))
+        crop = np.asarray(image.convert("L"))[top_px:bottom_px, left_px:right_px]
+        return cv2.resize(crop, (180, 220), interpolation=cv2.INTER_AREA)
+
+    def recognize(self, image: Image.Image) -> list[HandCardMatch]:
+        centers = self.vision["card_slot_centers"]
+        if not self.available or not self.templates:
+            return [
+                HandCardMatch(index, None, 0.0, 0, 0, 0, False)
+                for index, _center in enumerate(centers)
+            ]
+
+        ratio = float(self.vision.get("card_match_ratio", 0.78))
+        minimum_good = int(self.vision.get("card_match_min_good", 35))
+        minimum_margin = float(self.vision.get("card_match_min_margin", 1.45))
+        empty_keypoints = int(self.vision.get("card_empty_max_keypoints", 150))
+        matches: list[HandCardMatch] = []
+        for slot_index, center in enumerate(centers):
+            observed = self._slot_image(image, center)
+            keypoints, descriptors = self.orb.detectAndCompute(observed, None)
+            keypoint_count = len(keypoints)
+            if descriptors is None or keypoint_count <= empty_keypoints:
+                matches.append(
+                    HandCardMatch(slot_index, None, 1.0, 0, 0, keypoint_count, True)
+                )
+                continue
+
+            best_by_card: dict[str, int] = {}
+            for _template_id, (card, reference) in self.templates.items():
+                pairs = self.matcher.knnMatch(descriptors, reference, k=2)
+                good = sum(1 for first, second in pairs if first.distance < ratio * second.distance)
+                best_by_card[card.card_id] = max(best_by_card.get(card.card_id, 0), good)
+            ranked = [(good, card_id) for card_id, good in best_by_card.items()]
+            ranked.sort(reverse=True)
+            best_good, best_id = ranked[0]
+            second_good = ranked[1][0] if len(ranked) > 1 else 0
+            margin = best_good / max(1, second_good)
+            accepted = best_good >= minimum_good and margin >= minimum_margin
+            strength = min(1.0, best_good / max(1.0, minimum_good * 3.0))
+            separation = min(1.0, max(0.0, (margin - 1.0) / 2.0))
+            confidence = round(0.65 * strength + 0.35 * separation, 4)
+            matches.append(
+                HandCardMatch(
+                    slot_index=slot_index,
+                    card_id=best_id if accepted else None,
+                    confidence=confidence if accepted else min(0.49, confidence),
+                    good_matches=best_good,
+                    second_good_matches=second_good,
+                    keypoints=keypoint_count,
+                    empty=False,
+                )
+            )
+        return matches
+
+
+def _level_badge_candidates(image: Image.Image) -> list[tuple[float, float, int]]:
+    """Find red enemy level badges across the playable arena."""
+    if cv2 is None:
+        return []
+
+    rgb = np.asarray(image.convert("RGB"))
+    height, width = rgb.shape[:2]
+    red = rgb[..., 0].astype(np.int16)
+    green = rgb[..., 1].astype(np.int16)
+    blue = rgb[..., 2].astype(np.int16)
+    mask = (
+        (red > 150)
+        & (green < 110)
+        & (red > green * 1.5)
+        & (red > blue * 1.08)
+        & ((red - green) > 60)
+    ).astype(np.uint8) * 255
+    # Enemy crown-tower level badges are above 0.20. Starting here lets us
+    # observe newly deployed troops on the far side instead of waiting until
+    # they have already crossed the bridge.
+    mask[: round(0.20 * height), :] = 0
+    mask[round(0.76 * height) :, :] = 0
+    mask[:, : round(0.13 * width)] = 0
+    mask[:, round(0.87 * width) :] = 0
+    mask[round(0.68 * height) :, round(0.75 * width) :] = 0
+    # Princess-tower skins contain red plates and white highlights that look
+    # like a level badge.  Troops leaving these areas become visible well
+    # before the bridge, so exclude the static tower footprints themselves.
+    tower_top, tower_bottom = round(0.17 * height), round(0.31 * height)
+    mask[tower_top:tower_bottom, round(0.13 * width) : round(0.39 * width)] = 0
+    mask[tower_top:tower_bottom, round(0.61 * width) : round(0.87 * width)] = 0
+    mask[round(0.10 * height) : round(0.23 * height), round(0.39 * width) : round(0.61 * width)] = 0
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3)),
+    )
+    _count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask)
+    detected: list[tuple[float, float, int]] = []
+    for x, y, component_width, component_height, area in stats[1:]:
+        if not (
+            18 <= component_width <= 110
+            and 10 <= component_height <= 45
+            and area >= 80
+        ):
+            continue
+        x1, y1 = max(0, x - 5), max(0, y - 5)
+        x2 = min(width, x + component_width + 5)
+        y2 = min(height, y + component_height + 5)
+        patch = rgb[y1:y2, x1:x2]
+        white_ratio = float(np.mean(np.all(patch > 180, axis=2)))
+        if white_ratio < 0.04:
+            continue
+        normalized_x = float((x + component_width / 2.0) / width)
+        normalized_y = float((y + component_height / 2.0) / height)
+        if normalized_y > 0.68 and 0.35 < normalized_x < 0.65:
+            continue
+        detected.append((normalized_x, normalized_y, int(component_width)))
+
+    return detected
+
+
+def detect_lane_threats(
+    image: Image.Image,
+    previous: Image.Image | None = None,
+    ignore_points: tuple[tuple[float, float], ...] = (),
+) -> dict[str, LaneThreat]:
+    """Detect enemy lanes early and estimate whether units are approaching.
+
+    Opponent level badges are visible before troops reach the bridge.  Matching
+    their positions with the preceding frame gives a small forward-motion
+    signal which raises the priority of an approaching push.
+    """
+    if cv2 is None:
+        empty = LaneThreat("left", 0.0, 0, 0.0, "none", ())
+        return {
+            "left": empty,
+            "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
+        }
+
+    detected = _level_badge_candidates(image)
+    if ignore_points:
+        detected = [
+            value
+            for value in detected
+            if not any(
+                abs(value[0] - point[0]) <= 0.075
+                and abs(value[1] - point[1]) <= 0.065
+                for point in ignore_points
+            )
+        ]
+    previous_detected = (
+        _level_badge_candidates(previous)
+        if previous is not None and previous.size == image.size
+        else []
+    )
+    if ignore_points:
+        previous_detected = [
+            value
+            for value in previous_detected
+            if not any(
+                abs(value[0] - point[0]) <= 0.075
+                and abs(value[1] - point[1]) <= 0.065
+                for point in ignore_points
+            )
+        ]
+    results: dict[str, LaneThreat] = {}
+    for lane in ("left", "right"):
+        lane_units = [
+            value
+            for value in detected
+            if (value[0] < 0.5 if lane == "left" else value[0] >= 0.5)
+        ]
+        proximity = max((value[1] for value in lane_units), default=0.0)
+        unit_count = len(lane_units)
+        previous_lane_units = [
+            value
+            for value in previous_detected
+            if (value[0] < 0.5 if lane == "left" else value[0] >= 0.5)
+        ]
+        approach_rates: list[float] = []
+        for x, y, _width in lane_units:
+            candidates = [
+                value for value in previous_lane_units if abs(value[0] - x) <= 0.14
+            ]
+            if candidates:
+                previous_match = min(
+                    candidates,
+                    key=lambda value: abs(value[0] - x) + abs(value[1] - y),
+                )
+                approach_rates.append(max(0.0, y - previous_match[1]))
+        approach_rate = max(approach_rates, default=0.0)
+        score = min(
+            1.0,
+            unit_count * 0.20
+            + max(0.0, (proximity - 0.20) / 0.52) * 0.62
+            + min(0.18, approach_rate * 6.0),
+        )
+        if unit_count == 0:
+            threat = "none"
+        elif unit_count >= 3:
+            threat = "swarm"
+        elif proximity >= 0.62:
+            threat = "heavy"
+        else:
+            threat = "single"
+        results[lane] = LaneThreat(
+            lane=lane,
+            score=round(score, 4),
+            unit_count=unit_count,
+            proximity=round(proximity, 4),
+            threat=threat,
+            centers=tuple((round(x, 4), round(y, 4)) for x, y, _width in lane_units),
+            approach_rate=round(approach_rate, 4),
+        )
+    return results
