@@ -153,7 +153,8 @@ class BattlePolicy:
                 dict(config.get("training", {})),
             )
             self.imitation_model = ImitationPolicyModel(project_root)
-            self.replay_model = ReplayPolicyModel(project_root)
+            if bool(self.config_replay.get("allow_bot_training", False)):
+                self.replay_model = ReplayPolicyModel(project_root)
             if not self.hand_recognizer.available:
                 self.perception_error = "OpenCV 不可用"
             elif not self.hand_recognizer.templates:

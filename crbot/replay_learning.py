@@ -14,6 +14,7 @@ from PIL import Image
 
 from .battle_perception import LaneThreat
 from .cards import CardCatalog, CardDefinition
+from .training_sync import ReplaySync, replay_source_prefix, shared_training
 from .imitation import (
     BATTLEFIELD_FEATURE_COUNT,
     battlefield_features,
@@ -90,6 +91,7 @@ class ReplayLearningAction:
     formation_phase: str
     desired_role: str
     battle_elapsed_s: float
+    timestamp_unix: float = 0.0
 
     @property
     def target(self) -> float:
@@ -151,8 +153,11 @@ def collect_replay_learning_actions(
     for run_dir in sorted((project_root.resolve() / "runs").glob("*")):
         if not run_dir.is_dir():
             continue
+        source_prefix = replay_source_prefix(run_dir)
         for row in _read_jsonl(run_dir / "replay_transitions.jsonl"):
             transition_id = str(row.get("transition_id", "")).strip()
+            if transition_id and source_prefix and not transition_id.startswith(source_prefix):
+                transition_id = source_prefix + transition_id
             if not transition_id or transition_id in seen:
                 continue
             if not bool(row.get("reward_verified")):
@@ -191,7 +196,7 @@ def collect_replay_learning_actions(
             else:
                 edges = tuple(float(value) for value in raw_edges)
             battle_index = max(1, int(row.get("battle_index", 1)))
-            group_id = f"{run_dir.name}:battle-{battle_index}"
+            group_id = f"{source_prefix or run_dir.name + ':'}battle-{battle_index}"
             left_score = float(state.get("left_threat", 0.0))
             right_score = float(state.get("right_threat", 0.0))
             strongest = "left" if left_score >= right_score else "right"
@@ -277,6 +282,7 @@ def collect_replay_learning_actions(
                     formation_phase=formation_phase,
                     desired_role=desired_role,
                     battle_elapsed_s=float(state.get("battle_elapsed_s", 0.0)),
+                    timestamp_unix=float(row.get("timestamp_unix", 0.0)),
                 )
             )
             seen.add(transition_id)
@@ -401,7 +407,11 @@ def _temporal_group_split(
     validation_fraction: float,
 ) -> tuple[list[ReplayLearningAction], list[ReplayLearningAction]]:
     """Hold out the newest whole battles to detect policy/data drift."""
-    groups = sorted({action.group_id for action in actions})
+    group_times: dict[str, float] = {}
+    for action in actions:
+        stamp = action.timestamp_unix if math.isfinite(action.timestamp_unix) else 0.0
+        group_times[action.group_id] = max(group_times.get(action.group_id, 0.0), stamp)
+    groups = sorted(group_times, key=lambda group: (group_times[group], group))
     if len(groups) < 4:
         raise ValueError("至少需要四局对局才能进行时间外推验证")
     count = max(2, min(len(groups) - 2, math.ceil(len(groups) * validation_fraction)))
@@ -739,6 +749,7 @@ class ReplayPolicyRegistry:
             "promoted": promoted,
             "rejection_reasons": reasons,
             "promotion_blockers": promotion_blockers,
+            "sync_compatibility": ReplaySync(self.root.parent.parent).compatibility(config),
         }
         if promoted:
             registry["champion"] = dict(candidate)
@@ -747,6 +758,7 @@ class ReplayPolicyRegistry:
         return candidate
 
 
+@shared_training
 def train_replay_policy(
     project_root: Path,
     catalog: CardCatalog,

@@ -35,6 +35,7 @@ from .replay_learning import (
     train_replay_policy,
 )
 from .vision import WorkflowRecognizer
+from .training_sync import ReplaySync, SyncWorker, training_allowed
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -144,6 +145,10 @@ class RoyalTrainerApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_messages)
         self.root.after(700, self._passive_status_check)
+        self.sync_worker = SyncWorker(
+            self.config_path.parent,
+            notify=lambda message: self.messages.put(("log", message)),
+        ).start()
 
     def _configure_window(self) -> None:
         self.root.title("Royal Lab · 离线人机训练控制台")
@@ -284,6 +289,12 @@ class RoyalTrainerApp:
             hover=Palette.CARD_ALT,
             foreground=Palette.MUTED,
             command=self.start_demonstration,
+        ).pack(fill="x", padx=10, pady=4)
+
+        HoverButton(
+            sidebar, text="  ⇄   双机数据同步", anchor="w",
+            background=Palette.SURFACE, hover=Palette.CARD_ALT,
+            foreground=Palette.MUTED, command=self.sync_training_data,
         ).pack(fill="x", padx=10, pady=4)
 
         about = tk.Frame(sidebar, background=Palette.CARD, highlightbackground=Palette.BORDER, highlightthickness=1)
@@ -1099,6 +1110,7 @@ class RoyalTrainerApp:
                 replay_training = None
                 if (
                     replay_learning_audit.ready
+                    and training_allowed(config_path.parent)
                     and replay_learning_audit.actions > last_replay_trained_actions
                 ):
                     replay_training = train_replay_policy(
@@ -1124,6 +1136,23 @@ class RoyalTrainerApp:
                 self.messages.put(("background_done", None))
 
         self._start_background(worker, "learning-audit")
+
+    def sync_training_data(self) -> None:
+        if self.background_busy:
+            return
+        def worker() -> None:
+            try:
+                service = ReplaySync(self.config_path.parent)
+                if not service.config.get("enabled"):
+                    raise ValueError("请先双击 setup_sync.bat 登录并配置本机")
+                result = service.sync()
+                role = "训练机" if service.config.get("trainer") else "采集机"
+                self.messages.put(("log", f"[共享] {role}：上传 {result['exported_episodes']} 局，接收 {result['imported_episodes']} 局，接收模型 {result['received_models']} 个"))
+            except Exception as exc:
+                self.messages.put(("operation_error", ("数据同步未完成", str(exc))))
+            finally:
+                self.messages.put(("background_done", None))
+        self._start_background(worker, "manual-sync")
 
     def _show_learning_audit(self, payload: dict[str, Any]) -> None:
         imitation = dict(payload.get("imitation", {}))
@@ -1363,6 +1392,7 @@ class RoyalTrainerApp:
         self.root.after(100, self._poll_messages)
 
     def _finish_bot(self, error: str | None) -> None:
+        self.sync_worker.wake.set()
         battles = self.engine.completed_battles if self.engine is not None else 0
         self.battle_value.configure(text=f"{battles} 局")
         self.battle_note.configure(text="本次运行已结束")
@@ -1396,6 +1426,7 @@ class RoyalTrainerApp:
             if self.engine is not None:
                 self.engine.request_stop()
         self.closing = True
+        self.sync_worker.close()
         self.root.destroy()
 
 

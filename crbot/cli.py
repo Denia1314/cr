@@ -28,6 +28,7 @@ from .imitation import audit_demonstrations, train_imitation_policy
 from .replay import audit_replay, backfill_replay_history
 from .replay_learning import audit_replay_learning, train_replay_policy
 from .vision import WorkflowRecognizer
+from .training_sync import DEFAULT_REPOSITORY, ReplaySync, SyncWorker
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,6 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     imitate.add_argument("action", choices=("audit", "train"))
     replay = subcommands.add_parser("replay", help="审计、回填或影子训练自动战斗经验")
     replay.add_argument("action", choices=("audit", "backfill", "train"))
+    sync = subcommands.add_parser("sync", help="双机回放数据共享")
+    sync.add_argument("action", choices=("setup", "now", "status"), nargs="?", default="now")
+    sync.add_argument("--repository", default=DEFAULT_REPOSITORY)
+    sync.add_argument("--trainer", action="store_true", help="只在第一台训练机初始化时使用")
     capture = subcommands.add_parser("capture", help="保存一张当前截图")
     capture.add_argument("--output", help="输出 PNG 路径")
     run = subcommands.add_parser("run", help="运行自动训练")
@@ -103,6 +108,18 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         config, config_path = load_config(arguments.config)
+        if arguments.command == "sync":
+            service = ReplaySync(config_path.parent)
+            if arguments.action == "setup":
+                result = service.setup(arguments.repository, arguments.trainer)
+            elif arguments.action == "status":
+                result = service.status()
+            else:
+                if not service.config.get("enabled"):
+                    raise ValueError("请先运行 sync setup 完成本机配置")
+                result = service.sync()
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if arguments.command == "cards-sync":
             catalog_value = config.get("dataset", {}).get("card_catalog", "data/cards.json")
             catalog_path = resolve_project_path(config_path, str(catalog_value))
@@ -254,7 +271,11 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=arguments.dry_run,
                 max_battles=arguments.max_battles,
             )
-            engine.run()
+            sync_worker = SyncWorker(config_path.parent).start()
+            try:
+                engine.run()
+            finally:
+                sync_worker.close()
             return 0
     except KeyboardInterrupt:
         print("\n用户已停止。")

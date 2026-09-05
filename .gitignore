@@ -16,3 +16,4 @@ venv/
 !.env.example
 *.pem
 *.key
+.training-sync/
