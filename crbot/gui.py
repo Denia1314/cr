@@ -19,7 +19,7 @@ from .adb import MumuDevice
 from .annotate import AnnotationWindow
 from .calibrate import CalibrationWindow
 from .cards import CardCatalog
-from .config import load_config, resolve_project_path
+from .config import load_config, resolve_project_path, save_config
 from .demonstration import DemonstrationRecorder
 from .engine import BotEngine
 from .learning import ModelRegistry, audit_learning_data
@@ -341,7 +341,7 @@ class RoyalTrainerApp:
         ).pack(anchor="w")
         tk.Label(
             title_box,
-            text="连接 MuMu，从这里启动离线人机自动训练。",
+            text="自动检测 MuMu，或按 ADB 端口连接其他模拟器。",
             font=(FONT, 9),
             foreground=Palette.MUTED,
             background=Palette.BG,
@@ -356,6 +356,18 @@ class RoyalTrainerApp:
             command=self.run_doctor,
         )
         self.check_button.pack(side="right", pady=4)
+
+        self.connection_button = HoverButton(
+            heading,
+            text="自定义 ADB",
+            background=Palette.CARD_ALT,
+            hover="#25304A",
+            foreground=Palette.MUTED,
+            command=self.open_adb_connection_settings,
+            padx=12,
+        )
+        self.connection_button.pack(side="right", padx=(0, 8), pady=4)
+        self._refresh_connection_button()
 
         stats = tk.Frame(content, background=Palette.BG)
         stats.grid(row=1, column=0, sticky="ew", pady=(0, 14))
@@ -740,10 +752,176 @@ class RoyalTrainerApp:
         self.max_battles_input.configure(state="disabled" if running else "normal")
         self.dry_run_toggle.configure(state="disabled" if running else "normal")
         self.check_button.configure(state="disabled" if running else "normal")
+        self.connection_button.configure(state="disabled" if running else "normal")
         if running:
             self._set_header("任务运行中", Palette.GREEN)
         elif self.device_value.cget("text") == "已连接":
             self._set_header("设备已就绪", Palette.GREEN)
+
+    def _refresh_connection_button(self, config: dict[str, Any] | None = None) -> None:
+        try:
+            if config is None:
+                config, _config_path = load_config(self.config_path)
+            mumu = dict(config.get("mumu", {}))
+            if str(mumu.get("connection_mode", "auto")) == "custom_adb":
+                port = int(mumu.get("adb_port", 16384))
+                self.connection_button.configure(
+                    text=f"ADB :{port}", foreground=Palette.CYAN
+                )
+            else:
+                self.connection_button.configure(
+                    text="自定义 ADB", foreground=Palette.MUTED
+                )
+        except (OSError, ValueError, TypeError):
+            self.connection_button.configure(
+                text="自定义 ADB", foreground=Palette.MUTED
+            )
+
+    def open_adb_connection_settings(self) -> None:
+        if self._bot_is_running():
+            messagebox.showinfo(
+                "训练进行中",
+                "请先安全停止训练，再修改模拟器连接。",
+                parent=self.root,
+            )
+            return
+        if self.background_busy:
+            messagebox.showinfo(
+                "请稍候", "正在处理设备操作，请稍候。", parent=self.root
+            )
+            return
+        try:
+            config, config_path = load_config(self.config_path)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("无法读取配置", str(exc), parent=self.root)
+            return
+
+        mumu = config.setdefault("mumu", {})
+        dialog = tk.Toplevel(self.root)
+        dialog.title("自定义模拟器连接")
+        dialog.configure(background=Palette.BG)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        panel = tk.Frame(
+            dialog,
+            background=Palette.CARD,
+            highlightbackground=Palette.BORDER,
+            highlightthickness=1,
+        )
+        panel.pack(fill="both", expand=True, padx=18, pady=18)
+        tk.Label(
+            panel,
+            text="按 ADB 端口连接",
+            font=(FONT, 15, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD,
+        ).pack(anchor="w", padx=18, pady=(16, 4))
+        tk.Label(
+            panel,
+            text="适用于 MuMu 多开或其他已启用 ADB 的本地模拟器。\n"
+            "将直接连接 127.0.0.1:<端口>，不再依赖 MuMu CLI 发现。",
+            justify="left",
+            font=(FONT, 9),
+            foreground=Palette.MUTED,
+            background=Palette.CARD,
+        ).pack(anchor="w", padx=18, pady=(0, 14))
+
+        port_row = tk.Frame(panel, background=Palette.CARD_ALT)
+        port_row.pack(fill="x", padx=18, pady=(0, 14))
+        tk.Label(
+            port_row,
+            text="ADB 端口",
+            font=(FONT, 10, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD_ALT,
+        ).pack(side="left", padx=12, pady=12)
+        port_var = tk.StringVar(value=str(mumu.get("adb_port", 16384)))
+        port_entry = tk.Entry(
+            port_row,
+            textvariable=port_var,
+            width=10,
+            justify="center",
+            font=("Segoe UI", 11, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.SURFACE,
+            insertbackground=Palette.TEXT,
+            relief="flat",
+            highlightbackground=Palette.BORDER,
+            highlightcolor=Palette.BLUE,
+            highlightthickness=1,
+        )
+        port_entry.pack(side="right", padx=12, pady=8)
+
+        actions = tk.Frame(panel, background=Palette.CARD)
+        actions.pack(fill="x", padx=18, pady=(0, 16))
+
+        def save_custom_connection() -> None:
+            try:
+                port = int(port_var.get().strip())
+                if not 1 <= port <= 65535:
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning(
+                    "端口无效",
+                    "请输入 1 到 65535 之间的整数端口。",
+                    parent=dialog,
+                )
+                port_entry.focus_set()
+                port_entry.selection_range(0, "end")
+                return
+            mumu["connection_mode"] = "custom_adb"
+            mumu["adb_host"] = "127.0.0.1"
+            mumu["adb_port"] = port
+            try:
+                save_config(config, config_path)
+            except OSError as exc:
+                messagebox.showerror("保存失败", str(exc), parent=dialog)
+                return
+            self._refresh_connection_button(config)
+            dialog.destroy()
+            self._append_log(
+                f"已切换到自定义 ADB：127.0.0.1:{port}", "success"
+            )
+            self.run_doctor()
+
+        def restore_auto_connection() -> None:
+            mumu["connection_mode"] = "auto"
+            try:
+                save_config(config, config_path)
+            except OSError as exc:
+                messagebox.showerror("保存失败", str(exc), parent=dialog)
+                return
+            self._refresh_connection_button(config)
+            dialog.destroy()
+            self._append_log("已恢复 MuMu 自动发现连接。", "success")
+            self.run_doctor()
+
+        HoverButton(
+            actions,
+            text="保存并连接",
+            background=Palette.BLUE,
+            hover=Palette.BLUE_HOVER,
+            command=save_custom_connection,
+            padx=14,
+            pady=8,
+        ).pack(side="right")
+        HoverButton(
+            actions,
+            text="恢复自动发现",
+            background=Palette.CARD_ALT,
+            hover="#25304A",
+            foreground=Palette.MUTED,
+            command=restore_auto_connection,
+            padx=14,
+            pady=8,
+        ).pack(side="left")
+
+        dialog.bind("<Return>", lambda _event: save_custom_connection())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        port_entry.focus_set()
+        port_entry.selection_range(0, "end")
 
     def _start_background(self, target: Callable[[], None], name: str) -> bool:
         if self.background_busy:
@@ -762,20 +940,23 @@ class RoyalTrainerApp:
             try:
                 config, config_path = load_config(self.config_path)
                 device = MumuDevice(config)
-                info = device.info()
+                if device.uses_custom_adb:
+                    serial = device.connect()
+                    info = device.info()
+                else:
+                    info = device.info()
+                    serial = device.connect() if info.get("is_android_started") else None
                 payload: dict[str, Any] = {
                     "started": bool(info.get("is_android_started")),
-                    "connected": False,
+                    "connected": serial is not None,
                     "installed": None,
-                    "serial": None,
+                    "serial": serial,
                     "screen": None,
                     "image": None,
                 }
                 recognizer = WorkflowRecognizer(config, config_path)
                 payload["calibrated"] = recognizer.calibrated_names()
-                if payload["started"]:
-                    payload["serial"] = device.connect()
-                    payload["connected"] = True
+                if payload["connected"]:
                     payload["installed"] = device.package_installed(config["game"]["package"])
                     image = device.screenshot()
                     payload["image"] = image
@@ -792,7 +973,7 @@ class RoyalTrainerApp:
         if self._bot_is_running():
             messagebox.showinfo("训练进行中", "请先安全停止训练，再执行环境检测。", parent=self.root)
             return
-        self._append_log("正在连接 MuMu 并检查运行环境…", "action")
+        self._append_log("正在连接模拟器并检查运行环境…", "action")
         self.check_button.configure(state="disabled", text="检测中…")
 
         def worker() -> None:
@@ -862,7 +1043,7 @@ class RoyalTrainerApp:
                     config, config_path = load_config(self.config_path)
                     device = MumuDevice(config)
                     serial = device.connect()
-                    print(f"[设备] 已连接 MuMu：{serial}")
+                    print(f"[设备] 已连接模拟器：{serial}")
                     if self.stop_event.is_set():
                         print("[停止] 启动已取消，未打开游戏。")
                         return
@@ -923,7 +1104,7 @@ class RoyalTrainerApp:
                     config, config_path = load_config(self.config_path)
                     device = MumuDevice(config)
                     serial = device.connect()
-                    print(f"[设备] 已连接 MuMu：{serial}")
+                    print(f"[设备] 已连接模拟器：{serial}")
                     recorder = DemonstrationRecorder(
                         device,
                         config,
@@ -1271,7 +1452,7 @@ class RoyalTrainerApp:
             self.device_note.configure(text=f"{serial} · {screen}" if screen else str(serial))
             if payload.get("installed") is False:
                 self.device_value.configure(text="缺少游戏", foreground=Palette.AMBER)
-                self.device_note.configure(text="MuMu 在线，但未检测到游戏包")
+                self.device_note.configure(text="模拟器在线，但未检测到游戏包")
                 self._set_header("等待安装游戏", Palette.AMBER)
             else:
                 self._set_header("设备已就绪", Palette.GREEN)

@@ -192,6 +192,10 @@ class BotEngine:
         chest_tap_burst_delay = max(
             0.12, float(automation.get("chest_screen_tap_burst_delay_s", 0.28))
         )
+        chest_followup_tap_delay = max(
+            0.0,
+            float(automation.get("chest_screen_followup_tap_delay_s", 3.0)),
+        )
 
         awaiting_battle = False
         last_start_at = 0.0
@@ -340,31 +344,46 @@ class BotEngine:
                 self.last_known_at = now
                 last_chest_tap_at = now
                 pixels: list[list[int] | None] = []
-                tap_total = 1 if self.dry_run else chest_taps_per_detection
-                for tap_index in range(tap_total):
+                burst_tap_total = 1 if self.dry_run else chest_taps_per_detection
+                for tap_index in range(burst_tap_total):
                     pixels.append(self._tap(chest_point, image))
                     if (
-                        tap_index + 1 < tap_total
+                        tap_index + 1 < burst_tap_total
                         and self._sleep(chest_tap_burst_delay)
                     ):
                         print("[停止] 已收到停止请求，自动训练已安全结束。")
                         return
+                followup_tapped = False
+                if not self.dry_run:
+                    if self._sleep(chest_followup_tap_delay):
+                        print("[停止] 已收到停止请求，自动训练已安全结束。")
+                        return
+                    pixels.append(self._tap(chest_point, image))
+                    followup_tapped = True
                 self.recorder.record(
                     "chest_open_screen_tap",
                     image,
                     {
                         "click_normalized": chest_point,
                         "click_pixel": pixels[0],
-                        "tap_count": tap_total,
+                        "tap_count": len(pixels),
+                        "burst_tap_count": burst_tap_total,
+                        "followup_tapped": followup_tapped,
+                        "followup_delay_s": chest_followup_tap_delay,
                         "confidence": round(chest_score, 4),
                         "dry_run": self.dry_run,
                     },
                 )
+                if self.dry_run:
+                    action_text = "试运行：已模拟宝箱点击"
+                else:
+                    action_text = (
+                        f"连续点击宝箱 {burst_tap_total} 次，"
+                        f"等待 {chest_followup_tap_delay:g} 秒后补点 1 次"
+                    )
                 print(
-                    f"[宝箱] {'试运行：' if self.dry_run else ''}"
-                    f"整体画面识别成功并连续点击宝箱 {tap_total} 次 "
-                    f"{chest_point} "
-                    f"score={chest_score:.3f}"
+                    f"[宝箱] 整体画面识别成功；{action_text} "
+                    f"{chest_point} score={chest_score:.3f}"
                 )
                 if self._sleep(poll_interval):
                     print("[停止] 已收到停止请求，自动训练已安全结束。")

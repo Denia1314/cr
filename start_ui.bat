@@ -1,6 +1,8 @@
 @echo off
 setlocal
 set "BOT_ROOT=%~dp0"
+set "BOT_PYW=%BOT_ROOT%.venv\Scripts\pythonw.exe"
+if exist "%BOT_PYW%" goto run
 set "BOT_PYW=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\pythonw.exe"
 if exist "%BOT_PYW%" goto run
 where pyw >nul 2>nul && set "BOT_PYW=pyw" && goto run

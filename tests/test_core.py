@@ -1150,7 +1150,7 @@ class EngineControlTests(unittest.TestCase):
             self.assertAlmostEqual(device.taps[0][0], 0.5, delta=0.02)
             self.assertAlmostEqual(device.taps[0][1], 0.89, delta=0.02)
 
-    def test_global_chest_screen_uses_five_tap_burst(self) -> None:
+    def test_global_chest_screen_uses_five_taps_then_delayed_followup(self) -> None:
         # Purple background deliberately scores as battle UI. Chest recognition
         # must run first and override that color-only false positive.
         screen = make_chest_open_screen(purple_theme=True, star_count=3)
@@ -1170,7 +1170,7 @@ class EngineControlTests(unittest.TestCase):
                 self, point: list[float], _size: tuple[int, int]
             ) -> tuple[int, int]:
                 self.taps.append(list(point))
-                if len(self.taps) >= 5:
+                if len(self.taps) >= 6:
                     stop_event.set()
                 return 300, 530
 
@@ -1193,6 +1193,7 @@ class EngineControlTests(unittest.TestCase):
                         "chest_screen_tap_interval_s": 0.5,
                         "chest_screen_taps_per_detection": 5,
                         "chest_screen_tap_burst_delay_s": 0.12,
+                        "chest_screen_followup_tap_delay_s": 3.0,
                     },
                     "workflow": [],
                 }
@@ -1205,10 +1206,19 @@ class EngineControlTests(unittest.TestCase):
                 stop_event=stop_event,
             )
             engine.recognizer = EmptyRecognizer()  # type: ignore[assignment]
+            sleeps: list[float] = []
+
+            def record_sleep(seconds: float) -> bool:
+                sleeps.append(seconds)
+                return False
+
+            engine._sleep = record_sleep  # type: ignore[method-assign]
 
             engine._run_single_marker("example.game")
 
-            self.assertEqual(len(device.taps), 5)
+            self.assertEqual(len(device.taps), 6)
+            self.assertEqual(sleeps[:4], [0.12, 0.12, 0.12, 0.12])
+            self.assertEqual(sleeps[4], 3.0)
             self.assertAlmostEqual(device.taps[0][0], 0.5, delta=0.03)
             self.assertAlmostEqual(device.taps[0][1], 0.53, delta=0.04)
 
