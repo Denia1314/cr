@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import random
 import time
-from dataclasses import asdict, dataclass
+import uuid
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +54,8 @@ class BattleDecision:
     card_formation_role: str = ""
     formation_phase: str = ""
     desired_formation_role: str = ""
+    action_id: str = ""
+    action_status: str = "proposed"
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -106,6 +110,8 @@ class BattlePolicy:
         self.mode = str(self.policy.get("mode", "baseline"))
         self.random = random.Random(self.policy.get("seed"))
         self.virtual_elixir = float(self.policy.get("initial_elixir", 5.0))
+        self.confirmed_virtual_elixir = self.virtual_elixir
+        self.reserved_elixir = 0.0
         self.last_update = time.monotonic()
         self.battle_started_at = self.last_update
         self.next_action_at = self.last_update
@@ -126,6 +132,9 @@ class BattlePolicy:
             "left": LaneFormation(),
             "right": LaneFormation(),
         }
+        self._pending_action_id: str | None = None
+        self._pending_action_snapshot: dict[str, Any] | None = None
+        self._resolved_action_ids: dict[str, str] = {}
         self.catalog: CardCatalog | None = None
         self.hand_recognizer: UniversalHandRecognizer | None = None
         self.learned_detector: LearnedBattlefieldDetector | None = None
@@ -180,6 +189,8 @@ class BattlePolicy:
         self._observed_image = None
         self._observed_threats = {}
         self.virtual_elixir = float(self.policy.get("initial_elixir", 5.0))
+        self.confirmed_virtual_elixir = self.virtual_elixir
+        self.reserved_elixir = 0.0
         self.last_update = now
         self.battle_started_at = now
         self.next_action_at = now + 1.0
@@ -196,6 +207,122 @@ class BattlePolicy:
             "left": LaneFormation(),
             "right": LaneFormation(),
         }
+        self._pending_action_id = None
+        self._pending_action_snapshot = None
+        self._resolved_action_ids = {}
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Capture only decision state that may be changed by a proposal.
+
+        Catalogs, recognizers and model instances are intentionally excluded;
+        copying them for every tap would be expensive and they are read-only
+        during a decision.  The random generator state is included so a
+        rejected tap does not silently consume a different strategy branch.
+        """
+        return {
+            "virtual_elixir": self.virtual_elixir,
+            "confirmed_virtual_elixir": self.confirmed_virtual_elixir,
+            "reserved_elixir": self.reserved_elixir,
+            "last_update": self.last_update,
+            "next_action_at": self.next_action_at,
+            "slot_cursor": self.slot_cursor,
+            "random_state": self.random.getstate(),
+            "last_push_lane": self.last_push_lane,
+            "last_push_at": self.last_push_at,
+            "last_push_roles": self.last_push_roles,
+            "push_support_count": self.push_support_count,
+            "last_defense_at": self.last_defense_at,
+            "last_defense_lane": self.last_defense_lane,
+            "last_defense_snapshots": copy.deepcopy(self.last_defense_snapshots),
+            "last_deploy_point": self.last_deploy_point,
+            "last_deploy_at": self.last_deploy_at,
+            "action_sequence": self.action_sequence,
+            "formations": copy.deepcopy(self.formations),
+            "observed_image": self._observed_image,
+            "observed_at": self._observed_at,
+            "observed_threats": copy.deepcopy(self._observed_threats),
+        }
+
+    def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self.virtual_elixir = float(snapshot["virtual_elixir"])
+        self.confirmed_virtual_elixir = float(snapshot["confirmed_virtual_elixir"])
+        self.reserved_elixir = float(snapshot["reserved_elixir"])
+        self.last_update = float(snapshot["last_update"])
+        self.next_action_at = float(snapshot["next_action_at"])
+        self.slot_cursor = int(snapshot["slot_cursor"])
+        self.random.setstate(snapshot["random_state"])
+        self.last_push_lane = str(snapshot["last_push_lane"])
+        self.last_push_at = float(snapshot["last_push_at"])
+        self.last_push_roles = frozenset(snapshot["last_push_roles"])
+        self.push_support_count = int(snapshot["push_support_count"])
+        self.last_defense_at = float(snapshot["last_defense_at"])
+        self.last_defense_lane = str(snapshot["last_defense_lane"])
+        self.last_defense_snapshots = copy.deepcopy(snapshot["last_defense_snapshots"])
+        self.last_deploy_point = snapshot["last_deploy_point"]
+        self.last_deploy_at = float(snapshot["last_deploy_at"])
+        self.action_sequence = int(snapshot["action_sequence"])
+        self.formations = copy.deepcopy(snapshot["formations"])
+        self._observed_image = snapshot["observed_image"]
+        self._observed_at = float(snapshot["observed_at"])
+        self._observed_threats = copy.deepcopy(snapshot["observed_threats"])
+
+    def prepare_action(
+        self,
+        decision: BattleDecision,
+        snapshot: dict[str, Any],
+    ) -> BattleDecision:
+        """Turn a mutable policy proposal into a reserved action."""
+        if self._pending_action_id is not None:
+            raise RuntimeError(f"动作尚未确认：{self._pending_action_id}")
+        action_id = f"{self.policy.get('version', 'policy')}-{uuid.uuid4().hex[:16]}"
+        self._pending_action_id = action_id
+        self._pending_action_snapshot = snapshot
+        self.reserved_elixir = float(
+            decision.card_cost
+            if decision.card_cost is not None
+            else self.policy.get("unknown_card_cost", 3)
+        )
+        return replace(decision, action_id=action_id, action_status="proposed")
+
+    @property
+    def pending_action_id(self) -> str | None:
+        return self._pending_action_id
+
+    def resolve_action(
+        self,
+        action_id: str,
+        status: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        """Commit or roll back one reservation exactly once.
+
+        ``unknown`` rolls back all speculative state but inserts a short retry
+        guard.  The caller must not resend the same action automatically.
+        """
+        action_id = str(action_id).strip()
+        if status not in {"confirmed", "rejected", "unknown"}:
+            raise ValueError(f"不能提交动作状态：{status}")
+        if action_id in self._resolved_action_ids:
+            return False
+        if action_id != self._pending_action_id or self._pending_action_snapshot is None:
+            raise ValueError(f"未知或已过期的动作：{action_id}")
+        snapshot = self._pending_action_snapshot
+        if status in {"rejected", "unknown"}:
+            self._restore_snapshot(snapshot)
+            if status == "unknown":
+                current = time.monotonic() if now is None else float(now)
+                guard = float(self.policy.get("unknown_action_retry_guard_s", 1.2))
+                self.next_action_at = max(self.next_action_at, current + max(0.2, guard))
+        else:
+            self.confirmed_virtual_elixir = self.virtual_elixir
+            self.reserved_elixir = 0.0
+        self._resolved_action_ids[action_id] = status
+        self._pending_action_id = None
+        self._pending_action_snapshot = None
+        if len(self._resolved_action_ids) > 256:
+            self._resolved_action_ids.pop(next(iter(self._resolved_action_ids)), None)
+        return True
 
     def _update_virtual_elixir(self, now: float) -> None:
         seconds_per = float(self.policy.get("seconds_per_elixir", 2.8))
@@ -1074,6 +1201,8 @@ class BattlePolicy:
         now: float | None = None,
     ) -> BattleDecision | None:
         now = time.monotonic() if now is None else now
+        if self._pending_action_id is not None:
+            return None
         self._update_virtual_elixir(now)
         if now < self.next_action_at:
             return None

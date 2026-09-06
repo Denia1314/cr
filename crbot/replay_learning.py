@@ -22,11 +22,13 @@ from .imitation import (
 )
 from .tactics import card_tactics
 from .action_feedback import action_feedback
+from .replay_evaluation import EvaluationGroups, reserve_frozen_groups
 
 
 REPLAY_POLICY_SCHEMA_VERSION = 1
 CONTEXT_FEATURE_COUNT = 6
 TACTICAL_FEATURE_COUNT = 17
+ACTION_CONFIRMATION_REQUIRED_STATUS = "confirmed"
 
 
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -98,6 +100,7 @@ class ReplayLearningAction:
     local_effect: float = 0.0
     local_confidence: float = 0.0
     local_source: str = "unobserved"
+    action_status: str = "confirmed"
 
     @property
     def target(self) -> float:
@@ -141,6 +144,11 @@ class ReplayLearningAudit:
     target_policy_version: str
     ready: bool
     blocking_reasons: tuple[str, ...]
+    raw_episodes: int
+    raw_transitions: int
+    deduplicated_actions: int
+    confirmation_status_counts: dict[str, int]
+    excluded_action_counts: dict[str, int]
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -168,13 +176,34 @@ def collect_replay_learning_actions(
                 continue
             if not bool(row.get("reward_verified")):
                 continue
+            action = row.get("action", {})
+            if not isinstance(action, dict):
+                continue
+            action_status = str(
+                row.get("action_status")
+                or action.get("action_status")
+                or "legacy_unknown"
+            ).strip()
+            if action_status not in {
+                "proposed",
+                "sent",
+                "confirmed",
+                "rejected",
+                "unknown",
+                "legacy_unknown",
+            }:
+                action_status = "unknown"
+            # New production training explicitly requires confirmed actions.
+            # Keeping the switch opt-in preserves readability and old unit
+            # fixtures, while config.json enables the safe behavior.
+            if bool(config.get("require_action_confirmation", False)) and action_status != ACTION_CONFIRMATION_REQUIRED_STATUS:
+                continue
             outcome = str(row.get("outcome", "unknown"))
             if outcome not in {"win", "loss"}:
                 continue
             policy_version = _policy_version(row)
             if target_version and policy_version != target_version:
                 continue
-            action = row.get("action", {})
             state = row.get("state", {})
             if not isinstance(action, dict) or not isinstance(state, dict):
                 continue
@@ -293,6 +322,7 @@ def collect_replay_learning_actions(
                     local_effect=local_effect,
                     local_confidence=local_confidence,
                     local_source=local_source,
+                    action_status=action_status,
                 )
             )
             seen.add(transition_id)
@@ -384,6 +414,49 @@ def audit_replay_learning(
     config: dict[str, Any],
 ) -> ReplayLearningAudit:
     actions = collect_replay_learning_actions(project_root, catalog, config)
+    raw_episodes = 0
+    raw_transitions = 0
+    confirmation_status_counts: dict[str, int] = {}
+    excluded_action_counts: dict[str, int] = {}
+    target_version = str(config.get("training_policy_version", "")).strip()
+    require_confirmation = bool(config.get("require_action_confirmation", False))
+
+    def exclude(reason: str) -> None:
+        excluded_action_counts[reason] = excluded_action_counts.get(reason, 0) + 1
+
+    for run_dir in sorted((project_root.resolve() / "runs").glob("*")):
+        if not run_dir.is_dir():
+            continue
+        episode_rows = list(_read_jsonl(run_dir / "replay_episodes.jsonl"))
+        transition_rows = list(_read_jsonl(run_dir / "replay_transitions.jsonl"))
+        raw_episodes += len(episode_rows)
+        raw_transitions += len(transition_rows)
+        for row in transition_rows:
+            action = row.get("action", {})
+            status = str(
+                row.get("action_status")
+                or (action.get("action_status") if isinstance(action, dict) else "")
+                or "legacy_unknown"
+            ).strip()
+            if status not in {
+                "proposed",
+                "sent",
+                "confirmed",
+                "rejected",
+                "unknown",
+                "legacy_unknown",
+            }:
+                status = "unknown"
+            confirmation_status_counts[status] = confirmation_status_counts.get(status, 0) + 1
+            if target_version and _policy_version(row) != target_version:
+                exclude("policy_version")
+            elif not bool(row.get("reward_verified")):
+                exclude("reward_unverified")
+            elif str(row.get("outcome", "unknown")) not in {"win", "loss"}:
+                exclude("outcome_not_win_loss")
+            elif require_confirmation and status != ACTION_CONFIRMATION_REQUIRED_STATUS:
+                exclude("action_not_confirmed")
+
     outcomes: dict[str, str] = {}
     runs: set[str] = set()
     cards: set[str] = set()
@@ -419,7 +492,68 @@ def audit_replay_learning(
         target_policy_version=str(config.get("training_policy_version", "")).strip(),
         ready=not reasons,
         blocking_reasons=tuple(reasons),
+        raw_episodes=raw_episodes,
+        raw_transitions=raw_transitions,
+        deduplicated_actions=len(actions),
+        confirmation_status_counts=confirmation_status_counts,
+        excluded_action_counts=excluded_action_counts,
     )
+
+
+def evaluate_replay_snapshot(
+    project_root: Path,
+    catalog: CardCatalog,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Read-only audit of the exact snapshot used by replay training.
+
+    This entry point intentionally does not call the training decorator,
+    register a candidate, mutate the champion, synchronize data, or upload a
+    model.  It is safe to run on either collector computer.
+    """
+    actions = collect_replay_learning_actions(project_root, catalog, config)
+    seed = int(config.get("training_seed", config.get("seed", 20260903)))
+    frozen_selection = reserve_frozen_groups(
+        {action.group_id for action in actions},
+        validation_fraction=0.0,
+        freeze_fraction=float(config.get("freeze_evaluation_fraction", 0.0)),
+        seed=seed,
+    )
+    frozen_ids = set(frozen_selection.frozen)
+    trainable = [action for action in actions if action.group_id not in frozen_ids]
+    group_outcomes = {action.group_id: action.outcome for action in trainable}
+    if (
+        len(group_outcomes) > 0
+        and sum(value == "win" for value in group_outcomes.values()) >= 2
+        and sum(value == "loss" for value in group_outcomes.values()) >= 2
+    ):
+        train, validation = _stratified_group_split(
+            trainable, float(config.get("validation_fraction", 0.25)), seed
+        )
+    else:
+        train, validation = trainable, []
+    groups = EvaluationGroups(
+        train=tuple(sorted({action.group_id for action in train})),
+        validation=tuple(sorted({action.group_id for action in validation})),
+        frozen=frozen_selection.frozen,
+    )
+    registry = ReplayPolicyRegistry(project_root)
+    champion = registry.champion()
+    return {
+        "read_only": True,
+        "audit": audit_replay_learning(project_root, catalog, config).to_dict(),
+        "action_count": len(actions),
+        "evaluation_protocol": groups.to_dict(),
+        "champion": champion,
+        "champion_file_present": registry.champion_path() is not None,
+        "registry_candidate_count": len(registry.load().get("candidates", [])),
+        "side_effects": {
+            "writes_registry": False,
+            "writes_model": False,
+            "syncs_training_data": False,
+            "uploads_model": False,
+        },
+    }
 
 
 def _feature(
@@ -675,7 +809,7 @@ def _evaluate_candidate(
     transfer: list[ReplayLearningAction] | None = None,
     transfer_weight: float = 0.25,
     local_weight: float = 0.0,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     training_x, training_y, sample_weights = _training_arrays(
         train, transfer or [], catalog, visual_weight, transfer_weight,
     )
@@ -717,6 +851,8 @@ def _evaluate_candidate(
 
     win_top_two: list[float] = []
     loss_bottom_two: list[float] = []
+    win_top_two_random: list[float] = []
+    loss_bottom_two_random: list[float] = []
     for action in validation:
         cards = [
             catalog.get(card_id)
@@ -737,8 +873,10 @@ def _evaluate_candidate(
         top_count = min(2, len(ranked))
         if action.outcome == "win":
             win_top_two.append(float(actual_rank < top_count))
+            win_top_two_random.append(top_count / len(ranked))
         else:
             loss_bottom_two.append(float(actual_rank >= len(ranked) - top_count))
+            loss_bottom_two_random.append(top_count / len(ranked))
 
     deploy_train = _deployment_examples(train, local_weight)
     if not deploy_train:
@@ -773,6 +911,12 @@ def _evaluate_candidate(
     loss_groups = sum(value == "loss" for value in groups.values())
     win_top_two_rate = float(np.mean(win_top_two)) if win_top_two else 0.0
     loss_bottom_two_rate = float(np.mean(loss_bottom_two)) if loss_bottom_two else 0.0
+    win_top_two_random_rate = (
+        float(np.mean(win_top_two_random)) if win_top_two_random else 0.0
+    )
+    loss_bottom_two_random_rate = (
+        float(np.mean(loss_bottom_two_random)) if loss_bottom_two_random else 0.0
+    )
     local_validation = [a for a in validation if a.local_confidence > 0]
     local_targets = np.asarray([a.local_effect * a.local_confidence for a in local_validation])
     local_predictions = np.asarray([
@@ -802,11 +946,28 @@ def _evaluate_candidate(
         "win_selected_top2_rate": round(win_top_two_rate, 6),
         "loss_selected_bottom2_rate": round(loss_bottom_two_rate, 6),
         "rank_separation": round((win_top_two_rate + loss_bottom_two_rate) / 2.0, 6),
+        "win_top2_random_baseline": round(win_top_two_random_rate, 6),
+        "loss_bottom2_random_baseline": round(loss_bottom_two_random_rate, 6),
+        "win_selected_top2_lift": round(
+            win_top_two_rate - win_top_two_random_rate, 6
+        ),
+        "loss_selected_bottom2_lift": round(
+            loss_bottom_two_rate - loss_bottom_two_random_rate, 6
+        ),
+        "rank_separation_lift": round(
+            (win_top_two_rate - win_top_two_random_rate
+             + loss_bottom_two_rate - loss_bottom_two_random_rate)
+            / 2.0,
+            6,
+        ),
         "win_deploy_mae": round(float(np.mean(deploy_errors)), 6),
     }
 
 
 def _evaluation_score(metrics: dict[str, float], prefix: str = "") -> float:
+    # Keep the historical absolute score for registry continuity.  The
+    # versioned relative lift is checked separately during promotion, so a
+    # two-card hand cannot inflate the new gate merely by being recognized.
     return (
         float(metrics.get(prefix + "auc", 0.0))
         + float(metrics.get(prefix + "balanced_accuracy", 0.0))
@@ -852,7 +1013,7 @@ class ReplayPolicyRegistry:
     def register(
         self,
         model_path: Path,
-        metrics: dict[str, float],
+        metrics: dict[str, Any],
         config: dict[str, Any],
         manifest: dict[str, Any],
     ) -> dict[str, Any]:
@@ -880,7 +1041,15 @@ class ReplayPolicyRegistry:
             config.get("minimum_brier_improvement", 0.005)
         ):
             reasons.append("概率误差没有超过常数基线")
-        if float(metrics.get("rank_separation", 0.0)) < float(
+        ranking_metric_version = str(
+            config.get("ranking_metric_version", "legacy_absolute_v1")
+        )
+        if ranking_metric_version == "relative_random_v1":
+            if float(metrics.get("rank_separation_lift", -1.0)) < float(
+                config.get("minimum_rank_separation_lift", 0.02)
+            ):
+                reasons.append("相对随机基线的选牌排序提升不足")
+        elif float(metrics.get("rank_separation", 0.0)) < float(
             config.get("minimum_rank_separation", 0.53)
         ):
             reasons.append("胜局选牌与败局选牌的影子排序分离不足")
@@ -908,18 +1077,21 @@ class ReplayPolicyRegistry:
                     0.0,
                     "时间外推概率误差没有超过基线",
                 ),
-                (
-                    "temporal_rank_separation",
-                    "minimum_temporal_rank_separation",
-                    0.53,
-                    "时间外推选牌排序分离不足",
-                ),
             )
             for metric, setting, default, message in temporal_checks:
                 if float(metrics.get(metric, -1.0)) < float(
                     config.get(setting, default)
                 ):
                     reasons.append(message)
+            if ranking_metric_version == "relative_random_v1":
+                if float(metrics.get("temporal_rank_separation_lift", -1.0)) < float(
+                    config.get("minimum_temporal_rank_separation_lift", 0.02)
+                ):
+                    reasons.append("时间外推相对随机基线的排序提升不足")
+            elif float(metrics.get("temporal_rank_separation", 0.0)) < float(
+                config.get("minimum_temporal_rank_separation", 0.53)
+            ):
+                reasons.append("时间外推选牌排序分离不足")
 
         if manifest.get("transfer_actions", 0):
             if float(metrics.get("transfer_score_gain", -math.inf)) < float(
@@ -968,6 +1140,7 @@ class ReplayPolicyRegistry:
             "promoted": promoted,
             "rejection_reasons": reasons,
             "promotion_blockers": promotion_blockers,
+            "ranking_metric_version": ranking_metric_version,
             "sync_compatibility": ReplaySync(self.root.parent.parent).compatibility(config),
         }
         if promoted:
@@ -996,8 +1169,23 @@ def train_replay_policy(
     local_weight = float(config.get("local_feedback_weight", 0.0))
     if not math.isfinite(local_weight) or not 0 <= local_weight <= 0.3:
         raise ValueError("local_feedback_weight 必须在 [0, 0.3] 内")
+    frozen_selection = reserve_frozen_groups(
+        {action.group_id for action in actions},
+        validation_fraction=0.0,
+        freeze_fraction=float(config.get("freeze_evaluation_fraction", 0.0)),
+        seed=seed,
+    )
+    frozen_ids = set(frozen_selection.frozen)
+    trainable_actions = [
+        action for action in actions if action.group_id not in frozen_ids
+    ]
     train, validation = _stratified_group_split(
-        actions, validation_fraction, seed
+        trainable_actions, validation_fraction, seed
+    )
+    evaluation_groups = EvaluationGroups(
+        train=tuple(sorted({action.group_id for action in train})),
+        validation=tuple(sorted({action.group_id for action in validation})),
+        frozen=frozen_selection.frozen,
     )
     metrics = _evaluate_candidate(
         train, validation, catalog, neighbors, visual_weight, transfer, transfer_weight, local_weight
@@ -1017,7 +1205,7 @@ def train_replay_policy(
     temporal_transfer: list[ReplayLearningAction] = []
     if bool(config.get("require_temporal_validation", False)):
         temporal_train, temporal_validation = _temporal_group_split(
-            actions, float(config.get("temporal_validation_fraction", 0.25))
+            trainable_actions, float(config.get("temporal_validation_fraction", 0.25))
         )
         temporal_transfer = _transfer_before(transfer, temporal_validation)
         temporal_metrics = _evaluate_candidate(
@@ -1047,11 +1235,11 @@ def train_replay_policy(
             )
 
     value_x, value_y, value_sample_weights = _training_arrays(
-        actions, transfer, catalog, visual_weight, transfer_weight,
+        trainable_actions, transfer, catalog, visual_weight, transfer_weight,
     )
     positive_weight, negative_weight = _class_weights(value_y, value_sample_weights)
-    winning_actions = _deployment_examples(actions, local_weight)
-    local_x, local_y, local_sample_weights = _local_arrays(actions, transfer, catalog, visual_weight, transfer_weight)
+    winning_actions = _deployment_examples(trainable_actions, local_weight)
+    local_x, local_y, local_sample_weights = _local_arrays(trainable_actions, transfer, catalog, visual_weight, transfer_weight)
     deploy_x = np.asarray(
         [
             _feature(action, catalog.by_id[action.card_id], visual_weight)
@@ -1091,13 +1279,15 @@ def train_replay_policy(
         "policy_actions_are_ground_truth": False,
         "target_policy_version": audit.target_policy_version,
         "total_actions": len(actions),
+        "trainable_actions_excluding_frozen": len(trainable_actions),
+        "frozen_actions": sum(action.group_id in frozen_ids for action in actions),
         "local_feedback_weight": local_weight,
         "local_feedback_schema": "short_horizon_visual_proxy_v1",
         "local_feedback_is_causal_ground_truth": False,
-        "local_feedback_actions": sum(a.local_confidence > 0 for a in actions),
-        "local_feedback_positive_actions": sum(a.local_confidence > 0 and a.local_effect > 0 for a in actions),
-        "local_feedback_negative_actions": sum(a.local_confidence > 0 and a.local_effect < 0 for a in actions),
-        "local_feedback_attack_actions": sum(a.local_source == "allied_advance_proxy" for a in actions),
+        "local_feedback_actions": sum(a.local_confidence > 0 for a in trainable_actions),
+        "local_feedback_positive_actions": sum(a.local_confidence > 0 and a.local_effect > 0 for a in trainable_actions),
+        "local_feedback_negative_actions": sum(a.local_confidence > 0 and a.local_effect < 0 for a in trainable_actions),
+        "local_feedback_attack_actions": sum(a.local_source == "allied_advance_proxy" for a in trainable_actions),
         "without_local_feedback_baseline_metrics": local_baseline_metrics,
         "transfer_actions": len(transfer),
         "transfer_battles": sorted({a.group_id for a in transfer}),
@@ -1109,6 +1299,13 @@ def train_replay_policy(
         "current_only_baseline_metrics": baseline_metrics,
         "validation_policy_version": audit.target_policy_version,
         "copied_battles_deduplicated": True,
+        "evaluation_protocol_version": evaluation_groups.protocol_version,
+        "evaluation_groups": evaluation_groups.to_dict(),
+        "evaluation_seed": seed,
+        "validation_fraction": validation_fraction,
+        "freeze_evaluation_fraction": float(
+            config.get("freeze_evaluation_fraction", 0.0)
+        ),
         "train_actions": len(train),
         "validation_actions": len(validation),
         "train_battles": train_groups,
@@ -1130,7 +1327,11 @@ def train_replay_policy(
             "desired_rank_and_battle_time_without_deck_or_card_identity"
         ),
         "deployment_training_source": "current_policy_wins_excluding_observed_harm_plus_sustained_relief" if local_weight else "current_policy_winning_episodes_only",
-        "final_model_refit_on_all_verified_actions": True,
+        "final_model_refit_on_all_verified_actions": False,
+        "final_model_refit_excludes_frozen_evaluation": True,
+        "ranking_metric_version": str(
+            config.get("ranking_metric_version", "legacy_absolute_v1")
+        ),
         "runtime_requires_explicit_allow_bot_training": True,
     }
     candidate = ReplayPolicyRegistry(project_root).register(

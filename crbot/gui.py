@@ -1390,8 +1390,13 @@ class RoyalTrainerApp:
             f"（胜 {replay.get('wins', 0)} / 负 {replay.get('losses', 0)} / "
             f"平 {replay.get('draws', 0)}）\n"
             f"可信状态—动作经验：{replay.get('verified_transitions', 0)} 条\n"
+            f"出牌确认：{replay.get('confirmed_transitions', 0)} 已确认 / "
+            f"{replay.get('unconfirmed_transitions', 0)} 未确认\n"
             f"同版本可训练：{replay_learning.get('verified_episodes', 0)} 局 / "
             f"{replay_learning.get('actions', 0)} 个动作\n"
+            f"原始回放：{replay_learning.get('raw_episodes', 0)} 局 / "
+            f"{replay_learning.get('raw_transitions', 0)} 条；去重后可用动作："
+            f"{replay_learning.get('deduplicated_actions', 0)} 条\n"
         )
         if replay_champion:
             detail += f"已启用低权重回放策略：{replay_champion.get('version')}"

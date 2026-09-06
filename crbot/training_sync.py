@@ -360,7 +360,7 @@ class ReplaySync:
         digest = hashlib.sha256(encode(replay))
         catalog = self.root / str(config.get("dataset", {}).get("card_catalog", "data/cards.json"))
         digest.update(encode(read_json(catalog, {})))
-        for name in ("replay_learning.py", "replay.py", "imitation.py", "cards.py", "battle_perception.py", "policy.py", "tactics.py", "action_feedback.py", "learned_perception.py"):
+        for name in ("replay_learning.py", "replay.py", "replay_evaluation.py", "imitation.py", "cards.py", "battle_perception.py", "policy.py", "tactics.py", "action_feedback.py", "learned_perception.py", "action_confirmation.py"):
             path = self.root / "crbot" / name
             # Git may check the same source out with CRLF on one PC and LF on another.
             digest.update(path.read_text(encoding="utf-8-sig").encode("utf-8") if path.is_file() else b"missing")

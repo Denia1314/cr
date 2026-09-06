@@ -12,7 +12,10 @@ from .imitation import battlefield_features
 from .vision import BattleResult, detect_battle_result
 
 
-REPLAY_SCHEMA_VERSION = 1
+REPLAY_SCHEMA_VERSION = 2
+ACTION_CONFIRMATION_STATUSES = frozenset(
+    {"proposed", "sent", "confirmed", "rejected", "unknown", "legacy_unknown"}
+)
 
 
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -78,12 +81,24 @@ def state_from_action(image: Image.Image, payload: dict[str, Any]) -> dict[str, 
         "battlefield_edges": [round(float(value), 6) for value in visual],
         "allies_observed": bool(payload.get("allies_observed", False)),
         "observed_allies": list(payload.get("observed_allies", [])),
+        "action_confirmation_status": str(
+            payload.get("action_status") or "legacy_unknown"
+        ),
     }
 
 
 def action_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     deploy = list(payload.get("deploy_point", []))
+    status = str(payload.get("action_status") or "legacy_unknown").strip()
+    if status not in ACTION_CONFIRMATION_STATUSES:
+        status = "unknown"
+    confirmation = payload.get("action_confirmation", {})
+    if not isinstance(confirmation, dict):
+        confirmation = {}
     return {
+        "action_id": str(payload.get("action_id", "")).strip(),
+        "action_status": status,
+        "action_confirmation": dict(confirmation),
         "slot_index": int(payload.get("slot_index", -1)),
         "card_id": payload.get("card_id"),
         "deploy_point": [float(value) for value in deploy[:2]],
@@ -142,6 +157,8 @@ class ExperienceReplayRecorder:
             "automatic_result_reward": True,
             "action_observation_schema": "short_horizon_visual_proxy_v1",
             "action_observations_are_causal_ground_truth": False,
+            "action_confirmation_schema": "stable_hand_elixir_visual_v1",
+            "training_requires_confirmed_action": True,
             "allow_bot_training": self.allow_bot_training,
             "training_policy": (
                 "collection_only_until_explicitly_enabled"
@@ -181,6 +198,11 @@ class ExperienceReplayRecorder:
         if self.pending:
             self.pending[-1]["next_state"] = state
             self.pending[-1]["next_frame"] = frame
+            # A later action can alter the same hand/elixir evidence.  Close
+            # the prior short-horizon window instead of attributing joint
+            # effects to the earlier action.
+            self.pending[-1]["feedback_window_closed"] = True
+            self.pending[-1]["feedback_window_closed_reason"] = "next_action_sent"
         self.pending.append(
             {
                 "state": state,
@@ -238,6 +260,15 @@ class ExperienceReplayRecorder:
             **result.to_dict(),
         }
         action_count = len(self.pending)
+        confirmed_action_count = sum(
+            str(item.get("action", {}).get("action_status", "legacy_unknown"))
+            == "confirmed"
+            for item in self.pending
+        )
+        action_statuses = [
+            str(item.get("action", {}).get("action_status", "legacy_unknown"))
+            for item in self.pending
+        ]
         for index, transition in enumerate(self.pending):
             self.transition_sequence += 1
             is_last = index == action_count - 1
@@ -260,7 +291,19 @@ class ExperienceReplayRecorder:
                 "done": is_last,
                 "outcome": result.outcome,
                 "reward_verified": verified,
-                "eligible_for_training": verified and self.allow_bot_training,
+                "action_status": str(
+                    transition.get("action", {}).get("action_status", "legacy_unknown")
+                ),
+                "eligible_for_training": (
+                    verified
+                    and self.allow_bot_training
+                    and str(
+                        transition.get("action", {}).get(
+                            "action_status", "legacy_unknown"
+                        )
+                    )
+                    == "confirmed"
+                ),
                 "policy": self.policy_metadata,
             }
             _append_jsonl(self.transitions_path, row)
@@ -276,7 +319,17 @@ class ExperienceReplayRecorder:
             **result.to_dict(),
             "terminal_reward": round(reward, 6),
             "reward_verified": verified,
-            "eligible_for_training": verified and self.allow_bot_training,
+            "confirmed_action_count": confirmed_action_count,
+            "action_status_counts": {
+                status: action_statuses.count(status)
+                for status in sorted(set(action_statuses))
+            },
+            "eligible_for_training": (
+                verified
+                and self.allow_bot_training
+                and action_count > 0
+                and confirmed_action_count == action_count
+            ),
             "result_frame": frame,
             "policy": self.policy_metadata,
         }
@@ -297,6 +350,9 @@ class ReplayAudit:
     transitions: int
     verified_transitions: int
     training_eligible_transitions: int
+    confirmed_transitions: int
+    unconfirmed_transitions: int
+    action_status_counts: dict[str, int]
     win_rate: float
     collection_ready: bool
     bot_training_enabled: bool
@@ -329,7 +385,36 @@ def audit_replay(project_root: Path, config: dict[str, Any]) -> ReplayAudit:
     verified_transitions = sum(
         bool(row.get("reward_verified")) for row in transitions
     )
-    eligible = sum(bool(row.get("eligible_for_training")) for row in transitions)
+    require_confirmation = bool(config.get("require_action_confirmation", False))
+    status_counts: dict[str, int] = {}
+    for row in transitions:
+        action = row.get("action", {})
+        status = str(
+            row.get("action_status")
+            or (action.get("action_status") if isinstance(action, dict) else "")
+            or "legacy_unknown"
+        )
+        if status not in ACTION_CONFIRMATION_STATUSES:
+            status = "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+    confirmed = status_counts.get("confirmed", 0)
+    eligible = sum(
+        bool(row.get("eligible_for_training"))
+        and (
+            not require_confirmation
+            or str(
+                row.get("action_status")
+                or (
+                    row.get("action", {}).get("action_status")
+                    if isinstance(row.get("action", {}), dict)
+                    else ""
+                )
+                or "legacy_unknown"
+            )
+            == "confirmed"
+        )
+        for row in transitions
+    )
     policy_breakdown: dict[str, dict[str, Any]] = {}
 
     def policy_name(row: dict[str, Any]) -> str:
@@ -426,6 +511,9 @@ def audit_replay(project_root: Path, config: dict[str, Any]) -> ReplayAudit:
         transitions=len(transitions),
         verified_transitions=verified_transitions,
         training_eligible_transitions=eligible,
+        confirmed_transitions=confirmed,
+        unconfirmed_transitions=len(transitions) - confirmed,
+        action_status_counts=status_counts,
         win_rate=round(wins / max(1, decided), 6),
         collection_ready=not reasons,
         bot_training_enabled=bool(config.get("allow_bot_training", False)),

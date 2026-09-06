@@ -26,7 +26,11 @@ from .learning import (
 )
 from .imitation import audit_demonstrations, train_imitation_policy
 from .replay import audit_replay, backfill_replay_history
-from .replay_learning import audit_replay_learning, train_replay_policy
+from .replay_learning import (
+    audit_replay_learning,
+    evaluate_replay_snapshot,
+    train_replay_policy,
+)
 from .vision import WorkflowRecognizer
 from .training_sync import DEFAULT_REPOSITORY, ReplaySync, SyncWorker
 
@@ -66,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     imitate = subcommands.add_parser("imitate", help="审计或训练手动示范模仿策略")
     imitate.add_argument("action", choices=("audit", "train"))
     replay = subcommands.add_parser("replay", help="审计、回填或影子训练自动战斗经验")
-    replay.add_argument("action", choices=("audit", "backfill", "train"))
+    replay.add_argument("action", choices=("audit", "backfill", "evaluate", "train"))
     sync = subcommands.add_parser("sync", help="双机回放数据共享")
     sync.add_argument("action", choices=("setup", "now", "status"), nargs="?", default="now")
     sync.add_argument("--repository", default=DEFAULT_REPOSITORY)
@@ -234,6 +238,12 @@ def main(argv: list[str] | None = None) -> int:
                 catalog,
                 replay_config,
             ).to_dict()
+            if arguments.action == "evaluate":
+                result["evaluation"] = evaluate_replay_snapshot(
+                    config_path.parent,
+                    catalog,
+                    replay_config,
+                )
             if arguments.action == "train":
                 result["training"] = train_replay_policy(
                     config_path.parent,

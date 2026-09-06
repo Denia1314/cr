@@ -172,6 +172,7 @@ python -m crbot --config config.json imitate audit
 - 机器人自己的动作不是专家真值。默认 `allow_bot_training=false`；允许离线生成影子候选，但不允许候选接管实战，避免用失败策略反复训练自己。
 - 每局的回放保存在对应 `runs` 目录内的 `replay_transitions.jsonl` 和 `replay_episodes.jsonl`。
 - 新记录会额外保存左右路各自的威胁类型、接近程度、推进速度、单位数、阵型阶段和对局时间，用于区分提前防守、直接解场、前排、后排和反打。
+- 每次点击都有唯一 `action_id`。点击后的连续画面必须同时提供至少两项独立证据（稳定换牌、圣水扣减、卡槽变化）才记为 `confirmed`；`rejected` / `unknown` 尝试会保留在回放，但不会进入开启确认门槛的新模型训练。
 
 查看现有经验量：
 
@@ -191,7 +192,13 @@ python -m crbot --config config.json replay backfill
 python -m crbot --config config.json replay train
 ```
 
-训练只使用 `training_policy_version` 指定的同版本数据。除了随机的完整对局隔离验证，还会强制使用最新 25% 对局做时间外推验证，以阻止只会拟合旧数据、到了新对局就退化的候选晋升。检查指标包括胜负平衡准确率、AUC、概率误差、胜负选牌排序分离和胜局落点误差。当前的第一阶段门槛是至少 50 局可信结算、10 胜、10 负和 300 条可信动作。达到数据量门槛只表示可以训练影子候选；只有两套验证都通过且显式设置 `allow_bot_training=true` 时，候选才有资格以 10% 的低权重晋升。
+只读查看当前快照、冻结评估集和冠军状态（不会改冠军、注册候选、同步或上传）：
+
+```text
+python -m crbot --config config.json replay evaluate
+```
+
+训练只使用 `training_policy_version` 指定的同版本、已确认动作。除了随机的完整对局隔离验证，还会强制使用最新 25% 对局做时间外推验证，并按固定哈希预留冻结评估集，以阻止只会拟合旧数据、到了新对局就退化的候选晋升。检查指标包括胜负平衡准确率、AUC、概率误差、相对随机基线的选牌排序提升和胜局落点误差。当前的第一阶段门槛是至少 50 局可信结算、10 胜、10 负和 300 条已确认动作。达到数据量门槛只表示可以训练影子候选；只有验证与排序门槛都通过且显式设置 `allow_bot_training=true` 时，候选才有资格以 10% 的低权重晋升。
 
 ### 精确敌军识别模型
 
@@ -249,6 +256,7 @@ learning.bat cycle
 - `learning.bat`：检查可选精确识别模型的数据门槛
 - `demonstrate.bat`：只读监控手动离线对局并学习选牌与落点
 - `python -m crbot --config config.json replay audit`：检查自动胜负奖励与经验回放进度
+- `python -m crbot --config config.json replay evaluate`：只读评估数据分层、冻结集与当前冠军
 - `python -m crbot --config config.json replay train`：训练并验证回放影子候选
 - `start_bot.bat --dry-run`：命令行试运行
 - `start_bot.bat --max-battles 3`：命令行运行 3 局

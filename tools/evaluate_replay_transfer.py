@@ -1,6 +1,6 @@
 """Reproduce the remote replay audit and a local-only cross-generation trial.
 
-Run from the project root: python tools/evaluate_replay_transfer.py --train
+Run from the project root: python tools/evaluate_replay_transfer.py --evaluate
 No GitHub writes or game actions. Results include the fixed V5-only baseline.
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 from crbot.cards import CardCatalog
 from crbot.replay_learning import (
     ReplayPolicyRegistry, collect_replay_learning_actions, train_replay_policy,
+    evaluate_replay_snapshot,
     _policy_version, _feature,
 )
 from crbot.training_sync import ReplaySync, exclusive, training_allowed
@@ -45,7 +46,7 @@ def profile(root: Path, config: dict, catalog: CardCatalog) -> dict:
             anomalies["episode_transition_outcome_mismatch"] += row.get("outcome") != episode.get("outcome")
             anomalies["episode_transition_policy_mismatch"] += _policy_version(row) != _policy_version(episode)
             anomalies["episode_transition_verification_mismatch"] += bool(row.get("reward_verified")) != bool(episode.get("reward_verified"))
-    actions = collect_replay_learning_actions(root, catalog, {})
+    actions = collect_replay_learning_actions(root, catalog, config)
     versions = {}
     for version in sorted({a.policy_version for a in actions}):
         rows = [a for a in actions if a.policy_version == version]
@@ -68,6 +69,11 @@ def profile(root: Path, config: dict, catalog: CardCatalog) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train", action="store_true")
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="只读评估，不注册候选、不晋升冠军、不同步或上传模型",
+    )
     args = parser.parse_args()
     config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))["replay"]
     catalog = CardCatalog.load(ROOT / "data/cards.json")
@@ -76,6 +82,9 @@ def main() -> None:
                 "remote_commit": ReplaySync(ROOT).git("rev-parse", "origin/main"),
                 "config": config, "profile": profile(ROOT, config, catalog)}
     print(json.dumps(evidence["profile"], ensure_ascii=False, indent=2), flush=True)
+    if args.evaluate:
+        evidence["evaluation"] = evaluate_replay_snapshot(ROOT, catalog, config)
+        print(json.dumps(evidence["evaluation"], ensure_ascii=False, indent=2), flush=True)
     if args.train:
         if any(evidence["profile"]["integrity_checks"].values()) or any(
             row["nonfinite_feature_rows"]

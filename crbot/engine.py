@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -8,6 +9,11 @@ from typing import Any
 from PIL import Image
 
 from .adb import DeviceError, MumuDevice
+from .action_confirmation import (
+    ActionConfirmation,
+    ActionConfirmationTracker,
+    assess_action_evidence,
+)
 from .policy import BattlePolicy
 from .recorder import TrainingRecorder
 from .replay import ExperienceReplayRecorder
@@ -18,6 +24,7 @@ from .vision import (
     detect_battle_result,
     find_chest_open_screen,
     find_result_confirm_button,
+    estimate_elixir,
 )
 
 
@@ -113,6 +120,18 @@ class BotEngine:
             self.recorder.run_dir,
             replay_config,
             policy_metadata=policy_metadata,
+        )
+        automation_config = dict(config.get("automation", {}))
+        self.action_confirmation = ActionConfirmationTracker(
+            timeout_s=float(
+                automation_config.get("action_confirmation_timeout_s", 1.35)
+            ),
+            poll_interval_s=float(
+                automation_config.get("action_confirmation_poll_interval_s", 0.18)
+            ),
+            stable_frames=int(
+                automation_config.get("action_confirmation_stable_frames", 2)
+            ),
         )
         self.offline_verified = False
         self.offline_gate_streak = 0
@@ -519,15 +538,12 @@ class BotEngine:
         observation = self.policy.observe_replay_state(image, self.previous_battle_frame, now=now)
         if not self.dry_run:
             self.replay.observe_action_effect(self.completed_battles + 1, observation)
+        policy_snapshot = self.policy.snapshot_state()
         decision = self.policy.decide(image, self.previous_battle_frame, now=now)
         if decision is not None:
-            card_pixel = None
-            deploy_pixel = None
-            if not self.dry_run:
-                card_pixel = list(self.device.tap_normalized(decision.card_point, image.size))
-                if self._sleep(0.09):
-                    return
-                deploy_pixel = list(self.device.tap_normalized(decision.deploy_point, image.size))
+            decision, card_pixel, deploy_pixel, confirmation, post_image, send_error = (
+                self._execute_action(image, decision, policy_snapshot)
+            )
             print(
                 f"[下牌] {'试运行：' if self.dry_run else ''}"
                 f"slot={decision.slot_index + 1} card={decision.card_id or 'unknown'} "
@@ -545,6 +561,13 @@ class BotEngine:
                 )
                 + (" imitation=on" if decision.imitation_used else "")
                 + (" replay-learning=on" if decision.replay_learning_used else "")
+                + f" status={decision.action_status}"
+                + (
+                    f" confirm={confirmation.confidence:.2f}"
+                    if confirmation is not None
+                    else ""
+                )
+                + (f" error={send_error}" if send_error else "")
             )
             payload = decision.to_dict()
             payload["allies_observed"] = observation["allies_observed"]
@@ -554,6 +577,10 @@ class BotEngine:
                     "card_pixel": card_pixel,
                     "deploy_pixel": deploy_pixel,
                     "dry_run": self.dry_run,
+                    "action_confirmation": (
+                        confirmation.to_dict() if confirmation is not None else None
+                    ),
+                    "action_send_error": send_error,
                 }
             )
             event = self.recorder.record("battle_action", image, payload)
@@ -564,7 +591,164 @@ class BotEngine:
                     payload,
                     event.get("frame"),
                 )
-        self.previous_battle_frame = image.copy()
+            if post_image is not None:
+                self.previous_battle_frame = post_image.copy()
+        else:
+            self.previous_battle_frame = image.copy()
+
+    def _execute_action(
+        self,
+        image: Image.Image,
+        decision,
+        policy_snapshot: dict[str, Any],
+    ) -> tuple[Any, list[int] | None, list[int] | None, ActionConfirmation, Image.Image | None, str | None]:
+        """Send one action and resolve it from bounded post-click evidence."""
+        decision = self.policy.prepare_action(decision, policy_snapshot)
+        action_id = decision.action_id
+        sent_at = time.monotonic()
+        self.action_confirmation.register(action_id, sent_at=sent_at)
+        self.recorder.record(
+            "battle_action_proposed",
+            image,
+            decision.to_dict(),
+        )
+
+        # Capture pre-action observations once.  If either recognizer is
+        # unavailable, the confirmation state machine simply demands stronger
+        # remaining evidence instead of assuming the tap worked.
+        pre_matches = None
+        if self.policy.hand_recognizer is not None:
+            try:
+                pre_matches = self.policy.hand_recognizer.recognize(image)
+            except Exception:
+                pre_matches = None
+        pre_elixir, pre_elixir_confidence = estimate_elixir(
+            image, self.config["vision"]["elixir_roi"]
+        )
+        if pre_elixir is None or pre_elixir_confidence < 0.08:
+            pre_elixir = float(decision.elixir)
+
+        card_pixel: list[int] | None = None
+        deploy_pixel: list[int] | None = None
+        send_error: str | None = None
+        if self.dry_run:
+            confirmation = ActionConfirmation(
+                action_id,
+                "unknown",
+                0.0,
+                "试运行未发送真实点击，未将动作视为确认成功",
+                {"dry_run": True},
+                0.0,
+                0,
+            )
+            self.policy.resolve_action(action_id, "unknown", now=sent_at)
+            return (
+                replace(decision, action_status="unknown"),
+                card_pixel,
+                deploy_pixel,
+                confirmation,
+                None,
+                None,
+            )
+
+        try:
+            card_pixel = list(self.device.tap_normalized(decision.card_point, image.size))
+            if self._sleep(0.09):
+                raise DeviceError("停止请求发生在选牌点击后")
+            deploy_pixel = list(
+                self.device.tap_normalized(decision.deploy_point, image.size)
+            )
+        except Exception as exc:  # ADB timeout can still be a real game action.
+            send_error = str(exc)
+        self.recorder.record(
+            "battle_action_sent",
+            image,
+            {
+                "action_id": action_id,
+                "card_pixel": card_pixel,
+                "deploy_pixel": deploy_pixel,
+                "send_error": send_error,
+            },
+        )
+
+        timeout_s = self.action_confirmation.timeout_s
+        deadline = sent_at + timeout_s
+        post_image: Image.Image | None = None
+        confirmation: ActionConfirmation | None = None
+        last_evidence: dict[str, Any] = {}
+        confirmation_error = False
+        while time.monotonic() < deadline and not self._stop_requested():
+            try:
+                post_image = self.device.screenshot()
+            except Exception as exc:
+                send_error = send_error or f"确认截图失败：{exc}"
+                confirmation_error = True
+                break
+            post_matches = None
+            if self.policy.hand_recognizer is not None:
+                try:
+                    post_matches = self.policy.hand_recognizer.recognize(post_image)
+                except Exception:
+                    post_matches = None
+            post_elixir, post_elixir_confidence = estimate_elixir(
+                post_image, self.config["vision"]["elixir_roi"]
+            )
+            if post_elixir_confidence < 0.08:
+                post_elixir = None
+            center = None
+            centers = self.config["vision"].get("card_slot_centers", [])
+            if 0 <= int(decision.slot_index) < len(centers):
+                center = list(centers[int(decision.slot_index)])
+            last_evidence = assess_action_evidence(
+                pre_image=image,
+                post_image=post_image,
+                pre_matches=pre_matches,
+                post_matches=post_matches,
+                slot_index=decision.slot_index,
+                pre_elixir=pre_elixir,
+                post_elixir=post_elixir,
+                card_cost=decision.card_cost,
+                slot_center=center,
+                vision_config=self.config["vision"],
+            )
+            confirmation = self.action_confirmation.observe(
+                action_id, last_evidence, now=time.monotonic()
+            )
+            if confirmation.status in {"confirmed", "rejected", "unknown"}:
+                break
+            remaining = max(0.0, deadline - time.monotonic())
+            if self._sleep(min(self.action_confirmation.poll_interval_s, remaining)):
+                break
+
+        if confirmation is None or confirmation.status == "sent":
+            if self._stop_requested() or confirmation_error:
+                confirmation = self.action_confirmation.force_unknown(
+                    action_id,
+                    reason=(
+                        "停止请求中断确认，保留为未知"
+                        if self._stop_requested()
+                        else "确认截图失败，保留为未知"
+                    ),
+                    evidence=last_evidence,
+                    now=time.monotonic(),
+                )
+            else:
+                confirmation = self.action_confirmation.timeout(
+                    action_id, now=max(time.monotonic(), deadline)
+                )
+        self.policy.resolve_action(
+            action_id,
+            confirmation.status,
+            now=time.monotonic(),
+        )
+        return (
+            replace(decision, action_status=confirmation.status),
+            card_pixel,
+            deploy_pixel,
+            confirmation,
+            post_image,
+            send_error,
+        )
 
     def run(self) -> None:
         if self._stop_requested():

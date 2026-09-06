@@ -34,7 +34,10 @@
     "battle_ui_threshold": 0.72,
     "battle_end_consecutive_frames": 4,
     "post_battle_confirm_interval_s": 0.75,
-    "post_battle_timeout_s": 35
+    "post_battle_timeout_s": 35,
+    "action_confirmation_timeout_s": 1.35,
+    "action_confirmation_poll_interval_s": 0.18,
+    "action_confirmation_stable_frames": 2
   },
   "timing": {
     "poll_interval_s": 0.7,
@@ -95,6 +98,11 @@
     "minimum_temporal_auc": 0.58,
     "minimum_temporal_brier_improvement": 0.0,
     "minimum_temporal_rank_separation": 0.53,
+    "ranking_metric_version": "relative_random_v1",
+    "minimum_rank_separation_lift": 0.02,
+    "minimum_temporal_rank_separation_lift": 0.02,
+    "require_action_confirmation": true,
+    "freeze_evaluation_fraction": 0.10,
     "minimum_score_improvement": 0.01,
     "assisted_policy_weight_scale": 0.1,
     "policy_card_weight": 2.0,
@@ -215,7 +223,8 @@
       0.64,
       0.69
     ],
-    "seed": 20260831
+    "seed": 20260831,
+    "unknown_action_retry_guard_s": 1.2
   },
   "training": {
     "minimum_human_frames": 200,
