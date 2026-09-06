@@ -1,13 +1,16 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 set "PYTHONUTF8=1"
+chcp 65001 >nul
 cd /d "%~dp0"
+set "BOT_PY=%CD%\.venv\Scripts\python.exe"
+if exist "%BOT_PY%" goto python_ready
 set "BOT_PY=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-if exist "%BOT_PY%" goto dependencies
+if exist "%BOT_PY%" goto python_ready
 where python >nul 2>nul
 if errorlevel 1 goto python_missing
 set "BOT_PY=python"
-:dependencies
+:python_ready
 "%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
 if not errorlevel 1 goto sync
 echo Required Python packages are missing. Installing them now...

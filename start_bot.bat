@@ -2,6 +2,8 @@
 setlocal
 set "PYTHONUTF8=1"
 set "BOT_ROOT=%~dp0"
+set "BOT_PY=%BOT_ROOT%.venv\Scripts\python.exe"
+if exist "%BOT_PY%" goto run
 set "BOT_PY=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 if exist "%BOT_PY%" goto run
 where py >nul 2>nul && set "BOT_PY=py" && goto run

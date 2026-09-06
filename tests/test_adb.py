@@ -36,6 +36,75 @@ class MumuConnectionTests(unittest.TestCase):
             self.assertEqual(device.cli_path, (tool_dir / "mumu-cli.exe").resolve())
             self.assertEqual(device.adb_path, (tool_dir / "adb.exe").resolve())
 
+    def test_custom_adb_mode_does_not_require_mumu_cli(self) -> None:
+        config = {
+            "mumu": {
+                "connection_mode": "custom_adb",
+                "adb_host": "127.0.0.1",
+                "adb_port": 7555,
+            }
+        }
+        with (
+            patch.object(MumuDevice, "_discover_adb", return_value=Path("adb.exe")),
+            patch.object(MumuDevice, "_discover_cli") as discover_cli,
+        ):
+            device = MumuDevice(config)
+
+        discover_cli.assert_not_called()
+        self.assertTrue(device.uses_custom_adb)
+        self.assertIsNone(device.cli_path)
+        self.assertEqual(device.connection_description, "自定义 ADB 127.0.0.1:7555")
+
+    def test_custom_adb_explicit_binary_works_without_install_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            adb = Path(directory) / "adb.exe"
+            adb.touch()
+            with patch.object(MumuDevice, "_discover_cli") as discover_cli:
+                device = MumuDevice({"mumu": {
+                    "install_dir": "auto", "connection_mode": "custom_adb",
+                    "adb_path": str(adb), "adb_port": 7555,
+                }})
+            discover_cli.assert_not_called()
+            self.assertIsNone(device.install_dir)
+            self.assertEqual(device.adb_path, adb)
+
+    def test_custom_adb_connects_directly_to_configured_port(self) -> None:
+        device = MumuDevice.__new__(MumuDevice)
+        device.connection_mode = "custom_adb"
+        device.adb_host = "127.0.0.1"
+        device.adb_port = 7555
+        device.adb_path = Path("adb.exe")
+        device.cli_path = None
+        device.startup_timeout_s = 10.0
+        device.serial = None
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            if command[-1] == "get-state":
+                return subprocess.CompletedProcess(command, 0, "device\n", "")
+            if command[-2:] == ["getprop", "sys.boot_completed"]:
+                return subprocess.CompletedProcess(command, 0, "1\n", "")
+            return subprocess.CompletedProcess(command, 0, "connected\n", "")
+
+        device._run = fake_run  # type: ignore[method-assign]
+        serial = device.connect()
+
+        self.assertEqual(serial, "127.0.0.1:7555")
+        self.assertIn(["adb.exe", "connect", "127.0.0.1:7555"], commands)
+        self.assertFalse(any("mumu-cli" in " ".join(command) for command in commands))
+
+    def test_custom_adb_port_is_validated(self) -> None:
+        with self.assertRaisesRegex(DeviceError, "1 到 65535"):
+            MumuDevice(
+                {
+                    "mumu": {
+                        "connection_mode": "custom_adb",
+                        "adb_port": 70000,
+                    }
+                }
+            )
+
     def test_connect_retries_transient_offline_state(self) -> None:
         device = MumuDevice.__new__(MumuDevice)
         device.cli_path = Path("mumu-cli.exe")

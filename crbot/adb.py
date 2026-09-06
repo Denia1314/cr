@@ -30,9 +30,34 @@ class MumuDevice:
         self.vm_index = int(mumu.get("vm_index", 0))
         self.auto_launch = bool(mumu.get("auto_launch", True))
         self.startup_timeout_s = float(mumu.get("startup_timeout_s", 120))
-        self.cli_path = self._discover_cli()
+        self.connection_mode = str(mumu.get("connection_mode", "auto")).strip().lower()
+        if self.connection_mode not in {"auto", "custom_adb"}:
+            raise DeviceError(
+                "mumu.connection_mode 必须为 auto 或 custom_adb"
+            )
+        self.adb_host = str(mumu.get("adb_host", "127.0.0.1")).strip()
+        self.configured_adb_path = str(mumu.get("adb_path", "")).strip()
+        if not self.adb_host or any(char.isspace() for char in self.adb_host):
+            raise DeviceError("mumu.adb_host 不能为空或包含空格")
+        try:
+            self.adb_port = int(mumu.get("adb_port", 16384))
+        except (TypeError, ValueError) as exc:
+            raise DeviceError("mumu.adb_port 必须为 1 到 65535 的整数") from exc
+        if not 1 <= self.adb_port <= 65535:
+            raise DeviceError("mumu.adb_port 必须为 1 到 65535 的整数")
+        self.cli_path = None if self.uses_custom_adb else self._discover_cli()
         self.adb_path = self._discover_adb()
         self.serial: str | None = None
+
+    @property
+    def uses_custom_adb(self) -> bool:
+        return getattr(self, "connection_mode", "auto") == "custom_adb"
+
+    @property
+    def connection_description(self) -> str:
+        if self.uses_custom_adb:
+            return f"自定义 ADB {self.adb_host}:{self.adb_port}"
+        return f"MuMu 自动检测（vmindex={self.vm_index}）"
 
     @staticmethod
     def _process_kwargs() -> dict[str, Any]:
@@ -182,23 +207,42 @@ class MumuDevice:
         )
 
     def _discover_adb(self) -> Path:
-        assert self.install_dir is not None
-        candidates = [
-            self.cli_path.parent / "adb.exe",
-            self.install_dir / "nx_main" / "adb.exe",
-            self.install_dir / "shell" / "adb.exe",
-            self.install_dir / "nx_device" / "15.0" / "shell" / "adb.exe",
-            *sorted(self.install_dir.glob("nx_device/*/shell/adb.exe")),
-        ]
+        candidates: list[Path] = []
+        if self.configured_adb_path:
+            candidates.append(
+                Path(os.path.expandvars(self.configured_adb_path)).expanduser()
+            )
+        for variable in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
+            sdk_root = os.environ.get(variable)
+            if sdk_root:
+                candidates.append(Path(sdk_root) / "platform-tools" / "adb.exe")
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            candidates.append(
+                Path(local_app_data) / "Android" / "Sdk" / "platform-tools" / "adb.exe"
+            )
+        if self.cli_path is not None:
+            candidates.append(self.cli_path.parent / "adb.exe")
         for candidate in candidates:
             if candidate.is_file():
                 return candidate
+        # Custom ADB mode may have no MuMu install or CLI at all. Explicit
+        # platform-tools work independently; MuMu paths are optional fallbacks.
+        roots = [self.install_dir] if self.install_dir is not None else self._candidate_install_dirs()
+        for root in roots:
+            for candidate in (
+                root / "nx_main" / "adb.exe",
+                root / "shell" / "adb.exe",
+                *sorted(root.glob("nx_device/*/shell/adb.exe")),
+            ):
+                if candidate.is_file():
+                    return candidate
         found = shutil.which("adb")
         if found:
             return Path(found)
         raise DeviceError(
-            f"已找到 MuMu（{self.install_dir}），但找不到 adb.exe；"
-            "请检查 MuMu 安装是否完整。"
+            "找不到 adb.exe；请设置 mumu.install_dir 或 mumu.adb_path，"
+            "或将 Android platform-tools 加入 PATH"
         )
 
     def _run(
@@ -228,6 +272,21 @@ class MumuDevice:
         return result
 
     def info(self) -> dict[str, Any]:
+        if self.uses_custom_adb:
+            serial = f"{self.adb_host}:{self.adb_port}"
+            result = self._run(
+                [str(self.adb_path), "-s", serial, "get-state"],
+                timeout=8,
+                check=False,
+            )
+            return {
+                "is_android_started": str(result.stdout).strip() == "device",
+                "adb_host_ip": self.adb_host,
+                "adb_port": self.adb_port,
+                "connection_mode": self.connection_mode,
+            }
+        if self.cli_path is None:  # pragma: no cover - constructor guarantees this
+            raise DeviceError("MuMu 自动检测模式缺少 mumu-cli.exe")
         result = self._run(
             [str(self.cli_path), "info", "--vmindex", str(self.vm_index)],
             timeout=15,
@@ -241,6 +300,11 @@ class MumuDevice:
         info = self.info()
         if info.get("is_android_started"):
             return info
+        if self.uses_custom_adb:
+            raise DeviceError(
+                f"自定义 ADB 设备未上线：{self.adb_host}:{self.adb_port}；"
+                "请确认模拟器已启动且 ADB 调试已开启"
+            )
         if not self.auto_launch:
             raise DeviceError("MuMu Android 设备未启动，且 auto_launch=false")
         self._run(
@@ -262,28 +326,48 @@ class MumuDevice:
         raise DeviceError(f"MuMu 在 {self.startup_timeout_s:.0f} 秒内未完成启动")
 
     def connect(self) -> str:
-        info = self.ensure_running()
-        host = str(info.get("adb_host_ip", "127.0.0.1"))
-        port = int(info.get("adb_port", 16384))
+        if self.uses_custom_adb:
+            host = self.adb_host
+            port = self.adb_port
+            use_mumu_cli = False
+            timeout_s = max(5.0, min(20.0, self.startup_timeout_s))
+        else:
+            info = self.ensure_running()
+            host = str(info.get("adb_host_ip", "127.0.0.1"))
+            port = int(info.get("adb_port", 16384))
+            use_mumu_cli = True
+            timeout_s = max(10.0, min(45.0, self.startup_timeout_s))
         self.serial = f"{host}:{port}"
-        deadline = time.monotonic() + max(10.0, min(45.0, self.startup_timeout_s))
+        deadline = time.monotonic() + timeout_s
         last_detail = "尚未返回设备状态"
         attempts = 0
         while time.monotonic() < deadline:
             attempts += 1
             try:
-                cli_result = self._run(
-                    [
-                        str(self.cli_path),
-                        "adb",
-                        "--vmindex",
-                        str(self.vm_index),
-                        "--cmd",
-                        "connect",
-                    ],
-                    timeout=8,
-                    check=False,
-                )
+                cli_details = ""
+                if use_mumu_cli:
+                    if self.cli_path is None:  # pragma: no cover - defensive
+                        raise DeviceError("MuMu 自动检测模式缺少 mumu-cli.exe")
+                    cli_result = self._run(
+                        [
+                            str(self.cli_path),
+                            "adb",
+                            "--vmindex",
+                            str(self.vm_index),
+                            "--cmd",
+                            "connect",
+                        ],
+                        timeout=8,
+                        check=False,
+                    )
+                    cli_details = "；".join(
+                        value
+                        for value in (
+                            str(cli_result.stdout).strip(),
+                            str(cli_result.stderr).strip(),
+                        )
+                        if value
+                    )
                 direct_result = self._run(
                     [str(self.adb_path), "connect", self.serial],
                     timeout=8,
@@ -316,8 +400,7 @@ class MumuDevice:
                         state or "无 get-state 输出",
                         str(direct_result.stdout).strip(),
                         str(direct_result.stderr).strip(),
-                        str(cli_result.stdout).strip(),
-                        str(cli_result.stderr).strip(),
+                        cli_details,
                     ]
                     last_detail = "；".join(value for value in details if value)
             except (OSError, subprocess.SubprocessError) as exc:
