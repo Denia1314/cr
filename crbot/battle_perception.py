@@ -297,7 +297,7 @@ def detect_lane_threats(
             1.0,
             unit_count * 0.20
             + max(0.0, (proximity - 0.20) / 0.52) * 0.62
-            + min(0.18, approach_rate * 0.18),
+            + min(0.18, approach_rate * 6.0),
         )
         if unit_count == 0:
             threat = "none"

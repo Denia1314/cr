@@ -33,6 +33,26 @@ class M2TemporalTests(unittest.TestCase):
         history.update([replacement], 0.3)
         self.assertEqual(history.matches_for_decision([replacement], 0.3)[0].card_id, "arrows")
 
+    def test_hand_history_requires_stable_frames_for_replacement(self) -> None:
+        history = HandHistory(max_age_s=2.0, min_confidence=0.4, stability_frames=2)
+        old = HandCardMatch(0, "knight", 0.95, 80, 20, 400, False)
+        replacement = HandCardMatch(0, "arrows", 0.92, 80, 20, 400, False)
+
+        history.update([old], 0.0)
+        # The first observation is intentionally withheld until it is stable.
+        self.assertIsNone(history.matches_for_decision([old], 0.0)[0].card_id)
+        history.update([old], 0.1)
+        self.assertEqual(history.matches_for_decision([old], 0.1)[0].card_id, "knight")
+
+        # A single replacement-looking frame must not immediately change the
+        # decision card.  Fail closed for this frame because the slot may have
+        # already changed in the real UI.
+        history.update([replacement], 0.2)
+        self.assertIsNone(history.matches_for_decision([replacement], 0.2)[0].card_id)
+        self.assertEqual(history.metadata(0.2)["0"]["pending_card_id"], "arrows")
+        history.update([replacement], 0.3)
+        self.assertEqual(history.matches_for_decision([replacement], 0.3)[0].card_id, "arrows")
+
     def test_lane_speed_is_stable_when_frame_interval_changes(self) -> None:
         image = Image.new("RGB", (10, 10), "black")
         with patch(
@@ -78,6 +98,25 @@ class M2TemporalTests(unittest.TestCase):
         before = policy.virtual_elixir
         policy._update_virtual_elixir(11.0)
         self.assertAlmostEqual(policy.virtual_elixir - before, 1.0, places=5)
+
+    def test_low_confidence_elixir_cannot_grant_raw_visual_amount(self) -> None:
+        config = {
+            "timing": {"battle_action_cooldown_s": [1.0, 1.0]},
+            "vision": {"elixir_roi": [0.0, 0.9, 1.0, 1.0], "card_slot_centers": []},
+            "policy": {
+                "initial_elixir": 2.0,
+                "elixir_visual_min_confidence": 0.12,
+                "elixir_visual_trusted_confidence": 0.22,
+            },
+        }
+        policy = BattlePolicy(config)
+        policy.reset_battle(now=0.0)
+        image = Image.new("RGB", (10, 10), "black")
+        with patch("crbot.policy.estimate_elixir", return_value=(9.0, 0.13)):
+            value, source = policy._estimate_elixir(image, now=0.0)
+        self.assertEqual(source, "vision_low_confidence")
+        self.assertLess(value, 9.0)
+        self.assertAlmostEqual(value, 3.4, places=5)
 
     def test_timing_stats_reports_p50_and_p95(self) -> None:
         stats = TimingStats()

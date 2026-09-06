@@ -85,9 +85,10 @@ class LaneFormation:
     backline_card: str | None = None
     backline_source: str = ""
     # Appended after the legacy fields to keep positional construction of old
-    # snapshots compatible.
-    frontline_confidence: float = 0.0
-    backline_confidence: float = 0.0
+    # snapshots compatible.  A fresh deployment starts at full confidence;
+    # confidence then decays even when no newer friendly-unit evidence exists.
+    frontline_confidence: float = 1.0
+    backline_confidence: float = 1.0
 
     @staticmethod
     def _confidence_at(
@@ -96,12 +97,8 @@ class LaneFormation:
         now: float,
         decay_s: float,
     ) -> float:
-        # A zero value is the legacy/default marker.  Treat it as fully
-        # confident so old snapshots and direct callers remain compatible.
-        if confidence <= 0.0:
-            return 1.0
         age = max(0.0, float(now) - float(observed_at))
-        return max(0.0, min(1.0, confidence * max(0.0, 1.0 - age / max(0.1, decay_s))))
+        return max(0.0, min(1.0, max(0.0, confidence) * max(0.0, 1.0 - age / max(0.1, decay_s))))
 
     def frontline_confidence_at(self, now: float, decay_s: float = 11.0) -> float:
         return self._confidence_at(self.frontline_confidence, self.frontline_at, now, decay_s)
@@ -156,6 +153,7 @@ class BattlePolicy:
             unknown_grace_s=float(self.policy.get("hand_unknown_grace_s", 0.45)),
             empty_grace_s=float(self.policy.get("hand_empty_grace_s", 0.32)),
             confidence_decay_s=float(self.policy.get("hand_confidence_decay_s", 1.2)),
+            stability_frames=int(self.policy.get("hand_stability_frames", 1)),
         )
         self._last_elixir_visual: float | None = None
         self._last_elixir_confidence = 0.0
@@ -494,9 +492,21 @@ class BattlePolicy:
             # this prevents a purple animation or partial crop from granting
             # spendable elixir that was not actually observed.
             blend = 0.45 if confidence >= 0.22 else 0.20
-            self.virtual_elixir = (1.0 - blend) * self.virtual_elixir + blend * float(visual_elixir)
-            value = float(visual_elixir)
-            source = "vision" if confidence >= 0.22 else "vision_low_confidence"
+            fused = (1.0 - blend) * self.virtual_elixir + blend * float(visual_elixir)
+            self.virtual_elixir = min(10.0, max(0.0, fused))
+            trusted_confidence = max(
+                minimum_confidence,
+                float(self.policy.get("elixir_visual_trusted_confidence", 0.22)),
+            )
+            if confidence >= trusted_confidence:
+                value = float(visual_elixir)
+                source = "vision"
+            else:
+                # A barely visible meter can be a transient animation.  Keep
+                # the estimate at the conservative fused value instead of
+                # allowing one noisy frame to unlock an expensive card.
+                value = min(float(visual_elixir), self.virtual_elixir)
+                source = "vision_low_confidence"
             self._last_elixir_estimate_value = value
             self._last_elixir_estimate_source = source
             self._last_elixir_estimate_at = now
@@ -885,6 +895,26 @@ class BattlePolicy:
     @property
     def last_hand_image(self) -> Image.Image | None:
         return self._last_hand_image
+
+    @property
+    def last_elixir_image(self) -> Image.Image | None:
+        return self._last_elixir_image
+
+    @property
+    def last_elixir_visual(self) -> float | None:
+        return self._last_elixir_visual
+
+    @property
+    def last_elixir_estimate_value(self) -> float | None:
+        return self._last_elixir_estimate_value
+
+    @property
+    def last_elixir_estimate_source(self) -> str:
+        return self._last_elixir_estimate_source
+
+    @property
+    def last_elixir_confidence(self) -> float:
+        return float(self._last_elixir_confidence)
 
     def hand_metadata(self, now: float | None = None) -> dict[str, dict[str, float | int | str | None]]:
         return self.hand_history.metadata(self.last_update if now is None else float(now))

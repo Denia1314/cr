@@ -22,16 +22,33 @@ class HandSlotState:
     stable_frames: int = 0
     empty: bool = False
     blocked_card_id: str | None = None
+    pending_card_id: str | None = None
+    pending_frames: int = 0
+    pending_confidence: float = 0.0
 
     def age(self, now: float) -> float:
         if self.observed_at < -999.0:
             return float("inf")
         return max(0.0, float(now) - self.observed_at)
 
-    def usable_card_id(self, now: float, max_age_s: float, min_confidence: float) -> str | None:
-        if self.card_id is None or self.blocked_card_id == self.card_id:
+    def usable_card_id(
+        self,
+        now: float,
+        max_age_s: float,
+        min_confidence: float,
+        required_stable_frames: int = 1,
+    ) -> str | None:
+        if (
+            self.card_id is None
+            or self.blocked_card_id == self.card_id
+            or self.pending_card_id is not None
+        ):
             return None
-        if self.age(now) > max_age_s or self.confidence < min_confidence:
+        if (
+            self.age(now) > max_age_s
+            or self.confidence < min_confidence
+            or self.stable_frames < max(1, int(required_stable_frames))
+        ):
             return None
         return self.card_id
 
@@ -53,12 +70,14 @@ class HandHistory:
         unknown_grace_s: float = 0.45,
         empty_grace_s: float = 0.32,
         confidence_decay_s: float = 1.2,
+        stability_frames: int = 1,
     ) -> None:
         self.max_age_s = max(0.1, float(max_age_s))
         self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
         self.unknown_grace_s = max(0.0, float(unknown_grace_s))
         self.empty_grace_s = max(0.0, float(empty_grace_s))
         self.confidence_decay_s = max(0.1, float(confidence_decay_s))
+        self.stability_frames = max(1, int(stability_frames))
         self.slots: dict[int, HandSlotState] = {}
         self.last_update_at = -1_000.0
 
@@ -95,6 +114,37 @@ class HandHistory:
                     previous.observed_at = now
                     previous.confidence = self._safe_confidence(match.confidence)
                     previous.empty = False
+                    previous.pending_card_id = None
+                    previous.pending_frames = 0
+                    previous.pending_confidence = 0.0
+                    continue
+                if (
+                    previous is not None
+                    and previous.card_id is not None
+                    and previous.card_id != card_id
+                    and self.stability_frames > 1
+                ):
+                    if previous.pending_card_id == card_id:
+                        previous.pending_frames += 1
+                        previous.pending_confidence = max(
+                            previous.pending_confidence,
+                            self._safe_confidence(match.confidence),
+                        )
+                    else:
+                        previous.pending_card_id = card_id
+                        previous.pending_frames = 1
+                        previous.pending_confidence = self._safe_confidence(match.confidence)
+                    if previous.pending_frames < self.stability_frames:
+                        continue
+                    self.slots[slot] = HandSlotState(
+                        slot_index=slot,
+                        card_id=card_id,
+                        confidence=previous.pending_confidence,
+                        observed_at=now,
+                        stable_frames=previous.pending_frames,
+                        empty=False,
+                        blocked_card_id=None,
+                    )
                     continue
                 if previous is not None and previous.card_id == card_id:
                     stable_frames = previous.stable_frames + 1
@@ -112,6 +162,9 @@ class HandHistory:
                     stable_frames=stable_frames,
                     empty=False,
                     blocked_card_id=blocked,
+                    pending_card_id=None,
+                    pending_frames=0,
+                    pending_confidence=0.0,
                 )
                 continue
 
@@ -123,6 +176,9 @@ class HandHistory:
                 if previous.age(now) <= grace and previous.blocked_card_id is None:
                     previous.confidence = self._decayed_confidence(previous, now) * 0.85
                     previous.empty = bool(match.empty)
+                    previous.pending_card_id = None
+                    previous.pending_frames = 0
+                    previous.pending_confidence = 0.0
                     continue
             self.slots[slot] = HandSlotState(
                 slot_index=slot,
@@ -132,6 +188,9 @@ class HandHistory:
                 stable_frames=0,
                 empty=bool(match.empty),
                 blocked_card_id=(previous.blocked_card_id if previous else None),
+                pending_card_id=None,
+                pending_frames=0,
+                pending_confidence=0.0,
             )
 
         # Missing slots are treated as unknown, not as a new empty card.  They
@@ -153,6 +212,9 @@ class HandHistory:
         state.observed_at = float(now)
         state.confidence = max(state.confidence, self.min_confidence)
         state.empty = False
+        state.pending_card_id = None
+        state.pending_frames = 0
+        state.pending_confidence = 0.0
 
     def matches_for_decision(
         self,
@@ -164,7 +226,12 @@ class HandHistory:
         for match in observed:
             state = self.slots.get(int(match.slot_index))
             card_id = (
-                state.usable_card_id(now, self.max_age_s, self.min_confidence)
+                state.usable_card_id(
+                    now,
+                    self.max_age_s,
+                    self.min_confidence,
+                    self.stability_frames,
+                )
                 if state is not None
                 else None
             )
@@ -191,11 +258,18 @@ class HandHistory:
     def metadata(self, now: float) -> dict[str, dict[str, float | int | str | None]]:
         return {
             str(slot): {
-                "card_id": state.usable_card_id(now, self.max_age_s, self.min_confidence),
+                "card_id": state.usable_card_id(
+                    now,
+                    self.max_age_s,
+                    self.min_confidence,
+                    self.stability_frames,
+                ),
                 "age_s": round(state.age(now), 3),
                 "confidence": round(self._decayed_confidence(state, now), 4),
                 "stable_frames": state.stable_frames,
                 "blocked_card_id": state.blocked_card_id,
+                "pending_card_id": state.pending_card_id,
+                "pending_frames": state.pending_frames,
             }
             for slot, state in sorted(self.slots.items())
         }
@@ -241,4 +315,3 @@ class TimingStats:
             }
             for stage, values in sorted(self.samples.items())
         }
-

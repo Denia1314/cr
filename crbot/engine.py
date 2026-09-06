@@ -144,6 +144,7 @@ class BotEngine:
         self.previous_battle_frame: Image.Image | None = None
         self.latest_frame: Image.Image | None = None
         self.last_known_at = time.monotonic()
+        self._last_screenshot_elapsed_s = 0.0
         self.response_timing = TimingStats(
             max_samples=int(automation_config.get("timing_max_samples", 512))
         )
@@ -158,6 +159,16 @@ class BotEngine:
     def response_timing_summary(self) -> dict[str, dict[str, float | int | None]]:
         """Return M2 stage latency percentiles collected in this run."""
         return self.response_timing.summary()
+
+    def _record_response_timing(self, image: Image.Image | None, reason: str) -> None:
+        summary = self.response_timing_summary()
+        if not summary:
+            return
+        self.recorder.record(
+            "battle_timing_summary",
+            image,
+            {"reason": str(reason), "summary": summary},
+        )
 
     def _sleep(self, seconds: float) -> bool:
         """Wait interruptibly and return True when a stop was requested."""
@@ -261,9 +272,8 @@ class BotEngine:
             now = time.monotonic()
             screenshot_started = time.perf_counter()
             image = self.device.screenshot()
-            self.response_timing.record(
-                "screenshot", time.perf_counter() - screenshot_started
-            )
+            self._last_screenshot_elapsed_s = time.perf_counter() - screenshot_started
+            self.response_timing.record("screenshot", self._last_screenshot_elapsed_s)
             self.latest_frame = image
             matches = self.recognizer.match_all(image)
             gate = self._update_offline_gate(image, matches)
@@ -337,6 +347,7 @@ class BotEngine:
                     f"[确定] {'试运行：' if self.dry_run else ''}"
                     f"全局识别并点击 {confirm_point} score={confirm_score:.3f}"
                 )
+                self._record_response_timing(image, "confirm")
                 self.last_known_at = now
                 last_confirm_at = now
                 result_confirmed_at = now
@@ -417,6 +428,7 @@ class BotEngine:
                     f"[宝箱] 整体画面识别成功；{action_text} "
                     f"{chest_point} score={chest_score:.3f}"
                 )
+                self._record_response_timing(image, "chest")
                 if self._sleep(poll_interval):
                     print("[停止] 已收到停止请求，自动训练已安全结束。")
                     return
@@ -466,6 +478,7 @@ class BotEngine:
                             "completed_battles": self.completed_battles,
                         },
                     )
+                    self._record_response_timing(image, "auto_end")
 
             elif post_battle:
                 self.last_known_at = now
@@ -550,6 +563,7 @@ class BotEngine:
         now = time.monotonic()
         cycle_started = time.perf_counter()
         timing: dict[str, float] = {}
+        timing["screenshot_s"] = self._last_screenshot_elapsed_s
         perception_started = time.perf_counter()
         observation = self.policy.observe_replay_state(image, self.previous_battle_frame, now=now)
         timing["perception_s"] = time.perf_counter() - perception_started
@@ -569,6 +583,11 @@ class BotEngine:
             )
             timing["total_s"] = time.perf_counter() - cycle_started
             self.response_timing.record("total", timing["total_s"])
+            if decision.threat_type != "none":
+                timing["threat_to_confirmation_s"] = timing["total_s"]
+                self.response_timing.record(
+                    "threat_to_confirmation", timing["total_s"]
+                )
             print(
                 f"[下牌] {'试运行：' if self.dry_run else ''}"
                 f"slot={decision.slot_index + 1} card={decision.card_id or 'unknown'} "
@@ -655,9 +674,20 @@ class BotEngine:
                 pre_matches = self.policy.hand_recognizer.recognize(image)
             except Exception:
                 pre_matches = None
-        pre_elixir, pre_elixir_confidence = estimate_elixir(
-            image, self.config["vision"]["elixir_roi"]
-        )
+        if (
+            self.policy.last_elixir_image is image
+            and self.policy.last_elixir_estimate_value is not None
+        ):
+            pre_elixir = self.policy.last_elixir_estimate_value
+            pre_elixir_confidence = (
+                self.policy.last_elixir_confidence
+                if self.policy.last_elixir_estimate_source.startswith("vision")
+                else 0.0
+            )
+        else:
+            pre_elixir, pre_elixir_confidence = estimate_elixir(
+                image, self.config["vision"]["elixir_roi"]
+            )
         if pre_elixir is None or pre_elixir_confidence < 0.08:
             pre_elixir = float(decision.elixir)
 
@@ -668,8 +698,10 @@ class BotEngine:
             dry_run_elapsed = 0.0
             if timing is not None:
                 timing["send_s"] = dry_run_elapsed
+                timing["adb_s"] = dry_run_elapsed
                 timing["confirmation_s"] = 0.0
             self.response_timing.record("send", dry_run_elapsed)
+            self.response_timing.record("adb", dry_run_elapsed)
             self.response_timing.record("confirmation", 0.0)
             confirmation = ActionConfirmation(
                 action_id,
@@ -703,7 +735,9 @@ class BotEngine:
         send_elapsed = time.perf_counter() - send_started
         if timing is not None:
             timing["send_s"] = send_elapsed
+            timing["adb_s"] = send_elapsed
         self.response_timing.record("send", send_elapsed)
+        self.response_timing.record("adb", send_elapsed)
         self.recorder.record(
             "battle_action_sent",
             image,
