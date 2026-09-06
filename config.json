@@ -1,6 +1,6 @@
 {
   "mumu": {
-    "install_dir": "D:\\MuMuPlayer",
+    "install_dir": "auto",
     "vm_index": 0,
     "auto_launch": true,
     "startup_timeout_s": 120
@@ -57,7 +57,7 @@
   },
   "replay": {
     "enabled": true,
-    "allow_bot_training": false,
+    "allow_bot_training": true,
     "gamma": 0.99,
     "minimum_result_confidence": 0.75,
     "terminal_win_reward": 1.0,
@@ -70,9 +70,16 @@
     "minimum_verified_transitions": 300,
     "minimum_distinct_cards_for_training": 8,
     "training_policy_version": "adaptive_counterpush_v5",
+    "transfer_policy_versions": ["formation_counterpush_v4"],
+    "transfer_sample_weight": 0.25,
+    "local_feedback_weight": 0.15,
+    "minimum_local_validation_actions": 50,
+    "minimum_local_validation_battles": 12,
+    "minimum_local_mse_improvement": 0.0001,
+    "minimum_transfer_score_gain": 0.01,
     "validation_fraction": 0.25,
     "training_seed": 20260903,
-    "training_neighbors": 31,
+    "training_neighbors": 61,
     "battlefield_visual_weight": 0.08,
     "minimum_validation_episodes": 12,
     "minimum_validation_wins": 3,

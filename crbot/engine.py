@@ -496,7 +496,11 @@ class BotEngine:
             image,
             battle_index=self.completed_battles + 1,
         )
-        decision = self.policy.decide(image, self.previous_battle_frame)
+        now = time.monotonic()
+        observation = self.policy.observe_replay_state(image, self.previous_battle_frame, now=now)
+        if not self.dry_run:
+            self.replay.observe_action_effect(self.completed_battles + 1, observation)
+        decision = self.policy.decide(image, self.previous_battle_frame, now=now)
         if decision is not None:
             card_pixel = None
             deploy_pixel = None
@@ -524,6 +528,8 @@ class BotEngine:
                 + (" replay-learning=on" if decision.replay_learning_used else "")
             )
             payload = decision.to_dict()
+            payload["allies_observed"] = observation["allies_observed"]
+            payload["observed_allies"] = observation["observed_allies"]
             payload.update(
                 {
                     "card_pixel": card_pixel,

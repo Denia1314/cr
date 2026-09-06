@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +11,31 @@ from crbot.adb import DeviceError, MumuDevice
 
 
 class MumuConnectionTests(unittest.TestCase):
+    def test_auto_detects_mumu_from_environment_variable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            install_dir = Path(directory) / "custom-mumu"
+            tool_dir = install_dir / "nx_main"
+            tool_dir.mkdir(parents=True)
+            (tool_dir / "mumu-cli.exe").touch()
+            (tool_dir / "adb.exe").touch()
+            config = {
+                "mumu": {
+                    "install_dir": "auto",
+                    "vm_index": 0,
+                    "auto_launch": True,
+                    "startup_timeout_s": 120,
+                }
+            }
+
+            with patch.dict(
+                os.environ, {"MUMU_INSTALL_DIR": str(install_dir)}, clear=False
+            ):
+                device = MumuDevice(config)
+
+            self.assertEqual(device.install_dir, install_dir.resolve())
+            self.assertEqual(device.cli_path, (tool_dir / "mumu-cli.exe").resolve())
+            self.assertEqual(device.adb_path, (tool_dir / "adb.exe").resolve())
+
     def test_connect_retries_transient_offline_state(self) -> None:
         device = MumuDevice.__new__(MumuDevice)
         device.cli_path = Path("mumu-cli.exe")

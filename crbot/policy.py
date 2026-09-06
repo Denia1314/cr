@@ -51,6 +51,7 @@ class BattleDecision:
     replay_learning_used: bool = False
     card_formation_role: str = ""
     formation_phase: str = ""
+    desired_formation_role: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -131,6 +132,9 @@ class BattlePolicy:
         self.imitation_model: ImitationPolicyModel | None = None
         self.replay_model: ReplayPolicyModel | None = None
         self.perception_error = ""
+        self._observed_image: Image.Image | None = None
+        self._observed_at = -1.0
+        self._observed_threats: dict[str, LaneThreat] = {}
         if self.mode == "reactive_catalog":
             self._load_catalog(config, config_path)
 
@@ -173,6 +177,8 @@ class BattlePolicy:
 
     def reset_battle(self, now: float | None = None) -> None:
         now = time.monotonic() if now is None else now
+        self._observed_image = None
+        self._observed_threats = {}
         self.virtual_elixir = float(self.policy.get("initial_elixir", 5.0))
         self.last_update = now
         self.battle_started_at = now
@@ -558,6 +564,40 @@ class BattlePolicy:
             + float(self.policy.get("defense_proximity_escalation", 0.09))
         )
 
+    def observe_replay_state(
+        self, current: Image.Image, previous: Image.Image | None, *, now: float | None = None,
+    ) -> dict[str, Any]:
+        now = time.monotonic() if now is None else now
+        threats = self._perceive_threats(current, previous, now)
+        state: dict[str, Any] = {
+            "schema": "action_observation_v1",
+            "battle_elapsed_s": round(max(0.0, now - self.battle_started_at), 3),
+            "allies_observed": bool(getattr(self.learned_detector, "allies_observed", False)),
+            "observed_allies": list(getattr(self.learned_detector, "observed_allies", [])),
+        }
+        for lane, threat in threats.items():
+            state.update({lane + "_threat": threat.score,
+                          lane + "_threat_proximity": threat.proximity,
+                          lane + "_unit_count": threat.unit_count})
+        return state
+
+    def _perceive_threats(
+        self, current: Image.Image, previous: Image.Image | None, now: float,
+    ) -> dict[str, LaneThreat]:
+        if current is self._observed_image and now == self._observed_at:
+            return self._observed_threats
+        ignore_points = ()
+        if self.last_deploy_point is not None and now - self.last_deploy_at <= float(
+            self.policy.get("own_deploy_indicator_s", 2.8)
+        ):
+            ignore_points = (self.last_deploy_point,)
+        threats = detect_lane_threats(current, previous, ignore_points)
+        if self.learned_detector is not None:
+            threats = self.learned_detector.detect(current, threats)
+        self._observed_image, self._observed_threats = current, threats
+        self._observed_at = now
+        return threats
+
     def _reactive_decide(
         self,
         current: Image.Image,
@@ -576,16 +616,7 @@ class BattlePolicy:
         if not affordable:
             return None
 
-        ignore_points: tuple[tuple[float, float], ...] = ()
-        if (
-            self.last_deploy_point is not None
-            and now - self.last_deploy_at
-            <= float(self.policy.get("own_deploy_indicator_s", 2.8))
-        ):
-            ignore_points = (self.last_deploy_point,)
-        threats = detect_lane_threats(current, previous, ignore_points)
-        if self.learned_detector is not None:
-            threats = self.learned_detector.detect(current, threats)
+        threats = self._perceive_threats(current, previous, now)
         left_threat = threats["left"]
         right_threat = threats["right"]
         imitation_available = bool(
@@ -979,6 +1010,7 @@ class BattlePolicy:
             replay_learning_used=replay_available,
             card_formation_role=card_tactics(card).formation_role,
             formation_phase=formation_phase,
+            desired_formation_role=desired_role,
         )
 
     def _baseline_decide(

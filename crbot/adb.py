@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import shutil
+import string
 import subprocess
 import time
 from pathlib import Path
@@ -19,7 +21,12 @@ class DeviceError(RuntimeError):
 class MumuDevice:
     def __init__(self, config: dict[str, Any]):
         mumu = config["mumu"]
-        self.install_dir = Path(mumu.get("install_dir", "D:\\MuMuPlayer"))
+        configured_dir = str(mumu.get("install_dir", "auto") or "auto").strip()
+        self.install_dir: Path | None = (
+            None
+            if configured_dir.lower() in {"auto", "detect", ""}
+            else Path(os.path.expandvars(configured_dir)).expanduser()
+        )
         self.vm_index = int(mumu.get("vm_index", 0))
         self.auto_launch = bool(mumu.get("auto_launch", True))
         self.startup_timeout_s = float(mumu.get("startup_timeout_s", 120))
@@ -34,23 +41,154 @@ class MumuDevice:
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         return kwargs
 
-    def _discover_cli(self) -> Path:
-        candidates = [
-            self.install_dir / "nx_main" / "mumu-cli.exe",
-            Path("C:/Program Files/Netease/MuMuPlayer-12.0/shell/mumu-cli.exe"),
-        ]
+    @staticmethod
+    def _install_root_from_tool(tool: Path) -> Path:
+        if tool.parent.name.lower() in {"nx_main", "shell"}:
+            return tool.parent.parent
+        return tool.parent
+
+    @classmethod
+    def _running_install_dirs(cls) -> list[Path]:
+        if os.name != "nt":
+            return []
+        command = (
+            "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new();"
+            "$ErrorActionPreference='SilentlyContinue';"
+            "Get-Process -Name MuMuNxMain,MuMuPlayer,MuMuMultiPlayer "
+            "| ForEach-Object {$_.Path}"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=6,
+                check=False,
+                **cls._process_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        roots: list[Path] = []
+        for line in result.stdout.splitlines():
+            executable = Path(line.strip().strip('"'))
+            if executable.name:
+                roots.append(cls._install_root_from_tool(executable))
+        return roots
+
+    @staticmethod
+    def _registry_install_dirs() -> list[Path]:
+        if os.name != "nt":
+            return []
+        try:
+            import winreg
+        except ImportError:
+            return []
+
+        roots: list[Path] = []
+        key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+        access_modes = (winreg.KEY_READ, winreg.KEY_READ | winreg.KEY_WOW64_32KEY)
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for access in access_modes:
+                try:
+                    uninstall = winreg.OpenKey(hive, key_path, 0, access)
+                except OSError:
+                    continue
+                with uninstall:
+                    for index in range(winreg.QueryInfoKey(uninstall)[0]):
+                        try:
+                            subkey_name = winreg.EnumKey(uninstall, index)
+                            with winreg.OpenKey(uninstall, subkey_name) as subkey:
+                                display_name = str(
+                                    winreg.QueryValueEx(subkey, "DisplayName")[0]
+                                )
+                                if "mumu" not in display_name.lower():
+                                    continue
+                                for value_name in ("InstallLocation", "DisplayIcon"):
+                                    try:
+                                        raw = str(winreg.QueryValueEx(subkey, value_name)[0])
+                                    except OSError:
+                                        continue
+                                    value = raw.split(",", 1)[0].strip().strip('"')
+                                    if not value:
+                                        continue
+                                    candidate = Path(os.path.expandvars(value))
+                                    if candidate.suffix.lower() == ".exe":
+                                        candidate = MumuDevice._install_root_from_tool(candidate)
+                                    roots.append(candidate)
+                        except OSError:
+                            continue
+        return roots
+
+    def _candidate_install_dirs(self) -> list[Path]:
+        candidates: list[Path] = []
+        if self.install_dir is not None:
+            candidates.append(self.install_dir)
+        for variable in ("MUMU_INSTALL_DIR", "MUMU_HOME"):
+            value = os.environ.get(variable, "").strip()
+            if value:
+                candidates.append(Path(os.path.expandvars(value)).expanduser())
+        candidates.extend(self._running_install_dirs())
+        candidates.extend(self._registry_install_dirs())
+
+        if os.name == "nt":
+            drives = [
+                Path(f"{letter}:/")
+                for letter in string.ascii_uppercase
+                if Path(f"{letter}:/").exists()
+            ]
+        else:
+            drives = []
+        relative_roots = (
+            Path("MuMuPlayer"),
+            Path("Netease/MuMuPlayer-12.0"),
+            Path("Program Files/Netease/MuMuPlayer-12.0"),
+            Path("Program Files/Netease/MuMuPlayer"),
+            Path("Program Files (x86)/Netease/MuMuPlayer-12.0"),
+        )
+        for drive in drives:
+            candidates.extend(drive / relative for relative in relative_roots)
+
+        unique: list[Path] = []
+        seen: set[str] = set()
         for candidate in candidates:
-            if candidate.is_file():
-                return candidate
+            normalized = os.path.normcase(str(candidate.resolve(strict=False)))
+            if normalized not in seen:
+                seen.add(normalized)
+                unique.append(candidate)
+        return unique
+
+    def _discover_cli(self) -> Path:
+        for install_dir in self._candidate_install_dirs():
+            candidates = (
+                install_dir / "nx_main" / "mumu-cli.exe",
+                install_dir / "shell" / "mumu-cli.exe",
+                install_dir / "mumu-cli.exe",
+            )
+            for candidate in candidates:
+                if candidate.is_file():
+                    self.install_dir = install_dir.resolve()
+                    return candidate.resolve()
         found = shutil.which("mumu-cli")
         if found:
-            return Path(found)
-        raise DeviceError("找不到 mumu-cli.exe；请在 config.json 设置正确的 mumu.install_dir")
+            candidate = Path(found).resolve()
+            self.install_dir = self._install_root_from_tool(candidate)
+            return candidate
+        raise DeviceError(
+            "找不到 mumu-cli.exe；已自动检查运行进程、注册表、各磁盘常见目录和 PATH。"
+            "如为便携版，可设置环境变量 MUMU_INSTALL_DIR。"
+        )
 
     def _discover_adb(self) -> Path:
+        assert self.install_dir is not None
         candidates = [
+            self.cli_path.parent / "adb.exe",
             self.install_dir / "nx_main" / "adb.exe",
+            self.install_dir / "shell" / "adb.exe",
             self.install_dir / "nx_device" / "15.0" / "shell" / "adb.exe",
+            *sorted(self.install_dir.glob("nx_device/*/shell/adb.exe")),
         ]
         for candidate in candidates:
             if candidate.is_file():
@@ -58,7 +196,10 @@ class MumuDevice:
         found = shutil.which("adb")
         if found:
             return Path(found)
-        raise DeviceError("找不到 adb.exe；请在 config.json 设置正确的 mumu.install_dir")
+        raise DeviceError(
+            f"已找到 MuMu（{self.install_dir}），但找不到 adb.exe；"
+            "请检查 MuMu 安装是否完整。"
+        )
 
     def _run(
         self,

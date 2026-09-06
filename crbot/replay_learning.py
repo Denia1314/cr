@@ -20,10 +20,13 @@ from .imitation import (
     battlefield_features,
     candidate_features,
 )
+from .tactics import card_tactics
+from .action_feedback import action_feedback
 
 
 REPLAY_POLICY_SCHEMA_VERSION = 1
 CONTEXT_FEATURE_COUNT = 6
+TACTICAL_FEATURE_COUNT = 17
 
 
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -92,6 +95,9 @@ class ReplayLearningAction:
     desired_role: str
     battle_elapsed_s: float
     timestamp_unix: float = 0.0
+    local_effect: float = 0.0
+    local_confidence: float = 0.0
+    local_source: str = "unobserved"
 
     @property
     def target(self) -> float:
@@ -222,6 +228,7 @@ def collect_replay_learning_actions(
                     "stage_backline",
                 }:
                     desired_role = "backline"
+            local_effect, local_confidence, local_source = action_feedback(row)
             actions.append(
                 ReplayLearningAction(
                     group_id=group_id,
@@ -283,10 +290,92 @@ def collect_replay_learning_actions(
                     desired_role=desired_role,
                     battle_elapsed_s=float(state.get("battle_elapsed_s", 0.0)),
                     timestamp_unix=float(row.get("timestamp_unix", 0.0)),
+                    local_effect=local_effect,
+                    local_confidence=local_confidence,
+                    local_source=local_source,
                 )
             )
             seen.add(transition_id)
-    return actions
+    return _deduplicate_battles(actions)
+
+
+def _deduplicate_battles(
+    actions: list[ReplayLearningAction],
+) -> list[ReplayLearningAction]:
+    """Collapse copied runs re-uploaded with a different device/run identity.
+
+    At least two actions, exact content AND positive original timestamps must
+    agree. A single action or untimed record cannot reliably identify a copy.
+    """
+    groups: dict[str, list[ReplayLearningAction]] = {}
+    for action in actions:
+        groups.setdefault(action.group_id, []).append(action)
+    seen: set[str] = set()
+    result: list[ReplayLearningAction] = []
+    for rows in groups.values():
+        if len(rows) >= 2 and all(math.isfinite(a.timestamp_unix) and a.timestamp_unix > 0 for a in rows):
+            content = []
+            for action in rows:
+                value = asdict(action)
+                value.pop("group_id")
+                value.pop("transition_id")
+                # Derived labels must not change the identity of a copied game.
+                for key in ("local_effect", "local_confidence", "local_source"):
+                    value.pop(key)
+                content.append(json.dumps(value, sort_keys=True, allow_nan=False))
+            digest = hashlib.sha256("\n".join(sorted(content)).encode()).hexdigest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+        result.extend(rows)
+    return result
+
+
+def _transfer_actions(
+    project_root: Path, catalog: CardCatalog, config: dict[str, Any],
+) -> list[ReplayLearningAction]:
+    versions = config.get("transfer_policy_versions", [])
+    if not isinstance(versions, list) or any(not isinstance(v, str) for v in versions):
+        raise ValueError("transfer_policy_versions 必须是策略版本字符串列表")
+    target = str(config.get("training_policy_version", "")).strip()
+    if versions and not target:
+        raise ValueError("跨版本学习必须指定当前 training_policy_version")
+    result = []
+    for version in sorted(set(versions) - {target}):
+        result.extend(collect_replay_learning_actions(
+            project_root, catalog, {**config, "training_policy_version": version}
+        ))
+    return result
+
+
+def _transfer_before(
+    actions: list[ReplayLearningAction], validation: list[ReplayLearningAction],
+) -> list[ReplayLearningAction]:
+    """Exclude whole source games ending at/after the temporal holdout starts."""
+    if not validation or any(a.timestamp_unix <= 0 for a in validation):
+        return []
+    cutoff = min(a.timestamp_unix for a in validation)
+    blocked = {a.group_id for a in validation}
+    blocked.update(a.group_id for a in actions
+                   if not math.isfinite(a.timestamp_unix)
+                   or a.timestamp_unix <= 0 or a.timestamp_unix >= cutoff)
+    return [a for a in actions if a.group_id not in blocked]
+
+
+def _training_arrays(
+    train: list[ReplayLearningAction], transfer: list[ReplayLearningAction],
+    catalog: CardCatalog, visual_weight: float, transfer_weight: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if not math.isfinite(transfer_weight) or not 0 < transfer_weight <= 1:
+        raise ValueError("transfer_sample_weight 必须在 (0, 1] 内")
+    # Total old-generation weight never exceeds half of current-generation data.
+    weight = min(transfer_weight, 0.5 * len(train) / max(1, len(transfer)))
+    rows = train + transfer
+    x = np.asarray([_feature(a, catalog.by_id[a.card_id], visual_weight)
+                    for a in rows], dtype=np.float32)
+    y = np.asarray([a.target for a in rows], dtype=np.float32)
+    weights = np.asarray([1.0] * len(train) + [weight] * len(transfer), dtype=np.float32)
+    return x, y, weights
 
 
 def audit_replay_learning(
@@ -346,6 +435,14 @@ def _feature(
         visual_weight,
     )
     values.extend(
+        _tactical_features(
+            card,
+            action.threats(),
+            action.formation_phase,
+            action.desired_role,
+        )
+    )
+    values.extend(
         _context_features(
             action.formation_phase,
             action.desired_role,
@@ -353,6 +450,52 @@ def _feature(
         )
     )
     return np.asarray(values, dtype=np.float32)
+
+
+def _tactical_features(
+    card: CardDefinition,
+    threats: dict[str, LaneThreat],
+    formation_phase: str,
+    desired_role: str,
+) -> list[float]:
+    """Describe how any catalog card fits the current tactical situation."""
+
+    tactics = card_tactics(card)
+    phase = formation_phase.casefold()
+    role = desired_role.casefold()
+    defense = 1.0 if "defense" in phase or phase.startswith("counter_") else 0.0
+    attack = 1.0 - defense
+    swarm_pressure = max(
+        threat.score if threat.threat == "swarm" else 0.0
+        for threat in threats.values()
+    )
+    heavy_pressure = max(
+        threat.score if threat.threat == "heavy" else 0.0
+        for threat in threats.values()
+    )
+    frontline = min(1.0, tactics.frontline_score / 7.0)
+    backline = min(1.0, tactics.backline_score / 7.0)
+    splash = min(1.0, tactics.splash_strength)
+    heavy_counter = min(1.0, tactics.heavy_counter_strength)
+    return [
+        frontline,
+        backline,
+        1.0 if tactics.is_win_condition else 0.0,
+        1.0 if tactics.is_defensive else 0.0,
+        splash,
+        heavy_counter,
+        tactics.offensive_commitment,
+        1.0 if tactics.formation_role == "frontline" else 0.0,
+        1.0 if tactics.formation_role == "backline" else 0.0,
+        1.0 if tactics.formation_role == "hybrid" else 0.0,
+        frontline * (1.0 if role == "frontline" else 0.0),
+        backline * (1.0 if role == "backline" else 0.0),
+        splash * swarm_pressure,
+        heavy_counter * heavy_pressure,
+        (1.0 if tactics.is_defensive else 0.0) * defense,
+        tactics.offensive_commitment * defense,
+        (1.0 if tactics.is_win_condition else 0.0) * attack,
+    ]
 
 
 def _context_features(
@@ -425,10 +568,14 @@ def _temporal_group_split(
     return train, validation
 
 
-def _class_weights(targets: np.ndarray) -> tuple[float, float]:
-    positives = max(1, int(np.sum(targets >= 0.5)))
-    negatives = max(1, len(targets) - positives)
-    return len(targets) / (2.0 * positives), len(targets) / (2.0 * negatives)
+def _class_weights(
+    targets: np.ndarray, sample_weights: np.ndarray | None = None,
+) -> tuple[float, float]:
+    weights = np.ones(len(targets)) if sample_weights is None else sample_weights
+    positives = max(1e-8, float(np.sum(weights[targets >= 0.5])))
+    negatives = max(1e-8, float(np.sum(weights[targets < 0.5])))
+    total = float(np.sum(weights))
+    return total / (2.0 * positives), total / (2.0 * negatives)
 
 
 def _balanced_knn_predict(
@@ -438,6 +585,7 @@ def _balanced_knn_predict(
     neighbors: int,
     positive_weight: float,
     negative_weight: float,
+    sample_weights: np.ndarray | None = None,
 ) -> float:
     if len(training_x) == 0:
         return 0.5
@@ -446,6 +594,8 @@ def _balanced_knn_predict(
     indices = np.argpartition(distances, count - 1)[:count]
     values = training_y[indices]
     weights = np.where(values >= 0.5, positive_weight, negative_weight)
+    if sample_weights is not None:
+        weights = weights * sample_weights[indices]
     denominator = float(np.sum(weights))
     if denominator <= 0.0:
         return 0.5
@@ -466,6 +616,44 @@ def _plain_knn_predict(
     return float(np.mean(training_y[indices]))
 
 
+def _local_arrays(
+    train: list[ReplayLearningAction], transfer: list[ReplayLearningAction],
+    catalog: CardCatalog, visual_weight: float, transfer_weight: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    old_weight = min(transfer_weight, 0.5 * len(train) / max(1, len(transfer)))
+    rows = [(a, weight) for source, weight in ((train, 1.0), (transfer, old_weight))
+            for a in source if a.local_confidence > 0]
+    return (
+        np.asarray([_feature(a, catalog.by_id[a.card_id], visual_weight) for a, _ in rows], dtype=np.float32),
+        np.asarray([a.local_effect * a.local_confidence for a, _ in rows], dtype=np.float32),
+        np.asarray([w for _, w in rows], dtype=np.float32),
+    )
+
+
+def _local_predict(
+    arrays: tuple[np.ndarray, np.ndarray, np.ndarray], sample: np.ndarray, neighbors: int,
+) -> float:
+    x, y, weights = arrays
+    if not len(y):
+        return 0.0
+    # A defense-only dataset cannot teach attack effects (or vice versa).
+    if sample.size >= CONTEXT_FEATURE_COUNT:
+        same_phase = (x[:, -CONTEXT_FEATURE_COUNT] >= 0.5) == (sample[-CONTEXT_FEATURE_COUNT] >= 0.5)
+        x, y, weights = x[same_phase], y[same_phase], weights[same_phase]
+        if not len(y):
+            return 0.0
+    distances = np.sum((x - sample.reshape(1, -1)) ** 2, axis=1)
+    count = min(max(1, neighbors), len(y))
+    indices = np.argpartition(distances, count - 1)[:count]
+    return float(np.average(y[indices], weights=weights[indices]))
+
+
+def _deployment_examples(actions: list[ReplayLearningAction], local_weight: float) -> list[ReplayLearningAction]:
+    return [a for a in actions if (
+        a.outcome == "win" and not (local_weight and a.local_confidence > 0 and a.local_effect < -0.15)
+    ) or (local_weight and a.local_confidence >= 0.5 and a.local_effect >= 0.25)]
+
+
 def _auc(targets: np.ndarray, predictions: np.ndarray) -> float:
     positive = predictions[targets >= 0.5]
     negative = predictions[targets < 0.5]
@@ -484,23 +672,24 @@ def _evaluate_candidate(
     catalog: CardCatalog,
     neighbors: int,
     visual_weight: float,
+    transfer: list[ReplayLearningAction] | None = None,
+    transfer_weight: float = 0.25,
+    local_weight: float = 0.0,
 ) -> dict[str, float]:
-    training_x = np.asarray(
-        [_feature(action, catalog.by_id[action.card_id], visual_weight) for action in train],
-        dtype=np.float32,
+    training_x, training_y, sample_weights = _training_arrays(
+        train, transfer or [], catalog, visual_weight, transfer_weight,
     )
-    training_y = np.asarray([action.target for action in train], dtype=np.float32)
-    positive_weight, negative_weight = _class_weights(training_y)
+    positive_weight, negative_weight = _class_weights(training_y, sample_weights)
+    local_arrays = _local_arrays(train, transfer or [], catalog, visual_weight, transfer_weight)
+    def predict(card: CardDefinition, action: ReplayLearningAction) -> float:
+        feature = _feature(action, card, visual_weight)
+        value = _balanced_knn_predict(training_x, training_y, feature, neighbors,
+                                      positive_weight, negative_weight, sample_weights)
+        effect = _local_predict(local_arrays, feature, neighbors) if local_weight else 0.0
+        return float(np.clip(value + local_weight * effect, 0.0, 1.0))
     predictions = np.asarray(
         [
-            _balanced_knn_predict(
-                training_x,
-                training_y,
-                _feature(action, catalog.by_id[action.card_id], visual_weight),
-                neighbors,
-                positive_weight,
-                negative_weight,
-            )
+            predict(catalog.by_id[action.card_id], action)
             for action in validation
         ],
         dtype=np.float32,
@@ -512,7 +701,7 @@ def _evaluate_candidate(
     true_positive_rate = float(np.mean(guesses[positive_mask]))
     true_negative_rate = float(np.mean(~guesses[negative_mask]))
     balanced_accuracy = (true_positive_rate + true_negative_rate) / 2.0
-    prior = float(np.mean(training_y))
+    prior = float(np.average(training_y, weights=sample_weights))
     # The KNN probabilities are class-balanced for decision ranking. Restore
     # the observed training prior before measuring probability calibration.
     numerator = predictions * prior
@@ -538,14 +727,7 @@ def _evaluate_candidate(
             continue
         ranked = sorted(
             cards,
-            key=lambda card: _balanced_knn_predict(
-                training_x,
-                training_y,
-                _feature(action, card, visual_weight),
-                neighbors,
-                positive_weight,
-                negative_weight,
-            ),
+            key=lambda card: predict(card, action),
             reverse=True,
         )
         actual_rank = next(
@@ -558,7 +740,9 @@ def _evaluate_candidate(
         else:
             loss_bottom_two.append(float(actual_rank >= len(ranked) - top_count))
 
-    deploy_train = [action for action in train if action.outcome == "win"]
+    deploy_train = _deployment_examples(train, local_weight)
+    if not deploy_train:
+        raise ValueError("缺少可用的落点学习样本")
     deploy_validation = [action for action in validation if action.outcome == "win"]
     deploy_x = np.asarray(
         [
@@ -589,7 +773,19 @@ def _evaluate_candidate(
     loss_groups = sum(value == "loss" for value in groups.values())
     win_top_two_rate = float(np.mean(win_top_two)) if win_top_two else 0.0
     loss_bottom_two_rate = float(np.mean(loss_bottom_two)) if loss_bottom_two else 0.0
+    local_validation = [a for a in validation if a.local_confidence > 0]
+    local_targets = np.asarray([a.local_effect * a.local_confidence for a in local_validation])
+    local_predictions = np.asarray([
+        _local_predict(local_arrays, _feature(a, catalog.by_id[a.card_id], visual_weight), neighbors)
+        for a in local_validation
+    ])
+    local_prior = float(np.average(local_arrays[1], weights=local_arrays[2])) if len(local_arrays[1]) else 0.0
+    local_baseline_mse = min(float(np.mean(local_targets ** 2)), float(np.mean((local_targets - local_prior) ** 2))) if len(local_targets) else 0.0
     return {
+        "local_validation_actions": float(len(local_validation)),
+        "local_validation_battles": float(len({a.group_id for a in local_validation})),
+        "local_baseline_mse": round(local_baseline_mse, 6),
+        "local_mse_improvement": round(local_baseline_mse - float(np.mean((local_targets - local_predictions) ** 2)), 6) if len(local_targets) else 0.0,
         "validation_actions": float(len(validation)),
         "validation_episodes": float(len(groups)),
         "validation_wins": float(win_groups),
@@ -608,6 +804,16 @@ def _evaluate_candidate(
         "rank_separation": round((win_top_two_rate + loss_bottom_two_rate) / 2.0, 6),
         "win_deploy_mae": round(float(np.mean(deploy_errors)), 6),
     }
+
+
+def _evaluation_score(metrics: dict[str, float], prefix: str = "") -> float:
+    return (
+        float(metrics.get(prefix + "auc", 0.0))
+        + float(metrics.get(prefix + "balanced_accuracy", 0.0))
+        + 0.5 * float(metrics.get(prefix + "rank_separation", 0.0))
+        + float(metrics.get(prefix + "brier_improvement", 0.0))
+        - 0.25 * float(metrics.get(prefix + "win_deploy_mae", 1.0))
+    )
 
 
 class ReplayPolicyRegistry:
@@ -715,13 +921,26 @@ class ReplayPolicyRegistry:
                 ):
                     reasons.append(message)
 
-        score = (
-            float(metrics.get("auc", 0.0))
-            + float(metrics.get("balanced_accuracy", 0.0))
-            + 0.5 * float(metrics.get("rank_separation", 0.0))
-            + float(metrics.get("brier_improvement", 0.0))
-            - 0.25 * float(metrics.get("win_deploy_mae", 1.0))
-        )
+        if manifest.get("transfer_actions", 0):
+            if float(metrics.get("transfer_score_gain", -math.inf)) < float(
+                config.get("minimum_transfer_score_gain", 0.01)
+            ):
+                reasons.append("旧版本经验未改善当前版本整局验证")
+            if bool(config.get("require_temporal_validation", False)) and float(
+                metrics.get("temporal_transfer_score_gain", -math.inf)
+            ) < 0:
+                reasons.append("旧版本经验导致当前版本时间外推退步")
+        if manifest.get("local_feedback_weight", 0):
+            for prefix in ("", "temporal_") if config.get("require_temporal_validation") else ("",):
+                if metrics.get(prefix + "local_validation_actions", 0) < int(config.get("minimum_local_validation_actions", 50)):
+                    reasons.append(prefix + "短期效果验证动作不足")
+                if metrics.get(prefix + "local_validation_battles", 0) < int(config.get("minimum_local_validation_battles", 12)):
+                    reasons.append(prefix + "短期效果验证对局不足")
+                if metrics.get(prefix + "local_mse_improvement", -1) < float(config.get("minimum_local_mse_improvement", 0.0001)):
+                    reasons.append(prefix + "短期效果预测未超过零变化或均值基线")
+                if metrics.get(prefix + "local_score_gain", -1) < 0:
+                    reasons.append(prefix + "短期效果学习导致整局验证退步")
+        score = _evaluation_score(metrics)
         registry = self.load()
         promotion_blockers: list[str] = []
         quality_passed = not reasons
@@ -772,36 +991,67 @@ def train_replay_policy(
     seed = int(config.get("training_seed", config.get("seed", 20260903)))
     neighbors = int(config.get("training_neighbors", 31))
     visual_weight = float(config.get("battlefield_visual_weight", 0.08))
+    transfer = _transfer_actions(project_root, catalog, config)
+    transfer_weight = float(config.get("transfer_sample_weight", 0.25))
+    local_weight = float(config.get("local_feedback_weight", 0.0))
+    if not math.isfinite(local_weight) or not 0 <= local_weight <= 0.3:
+        raise ValueError("local_feedback_weight 必须在 [0, 0.3] 内")
     train, validation = _stratified_group_split(
         actions, validation_fraction, seed
     )
     metrics = _evaluate_candidate(
-        train, validation, catalog, neighbors, visual_weight
+        train, validation, catalog, neighbors, visual_weight, transfer, transfer_weight, local_weight
     )
+    local_baseline_metrics: dict[str, float] = {}
+    if local_weight:
+        local_baseline_metrics = _evaluate_candidate(train, validation, catalog, neighbors, visual_weight, transfer, transfer_weight)
+        metrics["local_score_gain"] = round(_evaluation_score(metrics) - _evaluation_score(local_baseline_metrics), 6)
+    baseline_metrics: dict[str, float] = {}
+    if transfer:
+        baseline_metrics = _evaluate_candidate(train, validation, catalog, neighbors, visual_weight)
+        metrics["transfer_score_gain"] = round(
+            _evaluation_score(metrics) - _evaluation_score(baseline_metrics), 6
+        )
     temporal_train: list[ReplayLearningAction] = []
     temporal_validation: list[ReplayLearningAction] = []
+    temporal_transfer: list[ReplayLearningAction] = []
     if bool(config.get("require_temporal_validation", False)):
         temporal_train, temporal_validation = _temporal_group_split(
             actions, float(config.get("temporal_validation_fraction", 0.25))
         )
+        temporal_transfer = _transfer_before(transfer, temporal_validation)
         temporal_metrics = _evaluate_candidate(
             temporal_train,
             temporal_validation,
             catalog,
             neighbors,
             visual_weight,
+            temporal_transfer,
+            transfer_weight,
+            local_weight,
         )
+        if local_weight:
+            local_baseline = _evaluate_candidate(temporal_train, temporal_validation, catalog, neighbors, visual_weight, temporal_transfer, transfer_weight)
+            local_baseline_metrics.update({f"temporal_{key}": value for key, value in local_baseline.items()})
+            temporal_metrics["local_score_gain"] = round(_evaluation_score(temporal_metrics) - _evaluation_score(local_baseline), 6)
         metrics.update(
             {f"temporal_{key}": value for key, value in temporal_metrics.items()}
         )
+        if transfer:
+            temporal_baseline = _evaluate_candidate(
+                temporal_train, temporal_validation, catalog, neighbors, visual_weight
+            )
+            baseline_metrics.update({f"temporal_{key}": value for key, value in temporal_baseline.items()})
+            metrics["temporal_transfer_score_gain"] = round(
+                _evaluation_score(temporal_metrics) - _evaluation_score(temporal_baseline), 6
+            )
 
-    value_x = np.asarray(
-        [_feature(action, catalog.by_id[action.card_id], visual_weight) for action in actions],
-        dtype=np.float32,
+    value_x, value_y, value_sample_weights = _training_arrays(
+        actions, transfer, catalog, visual_weight, transfer_weight,
     )
-    value_y = np.asarray([action.target for action in actions], dtype=np.float32)
-    positive_weight, negative_weight = _class_weights(value_y)
-    winning_actions = [action for action in actions if action.outcome == "win"]
+    positive_weight, negative_weight = _class_weights(value_y, value_sample_weights)
+    winning_actions = _deployment_examples(actions, local_weight)
+    local_x, local_y, local_sample_weights = _local_arrays(actions, transfer, catalog, visual_weight, transfer_weight)
     deploy_x = np.asarray(
         [
             _feature(action, catalog.by_id[action.card_id], visual_weight)
@@ -819,6 +1069,11 @@ def train_replay_policy(
         temporary_model,
         value_x=value_x,
         value_y=value_y,
+        value_sample_weights=value_sample_weights,
+        local_x=local_x,
+        local_y=local_y,
+        local_sample_weights=local_sample_weights,
+        local_feedback_weight=np.asarray([local_weight], dtype=np.float32),
         deploy_x=deploy_x,
         deploy_y=deploy_y,
         neighbors=np.asarray([neighbors], dtype=np.int32),
@@ -826,6 +1081,7 @@ def train_replay_policy(
         negative_weight=np.asarray([negative_weight], dtype=np.float32),
         visual_weight=np.asarray([visual_weight], dtype=np.float32),
         visual_feature_count=np.asarray([BATTLEFIELD_FEATURE_COUNT], dtype=np.int32),
+        tactical_feature_count=np.asarray([TACTICAL_FEATURE_COUNT], dtype=np.int32),
         context_feature_count=np.asarray([CONTEXT_FEATURE_COUNT], dtype=np.int32),
     )
     train_groups = sorted({action.group_id for action in train})
@@ -835,6 +1091,24 @@ def train_replay_policy(
         "policy_actions_are_ground_truth": False,
         "target_policy_version": audit.target_policy_version,
         "total_actions": len(actions),
+        "local_feedback_weight": local_weight,
+        "local_feedback_schema": "short_horizon_visual_proxy_v1",
+        "local_feedback_is_causal_ground_truth": False,
+        "local_feedback_actions": sum(a.local_confidence > 0 for a in actions),
+        "local_feedback_positive_actions": sum(a.local_confidence > 0 and a.local_effect > 0 for a in actions),
+        "local_feedback_negative_actions": sum(a.local_confidence > 0 and a.local_effect < 0 for a in actions),
+        "local_feedback_attack_actions": sum(a.local_source == "allied_advance_proxy" for a in actions),
+        "without_local_feedback_baseline_metrics": local_baseline_metrics,
+        "transfer_actions": len(transfer),
+        "transfer_battles": sorted({a.group_id for a in transfer}),
+        "transfer_policy_versions": sorted({a.policy_version for a in transfer}),
+        "transfer_sample_weight": transfer_weight,
+        "transfer_weight_mass_cap": 0.5,
+        "temporal_transfer_actions": len(temporal_transfer),
+        "temporal_transfer_battles": sorted({a.group_id for a in temporal_transfer}),
+        "current_only_baseline_metrics": baseline_metrics,
+        "validation_policy_version": audit.target_policy_version,
+        "copied_battles_deduplicated": True,
         "train_actions": len(train),
         "validation_actions": len(validation),
         "train_battles": train_groups,
@@ -852,10 +1126,10 @@ def train_replay_policy(
             else "disabled"
         ),
         "features": (
-            "battlefield_edges_elixir_lane_threat_card_roles_formation_phase_"
-            "desired_rank_and_battle_time_without_card_identity"
+            "battlefield_edges_elixir_lane_threat_catalog_tactics_formation_phase_"
+            "desired_rank_and_battle_time_without_deck_or_card_identity"
         ),
-        "deployment_training_source": "winning_episodes_only",
+        "deployment_training_source": "current_policy_wins_excluding_observed_harm_plus_sustained_relief" if local_weight else "current_policy_winning_episodes_only",
         "final_model_refit_on_all_verified_actions": True,
         "runtime_requires_explicit_allow_bot_training": True,
     }
@@ -877,7 +1151,10 @@ class ReplayPolicyModel:
         self.influence_scale = 0.0
         self.visual_weight = 0.0
         self.visual_feature_count = 0
+        self.tactical_feature_count = 0
         self.context_feature_count = 0
+        self.local_feedback_weight = 0.0
+        self.local_arrays = (np.empty((0, 0)), np.empty(0), np.empty(0))
         self._cached_image_id: int | None = None
         self._cached_battlefield: np.ndarray | None = None
         path = self.registry.champion_path()
@@ -887,6 +1164,13 @@ class ReplayPolicyModel:
             with np.load(path) as data:
                 self.value_x = data["value_x"].copy()
                 self.value_y = data["value_y"].copy()
+                if "local_feedback_weight" in data:
+                    self.local_feedback_weight = float(data["local_feedback_weight"][0])
+                    self.local_arrays = (data["local_x"].copy(), data["local_y"].copy(), data["local_sample_weights"].copy())
+                self.value_sample_weights = (
+                    data["value_sample_weights"].copy()
+                    if "value_sample_weights" in data else np.ones(len(self.value_y), dtype=np.float32)
+                )
                 self.deploy_x = data["deploy_x"].copy()
                 self.deploy_y = data["deploy_y"].copy()
                 self.neighbors = int(data["neighbors"][0])
@@ -894,6 +1178,8 @@ class ReplayPolicyModel:
                 self.negative_weight = float(data["negative_weight"][0])
                 self.visual_weight = float(data["visual_weight"][0])
                 self.visual_feature_count = int(data["visual_feature_count"][0])
+                if "tactical_feature_count" in data:
+                    self.tactical_feature_count = int(data["tactical_feature_count"][0])
                 if "context_feature_count" in data:
                     self.context_feature_count = int(data["context_feature_count"][0])
             self.influence_scale = float(
@@ -936,6 +1222,15 @@ class ReplayPolicyModel:
             self._battlefield(image),
             self.visual_weight,
         )
+        if self.tactical_feature_count:
+            values.extend(
+                _tactical_features(
+                    card,
+                    threats,
+                    formation_phase,
+                    desired_role,
+                )[: self.tactical_feature_count]
+            )
         if self.context_feature_count:
             values.extend(
                 _context_features(
@@ -958,22 +1253,18 @@ class ReplayPolicyModel:
     ) -> float:
         if not self.available:
             return 0.5
-        return _balanced_knn_predict(
+        feature = self._feature(card, elixir, threats, image, formation_phase, desired_role, battle_elapsed_s)
+        value = _balanced_knn_predict(
             self.value_x,
             self.value_y,
-            self._feature(
-                card,
-                elixir,
-                threats,
-                image,
-                formation_phase,
-                desired_role,
-                battle_elapsed_s,
-            ),
+            feature,
             self.neighbors,
             self.positive_weight,
             self.negative_weight,
+            self.value_sample_weights,
         )
+        effect = _local_predict(self.local_arrays, feature, self.neighbors) if self.local_feedback_weight else 0.0
+        return float(np.clip(value + self.local_feedback_weight * effect, 0.0, 1.0))
 
     def deploy_point(
         self,

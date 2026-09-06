@@ -34,7 +34,7 @@
 ## 第一次使用
 
 1. 打开桌面控制台，点击右上角“连接并检测”。
-2. 确认 MuMu 已安装皇室战争，并进入离线/人机 1v1 页面。
+2. 确认 MuMu 已安装皇室战争，并进入离线/人机 1v1 页面。程序会自动识别 MuMu 安装路径。
 3. 点击左侧“画面标定”，在 MuMu 画面中框选能明确证明当前是离线人机模式的稳定文字或图标，然后保存。
 4. 回到控制台，保持“试运行”开启，点击“开始训练”检查识别结果。试运行只截图和记录，不会点击。
 5. 确认识别稳定后关闭“试运行”，设置局数并开始正式训练。
@@ -242,13 +242,13 @@ learning.bat cycle
 - `start_bot.bat --max-battles 3`：命令行运行 3 局
 - `run_tests.bat`：运行自动化测试
 
-Python 依赖记录在 `requirements.txt`。手牌和敌军感知需要 OpenCV；桌面控制台若打印“通用响应策略未就绪”，请在它实际使用的 Python 环境中安装该文件列出的依赖。
+Python 依赖记录在 `requirements.txt`。`start_bot.bat`、`start_ui.bat` 和 `setup_sync.bat` 会先检查依赖，首次使用或 Python 环境更新后会自动安装缺少的包。
 
 ## 已适配环境
 
-- MuMu：`D:\MuMuPlayer`
+- MuMu：自动检查显式配置、环境变量、运行进程、注册表、各磁盘常见目录和 PATH
 - 设备索引：`0`
 - 默认 ADB：`127.0.0.1:16384`
 - 腾讯渠道包：`com.tencent.tmgp.supercell.clashroyale`
 
-如安装目录、设备索引或游戏包名不同，请修改 `config.json`。
+便携版若仍无法识别，可设置 `MUMU_INSTALL_DIR` 环境变量；设备索引或游戏包名不同则修改 `config.json`。

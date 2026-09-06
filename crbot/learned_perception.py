@@ -25,6 +25,8 @@ class LearnedBattlefieldDetector:
         self.model = None
         self.class_names: list[str] = []
         self.error = ""
+        self.observed_allies: list[dict[str, Any]] = []
+        self.allies_observed = False
         model_path = self.registry.champion_model_path()
         if self.champion is None or model_path is None:
             return
@@ -47,6 +49,8 @@ class LearnedBattlefieldDetector:
         image: Image.Image,
         fallback: dict[str, LaneThreat],
     ) -> dict[str, LaneThreat]:
+        self.observed_allies = []
+        self.allies_observed = False
         if not self.available:
             return fallback
         try:
@@ -60,6 +64,7 @@ class LearnedBattlefieldDetector:
         except Exception as exc:  # pragma: no cover - backend/runtime dependent
             self.error = str(exc)
             return fallback
+        self.allies_observed = any(str(name).startswith("ally__") for name in self.class_names)
         by_lane: dict[str, list[tuple[str, float, float, float]]] = {
             "left": [],
             "right": [],
@@ -73,6 +78,17 @@ class LearnedBattlefieldDetector:
                 if index < 0 or index >= len(self.class_names):
                     continue
                 class_name = str(self.class_names[index])
+                if class_name.startswith("ally__"):
+                    card_id = class_name.removeprefix("ally__")
+                    x1, y1, x2, y2 = [float(value) for value in bbox]
+                    x, y = (x1 + x2) / 2, (y1 + y2) / 2
+                    if self.catalog.get(card_id) is not None and 0.20 <= y <= 0.80:
+                        self.observed_allies.append({
+                            "card_id": card_id, "x": round(x, 4), "y": round(y, 4),
+                            "lane": "left" if x < 0.5 else "right",
+                            "confidence": float(confidence),
+                        })
+                    continue
                 if not class_name.startswith("enemy__"):
                     continue
                 card_id = class_name.removeprefix("enemy__")

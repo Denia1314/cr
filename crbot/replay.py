@@ -76,6 +76,8 @@ def state_from_action(image: Image.Image, payload: dict[str, Any]) -> dict[str, 
         ),
         "enemy_cards": [str(value) for value in payload.get("enemy_cards", [])],
         "battlefield_edges": [round(float(value), 6) for value in visual],
+        "allies_observed": bool(payload.get("allies_observed", False)),
+        "observed_allies": list(payload.get("observed_allies", [])),
     }
 
 
@@ -89,6 +91,7 @@ def action_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "reason": str(payload.get("reason", "unknown")),
         "formation_phase": str(payload.get("formation_phase", "")),
         "card_formation_role": str(payload.get("card_formation_role", "")),
+        "desired_formation_role": str(payload.get("desired_formation_role", "")),
     }
 
 
@@ -137,6 +140,8 @@ class ExperienceReplayRecorder:
             "source": self.source,
             "policy_actions_are_ground_truth": False,
             "automatic_result_reward": True,
+            "action_observation_schema": "short_horizon_visual_proxy_v1",
+            "action_observations_are_causal_ground_truth": False,
             "allow_bot_training": self.allow_bot_training,
             "training_policy": (
                 "collection_only_until_explicitly_enabled"
@@ -183,8 +188,23 @@ class ExperienceReplayRecorder:
                 "action": action_from_payload(payload),
                 "next_state": None,
                 "next_frame": None,
+                "action_observations": [],
             }
         )
+
+    def observe_action_effect(self, battle_index: int, state: dict[str, Any]) -> None:
+        """Capture compact observed states even while the policy holds its cards."""
+        if not self.enabled or battle_index != self.current_battle or not self.pending:
+            return
+        current = self.pending[-1]
+        elapsed = float(state.get("battle_elapsed_s", 0)) - float(current["state"].get("battle_elapsed_s", 0))
+        if not 0.5 <= elapsed <= 8.0:
+            return
+        observations = current.setdefault("action_observations", [])
+        if observations and float(state["battle_elapsed_s"]) - float(observations[-1]["battle_elapsed_s"]) < 0.6:
+            return
+        if len(observations) < 12:
+            observations.append(dict(state))
 
     def _terminal_reward(self, result: BattleResult) -> float:
         base = {

@@ -3,7 +3,19 @@ setlocal
 set "PYTHONUTF8=1"
 cd /d "%~dp0"
 set "BOT_PY=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-if not exist "%BOT_PY%" set "BOT_PY=python"
+if exist "%BOT_PY%" goto dependencies
+where python >nul 2>nul
+if errorlevel 1 goto python_missing
+set "BOT_PY=python"
+:dependencies
+"%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
+if not errorlevel 1 goto github_cli
+echo Required Python packages are missing. Installing them now...
+"%BOT_PY%" -m pip install --disable-pip-version-check -r "%~dp0requirements.txt"
+if errorlevel 1 goto dependency_failed
+"%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
+if errorlevel 1 goto dependency_failed
+:github_cli
 set "SYNC_GH=%LOCALAPPDATA%\CodexTools\github-cli\bin\gh.exe"
 if exist "%SYNC_GH%" goto auth
 set "SYNC_GH=%ProgramFiles%\GitHub CLI\gh.exe"
@@ -30,5 +42,14 @@ pause
 exit /b 0
 :failed
 echo Setup or sync failed. Check GitHub login and private data repository access.
+pause
+exit /b 1
+:python_missing
+echo Python 3.10 or newer was not found. Install Python and enable Add Python to PATH.
+pause
+exit /b 1
+:dependency_failed
+echo Python dependency installation failed. This is not a GitHub login error.
+echo Check the network connection, then run setup_sync.bat again.
 pause
 exit /b 1

@@ -11,5 +11,19 @@ pause
 exit /b 1
 :run
 cd /d "%BOT_ROOT%"
+"%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
+if not errorlevel 1 goto launch
+echo Required Python packages are missing. Installing them now...
+"%BOT_PY%" -m pip install --disable-pip-version-check -r "%BOT_ROOT%requirements.txt"
+if errorlevel 1 goto dependency_error
+"%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
+if errorlevel 1 goto dependency_error
+:launch
 "%BOT_PY%" -m crbot --config "%BOT_ROOT%config.json" run %*
 if errorlevel 1 pause
+exit /b %errorlevel%
+:dependency_error
+echo Failed to install the required Python packages.
+echo Check the network connection, then run start_bot.bat again.
+pause
+exit /b 1

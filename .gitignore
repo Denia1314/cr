@@ -17,3 +17,4 @@ venv/
 *.pem
 *.key
 .training-sync/
+reports/

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -12,8 +13,16 @@ from crbot.battle_perception import LaneThreat
 from crbot.cards import CardCatalog, CardDefinition
 from crbot.replay import ExperienceReplayRecorder, audit_replay
 from crbot.replay_learning import (
+    TACTICAL_FEATURE_COUNT,
     ReplayPolicyRegistry,
     ReplayPolicyModel,
+    _tactical_features,
+    _deduplicate_battles,
+    _transfer_before,
+    _transfer_actions,
+    _training_arrays,
+    _balanced_knn_predict,
+    collect_replay_learning_actions,
     audit_replay_learning,
     train_replay_policy,
 )
@@ -311,6 +320,8 @@ class ReplayPolicyLearningTests(unittest.TestCase):
 
             self.assertTrue(result["candidate"]["promoted"])
             self.assertTrue(model.available)
+            self.assertEqual(model.tactical_feature_count, TACTICAL_FEATURE_COUNT)
+            np.testing.assert_array_equal(model.value_sample_weights, np.ones(len(model.value_y)))
             quiet = LaneThreat("left", 0.0, 0, 0.0, "none", ())
             threats = {"left": quiet, "right": LaneThreat("right", 0.0, 0, 0.0, "none", ())}
             tank = catalog.get("tank")
@@ -320,6 +331,131 @@ class ReplayPolicyLearningTests(unittest.TestCase):
                 model.card_score(tank, 8.0, threats),
                 model.card_score(spell, 8.0, threats),
             )
+
+    def test_replay_tactical_features_apply_to_unseen_building_target_card(self) -> None:
+        card = CardDefinition(
+            card_id="unseen_building_target",
+            official_id=None,
+            name_zh="",
+            name_en="Unseen Building Target",
+            elixir=6,
+            rarity="",
+            max_level=None,
+            icon_url="",
+            icon_path="",
+            icon_variants=(),
+            kind="troop",
+            targets=("buildings",),
+            roles=(),
+            counters=(),
+            synergies=(),
+        )
+        quiet = LaneThreat("left", 0.0, 0, 0.0, "none", ())
+        threats = {
+            "left": quiet,
+            "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
+        }
+
+        attack = _tactical_features(card, threats, "form_frontline", "frontline")
+        defense = _tactical_features(card, threats, "counter_defense", "frontline")
+
+        self.assertEqual(len(attack), TACTICAL_FEATURE_COUNT)
+        self.assertEqual(attack[2], 1.0)
+        self.assertGreater(attack[16], 0.0)
+        self.assertEqual(defense[16], 0.0)
+        self.assertGreater(defense[15], 0.0)
+
+    def test_copied_device_battles_are_deduplicated_before_splitting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            original = collect_replay_learning_actions(root, catalog, self._config(False))[:2]
+            original = [replace(a, timestamp_unix=100.0 + i) for i, a in enumerate(original)]
+            copied = [replace(a, group_id="another-device:battle-1", transition_id="copy:" + a.transition_id)
+                      for a in original]
+            self.assertEqual(_deduplicate_battles(original + copied), original)
+            later = [replace(a, timestamp_unix=a.timestamp_unix + 300) for a in copied]
+            self.assertEqual(len(_deduplicate_battles(original + later)), 4)
+            untimed = [replace(a, timestamp_unix=0) for a in original + copied]
+            self.assertEqual(len(_deduplicate_battles(untimed)), 4)
+
+    def test_temporal_transfer_excludes_future_and_crossing_whole_battles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            row = collect_replay_learning_actions(root, catalog, self._config(False))[0]
+            validation = [replace(row, group_id="holdout", timestamp_unix=100)]
+            old = replace(row, group_id="old", timestamp_unix=90)
+            crossing = [replace(row, group_id="crossing", timestamp_unix=t) for t in (99, 101)]
+            missing = replace(row, group_id="missing", timestamp_unix=0)
+            self.assertEqual(_transfer_before([old, *crossing, missing], validation), [old])
+
+    def test_transfer_preserves_v5_holdout_and_uses_only_v5_deployments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            source = root / "runs/learning-run/replay_transitions.jsonl"
+            rows = [json.loads(line) for line in source.read_text().splitlines()]
+            current = root / "runs/current"
+            current.mkdir()
+            for row in rows:
+                row["transition_id"] = "current:" + row["transition_id"]
+                row["policy"] = {"rule_version": "v5"}
+            (current / "replay_transitions.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+            )
+            config = {**self._config(False), "training_policy_version": "v5",
+                      "transfer_policy_versions": ["v4"]}
+            self.assertEqual({a.policy_version for a in _transfer_actions(root, catalog, config)}, {"v4"})
+            result = train_replay_policy(root, catalog, config)
+            manifest = result["candidate"]["manifest"]
+            self.assertEqual(manifest["transfer_actions"], 16)
+            self.assertTrue(all("current:" in g for g in manifest["validation_battles"]))
+            self.assertFalse(set(manifest["transfer_battles"]) & set(manifest["validation_battles"]))
+            with np.load(root / "models/replay_policy" / result["candidate"]["model_path"]) as data:
+                self.assertEqual(len(data["value_y"]), 32)
+                self.assertEqual(len(data["deploy_y"]), 8)
+                self.assertAlmostEqual(float(data["value_sample_weights"][-1]), 0.25)
+            self.assertFalse(result["candidate"]["quality_passed"])
+            self.assertIn("旧版本经验未改善当前版本整局验证", result["candidate"]["rejection_reasons"])
+            # Synthetic identical policies have zero gain; explicitly allow it
+            # here to exercise weighted runtime serialization, not production gates.
+            promoted = train_replay_policy(root, catalog, {
+                **config, "allow_bot_training": True, "minimum_transfer_score_gain": 0,
+            })
+            model = ReplayPolicyModel(root)
+            self.assertTrue(promoted["candidate"]["promoted"])
+            self.assertTrue(model.available)
+            self.assertAlmostEqual(float(model.value_sample_weights[-1]), 0.25)
+            row = collect_replay_learning_actions(root, catalog, config)[0]
+            card = catalog.by_id[row.card_id]
+            self.assertAlmostEqual(model.card_score(card, row.elixir, row.threats()), 1.0)
+
+    def test_existing_unweighted_champion_remains_loadable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            train_replay_policy(root, catalog, self._config(True))
+            path = ReplayPolicyRegistry(root).champion_path()
+            assert path is not None
+            with np.load(path) as data:
+                legacy = {key: data[key].copy() for key in data.files if key != "value_sample_weights"}
+            np.savez_compressed(path, **legacy)
+            model = ReplayPolicyModel(root)
+            self.assertTrue(model.available)
+            np.testing.assert_array_equal(model.value_sample_weights, np.ones(len(model.value_y)))
+
+    def test_old_data_weight_is_capped_and_applied_at_prediction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            actions = collect_replay_learning_actions(root, catalog, self._config(False))
+            x, y, weights = _training_arrays(actions[:2], actions * 4, catalog, 0.0, 0.25)
+            self.assertLessEqual(float(weights[2:].sum()), float(weights[:2].sum()) * 0.5)
+            prediction = _balanced_knn_predict(
+                np.zeros((2, 1)), np.asarray([1., 0.]), np.zeros(1), 2, 1., 1., np.asarray([1., 0.25])
+            )
+            self.assertAlmostEqual(prediction, 0.8)
 
     def test_temporal_regression_blocks_an_otherwise_valid_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
