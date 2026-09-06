@@ -17,6 +17,7 @@ from .action_confirmation import (
 from .policy import BattlePolicy
 from .recorder import TrainingRecorder
 from .replay import ExperienceReplayRecorder
+from .temporal import TimingStats
 from .vision import (
     ProbeMatch,
     WorkflowRecognizer,
@@ -96,6 +97,7 @@ class BotEngine:
         policy_metadata: dict[str, Any] = {
             "mode": self.policy.mode,
             "rule_version": self.policy.policy.get("version", "unversioned"),
+            "temporal_observation_schema": "hand_elixir_formation_v1",
         }
         if (
             self.policy.imitation_model is not None
@@ -142,6 +144,9 @@ class BotEngine:
         self.previous_battle_frame: Image.Image | None = None
         self.latest_frame: Image.Image | None = None
         self.last_known_at = time.monotonic()
+        self.response_timing = TimingStats(
+            max_samples=int(automation_config.get("timing_max_samples", 512))
+        )
 
     def request_stop(self) -> None:
         """Ask the engine to stop at the next safe boundary."""
@@ -149,6 +154,10 @@ class BotEngine:
 
     def _stop_requested(self) -> bool:
         return self.stop_event.is_set()
+
+    def response_timing_summary(self) -> dict[str, dict[str, float | int | None]]:
+        """Return M2 stage latency percentiles collected in this run."""
+        return self.response_timing.summary()
 
     def _sleep(self, seconds: float) -> bool:
         """Wait interruptibly and return True when a stop was requested."""
@@ -250,7 +259,11 @@ class BotEngine:
                 return
 
             now = time.monotonic()
+            screenshot_started = time.perf_counter()
             image = self.device.screenshot()
+            self.response_timing.record(
+                "screenshot", time.perf_counter() - screenshot_started
+            )
             self.latest_frame = image
             matches = self.recognizer.match_all(image)
             gate = self._update_offline_gate(image, matches)
@@ -535,15 +548,27 @@ class BotEngine:
             battle_index=self.completed_battles + 1,
         )
         now = time.monotonic()
+        cycle_started = time.perf_counter()
+        timing: dict[str, float] = {}
+        perception_started = time.perf_counter()
         observation = self.policy.observe_replay_state(image, self.previous_battle_frame, now=now)
+        timing["perception_s"] = time.perf_counter() - perception_started
         if not self.dry_run:
             self.replay.observe_action_effect(self.completed_battles + 1, observation)
         policy_snapshot = self.policy.snapshot_state()
+        decision_started = time.perf_counter()
         decision = self.policy.decide(image, self.previous_battle_frame, now=now)
+        timing["decision_s"] = time.perf_counter() - decision_started
+        self.response_timing.record("perception", timing["perception_s"])
+        self.response_timing.record("decision", timing["decision_s"])
         if decision is not None:
+            action_hand_metadata = self.policy.hand_metadata(now)
+            action_formation_metadata = self.policy.formation_metadata(now)
             decision, card_pixel, deploy_pixel, confirmation, post_image, send_error = (
-                self._execute_action(image, decision, policy_snapshot)
+                self._execute_action(image, decision, policy_snapshot, timing=timing)
             )
+            timing["total_s"] = time.perf_counter() - cycle_started
+            self.response_timing.record("total", timing["total_s"])
             print(
                 f"[下牌] {'试运行：' if self.dry_run else ''}"
                 f"slot={decision.slot_index + 1} card={decision.card_id or 'unknown'} "
@@ -572,6 +597,8 @@ class BotEngine:
             payload = decision.to_dict()
             payload["allies_observed"] = observation["allies_observed"]
             payload["observed_allies"] = observation["observed_allies"]
+            payload["hand_metadata"] = action_hand_metadata
+            payload["formation_metadata"] = action_formation_metadata
             payload.update(
                 {
                     "card_pixel": card_pixel,
@@ -581,6 +608,8 @@ class BotEngine:
                         confirmation.to_dict() if confirmation is not None else None
                     ),
                     "action_send_error": send_error,
+                    "timing_s": dict(timing),
+                    "response_timing_summary": self.response_timing_summary(),
                 }
             )
             event = self.recorder.record("battle_action", image, payload)
@@ -601,6 +630,8 @@ class BotEngine:
         image: Image.Image,
         decision,
         policy_snapshot: dict[str, Any],
+        *,
+        timing: dict[str, float] | None = None,
     ) -> tuple[Any, list[int] | None, list[int] | None, ActionConfirmation, Image.Image | None, str | None]:
         """Send one action and resolve it from bounded post-click evidence."""
         decision = self.policy.prepare_action(decision, policy_snapshot)
@@ -617,7 +648,9 @@ class BotEngine:
         # unavailable, the confirmation state machine simply demands stronger
         # remaining evidence instead of assuming the tap worked.
         pre_matches = None
-        if self.policy.hand_recognizer is not None:
+        if self.policy.last_hand_image is image and self.policy.last_hand_matches:
+            pre_matches = self.policy.last_hand_matches
+        elif self.policy.hand_recognizer is not None:
             try:
                 pre_matches = self.policy.hand_recognizer.recognize(image)
             except Exception:
@@ -632,6 +665,12 @@ class BotEngine:
         deploy_pixel: list[int] | None = None
         send_error: str | None = None
         if self.dry_run:
+            dry_run_elapsed = 0.0
+            if timing is not None:
+                timing["send_s"] = dry_run_elapsed
+                timing["confirmation_s"] = 0.0
+            self.response_timing.record("send", dry_run_elapsed)
+            self.response_timing.record("confirmation", 0.0)
             confirmation = ActionConfirmation(
                 action_id,
                 "unknown",
@@ -651,6 +690,7 @@ class BotEngine:
                 None,
             )
 
+        send_started = time.perf_counter()
         try:
             card_pixel = list(self.device.tap_normalized(decision.card_point, image.size))
             if self._sleep(0.09):
@@ -660,6 +700,10 @@ class BotEngine:
             )
         except Exception as exc:  # ADB timeout can still be a real game action.
             send_error = str(exc)
+        send_elapsed = time.perf_counter() - send_started
+        if timing is not None:
+            timing["send_s"] = send_elapsed
+        self.response_timing.record("send", send_elapsed)
         self.recorder.record(
             "battle_action_sent",
             image,
@@ -677,6 +721,7 @@ class BotEngine:
         confirmation: ActionConfirmation | None = None
         last_evidence: dict[str, Any] = {}
         confirmation_error = False
+        confirmation_started = time.perf_counter()
         while time.monotonic() < deadline and not self._stop_requested():
             try:
                 post_image = self.device.screenshot()
@@ -741,6 +786,10 @@ class BotEngine:
             confirmation.status,
             now=time.monotonic(),
         )
+        confirmation_elapsed = time.perf_counter() - confirmation_started
+        if timing is not None:
+            timing["confirmation_s"] = confirmation_elapsed
+        self.response_timing.record("confirmation", confirmation_elapsed)
         return (
             replace(decision, action_status=confirmation.status),
             card_pixel,

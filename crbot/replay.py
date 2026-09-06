@@ -50,9 +50,24 @@ def state_from_action(image: Image.Image, payload: dict[str, Any]) -> dict[str, 
     visual = battlefield_features(image)
     return {
         "schema": "screen_state_v1",
+        "temporal_schema": "hand_elixir_formation_v1",
         "elixir": float(payload.get("elixir", 0.0)),
         "elixir_source": str(payload.get("elixir_source", "unknown")),
+        "elixir_confidence": float(payload.get("elixir_confidence", 0.0)),
+        "elixir_age_s": float(payload.get("elixir_age_s", -1.0)),
+        "elixir_phase": str(payload.get("elixir_phase", "unknown")),
         "hand": [value if value else None for value in payload.get("hand", [])],
+        "hand_confidence": float(payload.get("hand_confidence", 0.0)),
+        "hand_age_s": float(payload.get("hand_age_s", -1.0)),
+        "hand_metadata": dict(payload.get("hand_metadata", {}))
+        if isinstance(payload.get("hand_metadata", {}), dict)
+        else {},
+        "formation_metadata": dict(payload.get("formation_metadata", {}))
+        if isinstance(payload.get("formation_metadata", {}), dict)
+        else {},
+        "timing_s": dict(payload.get("timing_s", {}))
+        if isinstance(payload.get("timing_s", {}), dict)
+        else {},
         "left_threat": float(payload.get("left_threat", 0.0)),
         "right_threat": float(payload.get("right_threat", 0.0)),
         "left_threat_type": str(payload.get("left_threat_type", "none")),
@@ -158,6 +173,7 @@ class ExperienceReplayRecorder:
             "action_observation_schema": "short_horizon_visual_proxy_v1",
             "action_observations_are_causal_ground_truth": False,
             "action_confirmation_schema": "stable_hand_elixir_visual_v1",
+            "temporal_observation_schema": "hand_elixir_formation_v1",
             "training_requires_confirmed_action": True,
             "allow_bot_training": self.allow_bot_training,
             "training_policy": (

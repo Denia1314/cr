@@ -16,6 +16,7 @@ from .learned_perception import LearnedBattlefieldDetector
 from .imitation import ImitationPolicyModel
 from .replay_learning import ReplayPolicyModel
 from .tactics import card_tactics
+from .temporal import HandHistory
 from .vision import estimate_elixir, motion_score
 
 
@@ -56,6 +57,11 @@ class BattleDecision:
     desired_formation_role: str = ""
     action_id: str = ""
     action_status: str = "proposed"
+    hand_confidence: float = 0.0
+    hand_age_s: float = 0.0
+    elixir_confidence: float = 0.0
+    elixir_age_s: float = 0.0
+    elixir_phase: str = "normal"
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -78,12 +84,44 @@ class LaneFormation:
     backline_point: tuple[float, float] | None = None
     backline_card: str | None = None
     backline_source: str = ""
+    # Appended after the legacy fields to keep positional construction of old
+    # snapshots compatible.
+    frontline_confidence: float = 0.0
+    backline_confidence: float = 0.0
 
-    def has_frontline(self, now: float) -> bool:
-        return self.frontline_point is not None and now <= self.frontline_until
+    @staticmethod
+    def _confidence_at(
+        confidence: float,
+        observed_at: float,
+        now: float,
+        decay_s: float,
+    ) -> float:
+        # A zero value is the legacy/default marker.  Treat it as fully
+        # confident so old snapshots and direct callers remain compatible.
+        if confidence <= 0.0:
+            return 1.0
+        age = max(0.0, float(now) - float(observed_at))
+        return max(0.0, min(1.0, confidence * max(0.0, 1.0 - age / max(0.1, decay_s))))
 
-    def has_backline(self, now: float) -> bool:
-        return self.backline_point is not None and now <= self.backline_until
+    def frontline_confidence_at(self, now: float, decay_s: float = 11.0) -> float:
+        return self._confidence_at(self.frontline_confidence, self.frontline_at, now, decay_s)
+
+    def backline_confidence_at(self, now: float, decay_s: float = 11.0) -> float:
+        return self._confidence_at(self.backline_confidence, self.backline_at, now, decay_s)
+
+    def has_frontline(self, now: float, min_confidence: float = 0.35, decay_s: float = 11.0) -> bool:
+        return (
+            self.frontline_point is not None
+            and now <= self.frontline_until
+            and self.frontline_confidence_at(now, decay_s) >= min_confidence
+        )
+
+    def has_backline(self, now: float, min_confidence: float = 0.35, decay_s: float = 11.0) -> bool:
+        return (
+            self.backline_point is not None
+            and now <= self.backline_until
+            and self.backline_confidence_at(now, decay_s) >= min_confidence
+        )
 
     def source(self, now: float) -> str:
         sources: list[str] = []
@@ -112,6 +150,22 @@ class BattlePolicy:
         self.virtual_elixir = float(self.policy.get("initial_elixir", 5.0))
         self.confirmed_virtual_elixir = self.virtual_elixir
         self.reserved_elixir = 0.0
+        self.hand_history = HandHistory(
+            max_age_s=float(self.policy.get("hand_max_age_s", 1.2)),
+            min_confidence=float(self.policy.get("hand_min_confidence", 0.40)),
+            unknown_grace_s=float(self.policy.get("hand_unknown_grace_s", 0.45)),
+            empty_grace_s=float(self.policy.get("hand_empty_grace_s", 0.32)),
+            confidence_decay_s=float(self.policy.get("hand_confidence_decay_s", 1.2)),
+        )
+        self._last_elixir_visual: float | None = None
+        self._last_elixir_confidence = 0.0
+        self._last_elixir_observed_at = -1_000.0
+        self._last_elixir_estimate_value: float | None = None
+        self._last_elixir_estimate_source = "timer"
+        self._last_elixir_estimate_at = -1_000.0
+        self._last_elixir_image: Image.Image | None = None
+        self._elixir_phase = "normal"
+        self._elixir_rate_multiplier = 1.0
         self.last_update = time.monotonic()
         self.battle_started_at = self.last_update
         self.next_action_at = self.last_update
@@ -134,6 +188,8 @@ class BattlePolicy:
         }
         self._pending_action_id: str | None = None
         self._pending_action_snapshot: dict[str, Any] | None = None
+        self._pending_action_slot = -1
+        self._pending_action_card: str | None = None
         self._resolved_action_ids: dict[str, str] = {}
         self.catalog: CardCatalog | None = None
         self.hand_recognizer: UniversalHandRecognizer | None = None
@@ -144,6 +200,10 @@ class BattlePolicy:
         self._observed_image: Image.Image | None = None
         self._observed_at = -1.0
         self._observed_threats: dict[str, LaneThreat] = {}
+        self._threat_observed_at = -1.0
+        self._last_hand_matches: list[HandCardMatch] = []
+        self._last_hand_image: Image.Image | None = None
+        self._last_hand_observed_at = -1.0
         if self.mode == "reactive_catalog":
             self._load_catalog(config, config_path)
 
@@ -188,9 +248,23 @@ class BattlePolicy:
         now = time.monotonic() if now is None else now
         self._observed_image = None
         self._observed_threats = {}
+        self._threat_observed_at = -1.0
+        self._last_hand_matches = []
+        self._last_hand_image = None
+        self._last_hand_observed_at = -1.0
+        self.hand_history.reset()
         self.virtual_elixir = float(self.policy.get("initial_elixir", 5.0))
         self.confirmed_virtual_elixir = self.virtual_elixir
         self.reserved_elixir = 0.0
+        self._last_elixir_visual = None
+        self._last_elixir_confidence = 0.0
+        self._last_elixir_observed_at = -1_000.0
+        self._last_elixir_estimate_value = None
+        self._last_elixir_estimate_source = "timer"
+        self._last_elixir_estimate_at = -1_000.0
+        self._last_elixir_image = None
+        self._elixir_phase = "normal"
+        self._elixir_rate_multiplier = 1.0
         self.last_update = now
         self.battle_started_at = now
         self.next_action_at = now + 1.0
@@ -209,6 +283,8 @@ class BattlePolicy:
         }
         self._pending_action_id = None
         self._pending_action_snapshot = None
+        self._pending_action_slot = -1
+        self._pending_action_card = None
         self._resolved_action_ids = {}
 
     def snapshot_state(self) -> dict[str, Any]:
@@ -241,6 +317,20 @@ class BattlePolicy:
             "observed_image": self._observed_image,
             "observed_at": self._observed_at,
             "observed_threats": copy.deepcopy(self._observed_threats),
+            "threat_observed_at": self._threat_observed_at,
+            "last_hand_matches": copy.deepcopy(self._last_hand_matches),
+            "last_hand_image": self._last_hand_image,
+            "last_hand_observed_at": self._last_hand_observed_at,
+            "hand_history": copy.deepcopy(self.hand_history),
+            "last_elixir_visual": self._last_elixir_visual,
+            "last_elixir_confidence": self._last_elixir_confidence,
+            "last_elixir_observed_at": self._last_elixir_observed_at,
+            "last_elixir_estimate_value": self._last_elixir_estimate_value,
+            "last_elixir_estimate_source": self._last_elixir_estimate_source,
+            "last_elixir_estimate_at": self._last_elixir_estimate_at,
+            "last_elixir_image": self._last_elixir_image,
+            "elixir_phase": self._elixir_phase,
+            "elixir_rate_multiplier": self._elixir_rate_multiplier,
         }
 
     def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -265,6 +355,20 @@ class BattlePolicy:
         self._observed_image = snapshot["observed_image"]
         self._observed_at = float(snapshot["observed_at"])
         self._observed_threats = copy.deepcopy(snapshot["observed_threats"])
+        self._threat_observed_at = float(snapshot.get("threat_observed_at", -1.0))
+        self._last_hand_matches = copy.deepcopy(snapshot.get("last_hand_matches", []))
+        self._last_hand_image = snapshot.get("last_hand_image")
+        self._last_hand_observed_at = float(snapshot.get("last_hand_observed_at", -1.0))
+        self.hand_history = copy.deepcopy(snapshot.get("hand_history", self.hand_history))
+        self._last_elixir_visual = snapshot.get("last_elixir_visual")
+        self._last_elixir_confidence = float(snapshot.get("last_elixir_confidence", 0.0))
+        self._last_elixir_observed_at = float(snapshot.get("last_elixir_observed_at", -1_000.0))
+        self._last_elixir_estimate_value = snapshot.get("last_elixir_estimate_value")
+        self._last_elixir_estimate_source = str(snapshot.get("last_elixir_estimate_source", "timer"))
+        self._last_elixir_estimate_at = float(snapshot.get("last_elixir_estimate_at", -1_000.0))
+        self._last_elixir_image = snapshot.get("last_elixir_image")
+        self._elixir_phase = str(snapshot.get("elixir_phase", "normal"))
+        self._elixir_rate_multiplier = float(snapshot.get("elixir_rate_multiplier", 1.0))
 
     def prepare_action(
         self,
@@ -277,6 +381,8 @@ class BattlePolicy:
         action_id = f"{self.policy.get('version', 'policy')}-{uuid.uuid4().hex[:16]}"
         self._pending_action_id = action_id
         self._pending_action_snapshot = snapshot
+        self._pending_action_slot = int(decision.slot_index)
+        self._pending_action_card = decision.card_id
         self.reserved_elixir = float(
             decision.card_cost
             if decision.card_cost is not None
@@ -317,24 +423,98 @@ class BattlePolicy:
         else:
             self.confirmed_virtual_elixir = self.virtual_elixir
             self.reserved_elixir = 0.0
+            self.hand_history.consume(
+                getattr(self, "_pending_action_slot", -1),
+                getattr(self, "_pending_action_card", None),
+                time.monotonic() if now is None else float(now),
+            )
         self._resolved_action_ids[action_id] = status
         self._pending_action_id = None
         self._pending_action_snapshot = None
+        self._pending_action_slot = -1
+        self._pending_action_card = None
         if len(self._resolved_action_ids) > 256:
             self._resolved_action_ids.pop(next(iter(self._resolved_action_ids)), None)
         return True
 
-    def _update_virtual_elixir(self, now: float) -> None:
-        seconds_per = float(self.policy.get("seconds_per_elixir", 2.8))
-        self.virtual_elixir = min(10.0, self.virtual_elixir + (now - self.last_update) / seconds_per)
-        self.last_update = now
+    def _elixir_phase_for(self, now: float) -> tuple[str, float]:
+        """Return a conservative recovery-rate phase from elapsed battle time.
 
-    def _estimate_elixir(self, current: Image.Image) -> tuple[float, str]:
+        The visual meter remains authoritative when it is fresh.  The phase is
+        only used for timer fallback, and can be disabled by setting the
+        threshold to a non-positive value in a legacy configuration.
+        """
+        elapsed = max(0.0, float(now) - self.battle_started_at)
+        threshold = float(self.policy.get("double_elixir_after_s", 120.0))
+        multiplier = float(self.policy.get("double_elixir_multiplier", 2.0))
+        if threshold > 0.0 and elapsed >= threshold and multiplier > 1.0:
+            return "double", max(1.0, multiplier)
+        return "normal", 1.0
+
+    def _update_virtual_elixir(self, now: float) -> None:
+        phase, multiplier = self._elixir_phase_for(now)
+        seconds_per = max(0.1, float(self.policy.get("seconds_per_elixir", 2.8)))
+        start = self.last_update
+        end = max(start, float(now))
+        threshold = self.battle_started_at + float(
+            self.policy.get("double_elixir_after_s", 120.0)
+        )
+        if threshold > start and threshold < end and multiplier > 1.0:
+            elapsed = (threshold - start) + (end - threshold) * multiplier
+        else:
+            _prior_phase, prior_multiplier = self._elixir_phase_for(start)
+            elapsed = (end - start) * prior_multiplier
+        self.virtual_elixir = min(
+            10.0,
+            self.virtual_elixir + elapsed / seconds_per,
+        )
+        self._elixir_phase = phase
+        self._elixir_rate_multiplier = multiplier
+        self.last_update = max(self.last_update, float(now))
+
+    def _estimate_elixir(
+        self,
+        current: Image.Image,
+        now: float | None = None,
+    ) -> tuple[float, str]:
+        now = self.last_update if now is None else float(now)
+        if (
+            self._last_elixir_image is current
+            and abs(self._last_elixir_estimate_at - now) <= 1e-9
+            and self._last_elixir_estimate_value is not None
+        ):
+            return self._last_elixir_estimate_value, self._last_elixir_estimate_source
         visual_elixir, confidence = estimate_elixir(current, self.vision["elixir_roi"])
-        if visual_elixir is not None and confidence >= 0.12:
-            self.virtual_elixir = 0.55 * self.virtual_elixir + 0.45 * visual_elixir
-            return float(visual_elixir), "vision"
-        return self.virtual_elixir, "timer"
+        minimum_confidence = float(self.policy.get("elixir_visual_min_confidence", 0.12))
+        if visual_elixir is not None and confidence >= minimum_confidence:
+            self._last_elixir_visual = float(visual_elixir)
+            self._last_elixir_confidence = float(confidence)
+            self._last_elixir_observed_at = now
+            # Lower-confidence visual readings are blended less aggressively;
+            # this prevents a purple animation or partial crop from granting
+            # spendable elixir that was not actually observed.
+            blend = 0.45 if confidence >= 0.22 else 0.20
+            self.virtual_elixir = (1.0 - blend) * self.virtual_elixir + blend * float(visual_elixir)
+            value = float(visual_elixir)
+            source = "vision" if confidence >= 0.22 else "vision_low_confidence"
+            self._last_elixir_estimate_value = value
+            self._last_elixir_estimate_source = source
+            self._last_elixir_estimate_at = now
+            self._last_elixir_image = current
+            return value, source
+        stale_after = max(0.1, float(self.policy.get("elixir_visual_stale_s", 2.0)))
+        if self._last_elixir_visual is not None and now - self._last_elixir_observed_at <= stale_after:
+            # The meter is still useful as evidence, but timer accrual remains
+            # the value used for spending so stale pixels cannot over-credit.
+            self._last_elixir_confidence *= 0.85
+        else:
+            self._last_elixir_confidence = 0.0
+        value = self.virtual_elixir
+        self._last_elixir_estimate_value = value
+        self._last_elixir_estimate_source = "timer"
+        self._last_elixir_estimate_at = now
+        self._last_elixir_image = current
+        return value, "timer"
 
     def _point_for_lane(self, lane: str, defending: bool) -> list[float]:
         x_range = self.policy["left_x"] if lane == "left" else self.policy["right_x"]
@@ -379,6 +559,9 @@ class BattlePolicy:
             formation.frontline_point = position
             formation.frontline_card = card.card_id
             formation.frontline_source = source
+            formation.frontline_confidence = float(
+                self.policy.get("formation_initial_confidence", 0.86)
+            )
         if tactics.is_backline:
             lifetime = 7.0 + 0.75 * cost
             if source == "defense":
@@ -391,6 +574,9 @@ class BattlePolicy:
             formation.backline_point = position
             formation.backline_card = card.card_id
             formation.backline_source = source
+            formation.backline_confidence = float(
+                self.policy.get("formation_initial_confidence", 0.82)
+            )
 
     def _formation_card_score(
         self,
@@ -433,13 +619,13 @@ class BattlePolicy:
     def _formation_lane(self, desired_rank: str, now: float) -> str | None:
         candidates: list[tuple[float, int, str]] = []
         for lane, formation in self.formations.items():
-            if desired_rank == "backline" and formation.has_frontline(now):
+            if desired_rank == "backline" and self._formation_has_frontline(formation, now):
                 until = formation.frontline_until
-            elif desired_rank == "frontline" and formation.has_backline(now):
+            elif desired_rank == "frontline" and self._formation_has_backline(formation, now):
                 until = formation.backline_until
             else:
                 continue
-            defense_priority = 1 if formation.source(now) == "defense" else 0
+            defense_priority = 1 if self._formation_source(formation, now) == "defense" else 0
             candidates.append((until, defense_priority, lane))
         if not candidates:
             return None
@@ -534,13 +720,13 @@ class BattlePolicy:
         # A rear rank follows the estimated position of the remembered front
         # rank. A new front rank protecting surviving defenders is placed in
         # front of them. Coordinates decrease while units advance upward.
-        if desired_role == "backline" and formation.has_frontline(now):
+        if desired_role == "backline" and self._formation_has_frontline(formation, now):
             assert formation.frontline_point is not None
             age = max(0.0, now - formation.frontline_at)
             estimated_front_y = formation.frontline_point[1] - min(0.10, age * 0.010)
             x = 0.65 * formation.frontline_point[0] + 0.35 * x
             y = estimated_front_y + 0.095 + (cost - 4.0) * 0.003
-        elif desired_role == "frontline" and formation.has_backline(now):
+        elif desired_role == "frontline" and self._formation_has_backline(formation, now):
             assert formation.backline_point is not None
             age = max(0.0, now - formation.backline_at)
             estimated_back_y = formation.backline_point[1] - min(0.08, age * 0.008)
@@ -673,6 +859,78 @@ class BattlePolicy:
                 result.append((match, card))
         return result
 
+    def _stable_hand_matches(
+        self,
+        current: Image.Image,
+        now: float,
+    ) -> list[HandCardMatch]:
+        """Read the hand once and expose only fresh, confidence-checked slots."""
+        if self.hand_recognizer is None:
+            return []
+        try:
+            observed = list(self.hand_recognizer.recognize(current))
+        except Exception as exc:  # perception failure must fail closed
+            self.perception_error = f"手牌识别失败：{exc}"
+            return []
+        self.hand_history.update(observed, now)
+        self._last_hand_matches = list(observed)
+        self._last_hand_image = current
+        self._last_hand_observed_at = float(now)
+        return self.hand_history.matches_for_decision(observed, now)
+
+    @property
+    def last_hand_matches(self) -> list[HandCardMatch]:
+        return list(self._last_hand_matches)
+
+    @property
+    def last_hand_image(self) -> Image.Image | None:
+        return self._last_hand_image
+
+    def hand_metadata(self, now: float | None = None) -> dict[str, dict[str, float | int | str | None]]:
+        return self.hand_history.metadata(self.last_update if now is None else float(now))
+
+    def formation_metadata(self, now: float | None = None) -> dict[str, dict[str, Any]]:
+        at = self.last_update if now is None else float(now)
+        decay = float(self.policy.get("formation_confidence_decay_s", 11.0))
+        return {
+            lane: {
+                "frontline_card": formation.frontline_card,
+                "frontline_confidence": round(formation.frontline_confidence_at(at, decay), 4),
+                "frontline_age_s": round(max(0.0, at - formation.frontline_at), 3)
+                if formation.frontline_at > -999.0
+                else -1.0,
+                "backline_card": formation.backline_card,
+                "backline_confidence": round(formation.backline_confidence_at(at, decay), 4),
+                "backline_age_s": round(max(0.0, at - formation.backline_at), 3)
+                if formation.backline_at > -999.0
+                else -1.0,
+                "source": self._formation_source(formation, at),
+            }
+            for lane, formation in sorted(self.formations.items())
+        }
+
+    def _formation_has_frontline(self, formation: LaneFormation, now: float) -> bool:
+        return formation.has_frontline(
+            now,
+            float(self.policy.get("formation_min_confidence", 0.35)),
+            float(self.policy.get("formation_confidence_decay_s", 11.0)),
+        )
+
+    def _formation_has_backline(self, formation: LaneFormation, now: float) -> bool:
+        return formation.has_backline(
+            now,
+            float(self.policy.get("formation_min_confidence", 0.35)),
+            float(self.policy.get("formation_confidence_decay_s", 11.0)),
+        )
+
+    def _formation_source(self, formation: LaneFormation, now: float) -> str:
+        sources: list[str] = []
+        if self._formation_has_frontline(formation, now):
+            sources.append(formation.frontline_source)
+        if self._formation_has_backline(formation, now):
+            sources.append(formation.backline_source)
+        return "defense" if "defense" in sources else (sources[0] if sources else "")
+
     def _defense_response_due(self, threat: LaneThreat, now: float) -> bool:
         previous = self.last_defense_snapshots.get(threat.lane)
         if previous is None:
@@ -695,13 +953,36 @@ class BattlePolicy:
         self, current: Image.Image, previous: Image.Image | None, *, now: float | None = None,
     ) -> dict[str, Any]:
         now = time.monotonic() if now is None else now
+        self._update_virtual_elixir(now)
         threats = self._perceive_threats(current, previous, now)
+        elixir, elixir_source = self._estimate_elixir(current, now)
         state: dict[str, Any] = {
             "schema": "action_observation_v1",
+            "temporal_schema": "hand_elixir_formation_v1",
             "battle_elapsed_s": round(max(0.0, now - self.battle_started_at), 3),
+            "elixir": round(float(elixir), 3),
+            "elixir_source": elixir_source,
+            "elixir_confidence": round(self._last_elixir_confidence, 4),
+            "elixir_age_s": round(
+                max(0.0, now - self._last_elixir_observed_at)
+                if self._last_elixir_observed_at > -999.0
+                else -1.0,
+                3,
+            ),
+            "elixir_phase": self._elixir_phase,
+            "formation_metadata": self.formation_metadata(now),
             "allies_observed": bool(getattr(self.learned_detector, "allies_observed", False)),
             "observed_allies": list(getattr(self.learned_detector, "observed_allies", [])),
         }
+        if self.mode == "reactive_catalog" and self.hand_recognizer is not None:
+            matches = self._stable_hand_matches(current, now)
+            state["hand"] = [match.card_id for match in matches]
+            state["hand_metadata"] = self.hand_metadata(now)
+            state["hand_confidence"] = round(
+                max((match.confidence for match in matches), default=0.0), 4
+            )
+        else:
+            state["hand"] = []
         for lane, threat in threats.items():
             state.update({lane + "_threat": threat.score,
                           lane + "_threat_proximity": threat.proximity,
@@ -718,11 +999,25 @@ class BattlePolicy:
             self.policy.get("own_deploy_indicator_s", 2.8)
         ):
             ignore_points = (self.last_deploy_point,)
-        threats = detect_lane_threats(current, previous, ignore_points)
+        frame_dt_s: float | None = None
+        if self._threat_observed_at > -999.0:
+            frame_dt_s = max(0.05, now - self._threat_observed_at)
+        try:
+            threats = detect_lane_threats(
+                current,
+                previous,
+                ignore_points,
+                frame_dt_s=frame_dt_s,
+            )
+        except TypeError:
+            # Third-party/test detectors written against the M1 signature are
+            # still valid; their output simply keeps the legacy rate units.
+            threats = detect_lane_threats(current, previous, ignore_points)
         if self.learned_detector is not None:
             threats = self.learned_detector.detect(current, threats)
         self._observed_image, self._observed_threats = current, threats
         self._observed_at = now
+        self._threat_observed_at = now
         return threats
 
     def _reactive_decide(
@@ -736,8 +1031,16 @@ class BattlePolicy:
                 return self._baseline_decide(current, previous, now, already_updated=True)
             return None
 
-        elixir, source = self._estimate_elixir(current)
-        matches = self.hand_recognizer.recognize(current)
+        elixir, source = self._estimate_elixir(current, now)
+        if (
+            self._last_hand_image is current
+            and abs(self._last_hand_observed_at - now) <= 1e-9
+        ):
+            matches = self.hand_history.matches_for_decision(
+                self._last_hand_matches, now
+            )
+        else:
+            matches = self._stable_hand_matches(current, now)
         hand = tuple(match.card_id for match in matches)
         affordable = self._recognized_affordable(matches, elixir)
         if not affordable:
@@ -883,17 +1186,20 @@ class BattlePolicy:
             back_only = [
                 lane_name
                 for lane_name, formation in self.formations.items()
-                if formation.has_backline(now) and not formation.has_frontline(now)
+                if self._formation_has_backline(formation, now)
+                and not self._formation_has_frontline(formation, now)
             ]
             front_only = [
                 lane_name
                 for lane_name, formation in self.formations.items()
-                if formation.has_frontline(now) and not formation.has_backline(now)
+                if self._formation_has_frontline(formation, now)
+                and not self._formation_has_backline(formation, now)
             ]
             complete = [
                 lane_name
                 for lane_name, formation in self.formations.items()
-                if formation.has_frontline(now) and formation.has_backline(now)
+                if self._formation_has_frontline(formation, now)
+                and self._formation_has_backline(formation, now)
             ]
 
             def preferred_lane(values: list[str], rank: str) -> str:
@@ -904,7 +1210,7 @@ class BattlePolicy:
                         if rank == "frontline"
                         else formation.frontline_until
                     )
-                    return (1 if formation.source(now) == "defense" else 0, until)
+                    return (1 if self._formation_source(formation, now) == "defense" else 0, until)
 
                 return max(values, key=key)
 
@@ -913,7 +1219,7 @@ class BattlePolicy:
                 lane = preferred_lane(back_only, desired_role)
                 formation_phase = (
                     "protect_surviving_backline"
-                    if self.formations[lane].source(now) == "defense"
+                    if self._formation_source(self.formations[lane], now) == "defense"
                     else "complete_frontline"
                 )
             elif front_only:
@@ -921,7 +1227,7 @@ class BattlePolicy:
                 lane = preferred_lane(front_only, desired_role)
                 formation_phase = (
                     "support_counterpush"
-                    if self.formations[lane].source(now) == "defense"
+                    if self._formation_source(self.formations[lane], now) == "defense"
                     else "support_frontline"
                 )
             elif complete and self.push_support_count < maximum_supports:
@@ -929,7 +1235,7 @@ class BattlePolicy:
                 lane = preferred_lane(complete, desired_role)
                 formation_phase = (
                     "support_counterpush"
-                    if self.formations[lane].source(now) == "defense"
+                    if self._formation_source(self.formations[lane], now) == "defense"
                     else "reinforce_push"
                 )
             elif complete:
@@ -946,12 +1252,12 @@ class BattlePolicy:
 
             existing_formation = self.formations[lane]
             formation_source = (
-                "defense" if existing_formation.source(now) == "defense" else "attack"
+                "defense" if self._formation_source(existing_formation, now) == "defense" else "attack"
             )
-            has_formation = existing_formation.has_frontline(
-                now
-            ) or existing_formation.has_backline(now)
-            if has_formation and existing_formation.source(now) == "defense":
+            has_formation = self._formation_has_frontline(
+                existing_formation, now
+            ) or self._formation_has_backline(existing_formation, now)
+            if has_formation and self._formation_source(existing_formation, now) == "defense":
                 required_elixir = float(
                     self.policy.get("counterpush_min_elixir", 3.0)
                 )
@@ -977,7 +1283,7 @@ class BattlePolicy:
                 ]
                 if (
                     desired_role != "frontline"
-                    or existing_formation.has_backline(now)
+                    or self._formation_has_backline(existing_formation, now)
                     or elixir < overflow
                     or not backline_candidates
                 ):
@@ -1034,7 +1340,7 @@ class BattlePolicy:
                 now=now,
             )
             roles = frozenset(card.roles)
-            if existing_formation.has_frontline(now) or existing_formation.has_backline(now):
+            if self._formation_has_frontline(existing_formation, now) or self._formation_has_backline(existing_formation, now):
                 self.push_support_count += 1
             else:
                 self.push_support_count = 0
@@ -1100,9 +1406,28 @@ class BattlePolicy:
         self.last_deploy_at = now
         self.action_sequence += 1
         cooldown = self.timing["battle_action_cooldown_s"]
-        self.next_action_at = now + self.random.uniform(float(cooldown[0]), float(cooldown[1]))
+        urgent = defending and (
+            strongest.score >= float(self.policy.get("emergency_threat_score", 0.75))
+            or strongest.proximity >= float(self.policy.get("emergency_threat_proximity", 0.62))
+            or strongest.approach_rate >= float(self.policy.get("emergency_approach_rate", 0.08))
+        )
+        if urgent:
+            self.next_action_at = now + max(
+                0.2, float(self.policy.get("emergency_action_cooldown_s", 0.65))
+            )
+        else:
+            self.next_action_at = now + self.random.uniform(float(cooldown[0]), float(cooldown[1]))
         left_motion = motion_score(current, previous, self.vision["friendly_left_roi"])
         right_motion = motion_score(current, previous, self.vision["friendly_right_roi"])
+        selected_hand_state = self.hand_history.slots.get(int(match.slot_index))
+        selected_hand_age = (
+            selected_hand_state.age(now) if selected_hand_state is not None else 0.0
+        )
+        selected_hand_confidence = (
+            self.hand_history._decayed_confidence(selected_hand_state, now)
+            if selected_hand_state is not None
+            else float(match.confidence)
+        )
         slots = self.vision["card_slot_centers"]
         return BattleDecision(
             slot_index=match.slot_index,
@@ -1138,6 +1463,16 @@ class BattlePolicy:
             card_formation_role=card_tactics(card).formation_role,
             formation_phase=formation_phase,
             desired_formation_role=desired_role,
+            hand_confidence=round(selected_hand_confidence, 4),
+            hand_age_s=round(selected_hand_age, 3),
+            elixir_confidence=round(self._last_elixir_confidence, 4),
+            elixir_age_s=round(
+                max(0.0, now - self._last_elixir_observed_at)
+                if self._last_elixir_observed_at > -999.0
+                else -1.0,
+                3,
+            ),
+            elixir_phase=self._elixir_phase,
         )
 
     def _baseline_decide(
@@ -1153,7 +1488,7 @@ class BattlePolicy:
         if now < self.next_action_at:
             return None
 
-        elixir, source = self._estimate_elixir(current)
+        elixir, source = self._estimate_elixir(current, self.last_update)
         minimum = float(self.policy.get("min_elixir_to_act", 4))
         if elixir < minimum:
             return None
@@ -1191,6 +1526,14 @@ class BattlePolicy:
             elixir_source=source,
             left_motion=round(left, 5),
             right_motion=round(right, 5),
+            elixir_confidence=round(self._last_elixir_confidence, 4),
+            elixir_age_s=round(
+                max(0.0, self.last_update - self._last_elixir_observed_at)
+                if self._last_elixir_observed_at > -999.0
+                else -1.0,
+                3,
+            ),
+            elixir_phase=self._elixir_phase,
         )
 
     def decide(

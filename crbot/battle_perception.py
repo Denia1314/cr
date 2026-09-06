@@ -208,12 +208,15 @@ def detect_lane_threats(
     image: Image.Image,
     previous: Image.Image | None = None,
     ignore_points: tuple[tuple[float, float], ...] = (),
+    frame_dt_s: float | None = None,
 ) -> dict[str, LaneThreat]:
     """Detect enemy lanes early and estimate whether units are approaching.
 
     Opponent level badges are visible before troops reach the bridge.  Matching
     their positions with the preceding frame gives a small forward-motion
-    signal which raises the priority of an approaching push.
+    signal which raises the priority of an approaching push.  When
+    ``frame_dt_s`` is supplied, ``approach_rate`` is normalized to screen
+    fraction per second rather than depending on the screenshot cadence.
     """
     if cv2 is None:
         empty = LaneThreat("left", 0.0, 0, 0.0, "none", ())
@@ -223,6 +226,10 @@ def detect_lane_threats(
         }
 
     detected = _level_badge_candidates(image)
+    # A frame-rate independent speed is more useful than the raw pixel delta.
+    # ``None`` preserves the historical one-frame interpretation for callers
+    # that do not have timestamps.
+    dt_s = max(0.05, float(frame_dt_s)) if frame_dt_s is not None else 1.0
     if ignore_points:
         detected = [
             value
@@ -263,22 +270,34 @@ def detect_lane_threats(
             if (value[0] < 0.5 if lane == "left" else value[0] >= 0.5)
         ]
         approach_rates: list[float] = []
-        for x, y, _width in lane_units:
-            candidates = [
-                value for value in previous_lane_units if abs(value[0] - x) <= 0.14
-            ]
-            if candidates:
-                previous_match = min(
-                    candidates,
-                    key=lambda value: abs(value[0] - x) + abs(value[1] - y),
-                )
-                approach_rates.append(max(0.0, y - previous_match[1]))
+        # Greedy nearest-neighbour matching can assign one delayed badge to
+        # several current units.  Build all admissible pairs and consume each
+        # previous observation at most once.
+        pair_candidates = sorted(
+            (
+                abs(previous_x - x) + abs(previous_y - y),
+                current_index,
+                previous_index,
+                y - previous_y,
+            )
+            for current_index, (x, y, _width) in enumerate(lane_units)
+            for previous_index, (previous_x, previous_y, _previous_width) in enumerate(previous_lane_units)
+            if abs(previous_x - x) <= 0.14
+        )
+        matched_current: set[int] = set()
+        matched_previous: set[int] = set()
+        for _distance, current_index, previous_index, delta_y in pair_candidates:
+            if current_index in matched_current or previous_index in matched_previous:
+                continue
+            matched_current.add(current_index)
+            matched_previous.add(previous_index)
+            approach_rates.append(max(0.0, delta_y) / dt_s)
         approach_rate = max(approach_rates, default=0.0)
         score = min(
             1.0,
             unit_count * 0.20
             + max(0.0, (proximity - 0.20) / 0.52) * 0.62
-            + min(0.18, approach_rate * 6.0),
+            + min(0.18, approach_rate * 0.18),
         )
         if unit_count == 0:
             threat = "none"
