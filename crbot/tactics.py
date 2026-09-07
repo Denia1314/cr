@@ -15,6 +15,8 @@ class CardTactics:
     splash_strength: float = 0.0
     heavy_counter_strength: float = 0.0
     offensive_commitment: float = 0.0
+    attack_targets: tuple[str, ...] = ()
+    targeting_source: str = "unknown"
 
     @property
     def is_frontline(self) -> bool:
@@ -23,6 +25,22 @@ class CardTactics:
     @property
     def is_backline(self) -> bool:
         return self.formation_role in {"backline", "hybrid"}
+
+    @property
+    def targeting_known(self) -> bool:
+        return self.targeting_source != "unknown"
+
+    def target_coverage(self, unit_layers: tuple[str, ...]) -> float | None:
+        """Return known coverage of observed ground/air layers.
+
+        ``None`` is deliberately different from zero: it means the catalog
+        does not contain enough verified mechanics to make a hard claim.
+        """
+        required = {value for value in unit_layers if value in {"ground", "air"}}
+        if not required or not self.targeting_known:
+            return None
+        supported = set(self.attack_targets).intersection({"ground", "air"})
+        return len(required.intersection(supported)) / len(required)
 
 
 FRONTLINE_PHRASES = (
@@ -80,6 +98,83 @@ DEATH_EFFECT_PHRASES = (
     "on death",
 )
 
+GROUND_AND_AIR_PHRASES = (
+    "ground and air",
+    "air and ground",
+    "ground or air",
+    "air or ground",
+)
+
+GROUND_ONLY_PHRASES = (
+    "cannot target flying",
+    "cannot attack flying",
+    "does not affect flying",
+    "doesn't affect flying",
+    "ground troops only",
+    "ground units only",
+)
+
+AIR_ONLY_PHRASES = (
+    "air troops only",
+    "air units only",
+    "flying troops only",
+)
+
+
+def _attack_target_profile(
+    card: CardDefinition,
+    description: str,
+    *,
+    building_target: bool,
+) -> tuple[tuple[str, ...], str]:
+    """Normalize only explicit catalog or unambiguous description evidence."""
+    aliases = {
+        "ground": "ground",
+        "ground units": "ground",
+        "ground troops": "ground",
+        "air": "air",
+        "air units": "air",
+        "air troops": "air",
+        "flying": "air",
+        "flying units": "air",
+        "flying troops": "air",
+        "building": "buildings",
+        "buildings": "buildings",
+    }
+    normalized = {
+        aliases[value.strip().casefold()]
+        for value in card.targets
+        if value.strip().casefold() in aliases
+    }
+    source = "catalog" if normalized else "unknown"
+    if not normalized:
+        if building_target:
+            normalized = {"buildings"}
+            source = "description"
+        elif any(phrase in description for phrase in GROUND_AND_AIR_PHRASES):
+            normalized = {"ground", "air"}
+            source = "description"
+        elif any(phrase in description for phrase in GROUND_ONLY_PHRASES):
+            normalized = {"ground"}
+            source = "description"
+        elif any(phrase in description for phrase in AIR_ONLY_PHRASES):
+            normalized = {"air"}
+            source = "description"
+        elif card.kind == "troop" and "melee" in description:
+            # A non-flying melee unit cannot hit air.  Do not apply this to a
+            # flying melee unit because its target rules vary by card.
+            is_flying = any(
+                phrase in description
+                for phrase in ("flying troop", "flying unit", "can fly", "flies above")
+            )
+            if not is_flying:
+                normalized = {"ground"}
+                source = "description"
+    ordered = tuple(
+        value for value in ("ground", "air", "buildings") if value in normalized
+    )
+    return ordered, source
+
 
 def card_tactics(card: CardDefinition) -> CardTactics:
     """Derive a deck-independent formation role from catalog knowledge."""
@@ -91,6 +186,11 @@ def card_tactics(card: CardDefinition) -> CardTactics:
         or any(phrase in description for phrase in BUILDING_TARGET_PHRASES)
     )
     win_condition = bool("win_condition" in roles or building_target)
+    attack_targets, targeting_source = _attack_target_profile(
+        card,
+        description,
+        building_target=building_target,
+    )
 
     splash_strength = 0.0
     if "splash" in roles:
@@ -139,6 +239,8 @@ def card_tactics(card: CardDefinition) -> CardTactics:
             round(splash_strength, 3),
             round(heavy_counter_strength, 3),
             round(offensive_commitment, 3),
+            attack_targets,
+            targeting_source,
         )
     if card.kind == "building":
         return CardTactics(
@@ -150,6 +252,8 @@ def card_tactics(card: CardDefinition) -> CardTactics:
             round(splash_strength, 3),
             round(heavy_counter_strength, 3),
             round(offensive_commitment, 3),
+            attack_targets,
+            targeting_source,
         )
 
     frontline = 0.5
@@ -204,4 +308,6 @@ def card_tactics(card: CardDefinition) -> CardTactics:
         round(splash_strength, 3),
         round(heavy_counter_strength, 3),
         round(offensive_commitment, 3),
+        attack_targets,
+        targeting_source,
     )

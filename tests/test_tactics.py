@@ -93,6 +93,114 @@ class CardTacticsTests(unittest.TestCase):
         self.assertGreater(goblin_giant.offensive_commitment, 0.8)
         self.assertLess(ice_golem.splash_strength, baby_dragon.splash_strength)
 
+    def test_target_capability_distinguishes_known_incompatible_from_unknown(self) -> None:
+        archers = self.profile("archers")
+        knight = self.profile("knight")
+        giant = self.profile("giant")
+        musketeer = self.profile("musketeer")
+        cannon = self.profile("cannon")
+
+        self.assertEqual(archers.attack_targets, ("ground", "air"))
+        self.assertEqual(archers.target_coverage(("air",)), 1.0)
+        self.assertEqual(knight.attack_targets, ("ground",))
+        self.assertEqual(knight.target_coverage(("air",)), 0.0)
+        self.assertEqual(giant.attack_targets, ("buildings",))
+        self.assertEqual(giant.target_coverage(("ground",)), 0.0)
+        self.assertIsNone(musketeer.target_coverage(("air",)))
+        self.assertEqual(cannon.attack_targets, ("ground",))
+        self.assertEqual(cannon.target_coverage(("air",)), 0.0)
+
+    def test_known_air_threat_rejects_ground_only_defender(self) -> None:
+        policy = BattlePolicy(formation_config())
+        policy.catalog = self.catalog
+        policy.hand_recognizer = FakeRecognizer(["knight", "archers"])
+        policy.imitation_model = None
+        policy.replay_model = None
+        policy.reset_battle(now=0.0)
+        policy.next_action_at = 0.0
+        pressure = {
+            "left": LaneThreat(
+                "left",
+                0.8,
+                2,
+                0.52,
+                "single",
+                ((0.30, 0.52),),
+                unit_layers=("air",),
+                layer_confidence=0.9,
+            ),
+            "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
+        }
+
+        with patch("crbot.policy.detect_lane_threats", return_value=pressure):
+            decision = policy.decide(
+                Image.new("RGB", (600, 1000), "black"), None, now=1.0
+            )
+
+        assert decision is not None
+        self.assertEqual(decision.card_id, "archers")
+        self.assertEqual(decision.threat_unit_layers, ("air",))
+        self.assertEqual(decision.card_attack_targets, ("ground", "air"))
+        self.assertEqual(decision.card_targeting_source, "catalog")
+
+    def test_known_capability_beats_unknown_capability_for_air_defense(self) -> None:
+        policy = BattlePolicy(formation_config())
+        policy.catalog = self.catalog
+        policy.hand_recognizer = FakeRecognizer(["musketeer", "archers"])
+        policy.imitation_model = None
+        policy.replay_model = None
+        policy.reset_battle(now=0.0)
+        policy.next_action_at = 0.0
+        pressure = {
+            "left": LaneThreat(
+                "left",
+                0.8,
+                1,
+                0.52,
+                "single",
+                ((0.30, 0.52),),
+                unit_layers=("air",),
+                layer_confidence=0.9,
+            ),
+            "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
+        }
+
+        with patch("crbot.policy.detect_lane_threats", return_value=pressure):
+            decision = policy.decide(
+                Image.new("RGB", (600, 1000), "black"), None, now=1.0
+            )
+
+        assert decision is not None
+        self.assertEqual(decision.card_id, "archers")
+
+    def test_low_confidence_layer_does_not_activate_hard_target_filter(self) -> None:
+        policy = BattlePolicy(formation_config())
+        knight = self.catalog.get("knight")
+        assert knight is not None
+        uncertain = LaneThreat(
+            "left",
+            0.8,
+            1,
+            0.52,
+            "single",
+            ((0.30, 0.52),),
+            unit_layers=("air",),
+            layer_confidence=0.4,
+        )
+        trusted = LaneThreat(
+            "left",
+            0.8,
+            1,
+            0.52,
+            "single",
+            ((0.30, 0.52),),
+            unit_layers=("air",),
+            layer_confidence=0.9,
+        )
+
+        self.assertGreater(policy._defense_score(knight, uncertain), -1_000.0)
+        self.assertEqual(policy._defense_score(knight, trusted), -1_000.0)
+
     def test_primary_area_damage_beats_death_splash_against_a_swarm(self) -> None:
         policy = BattlePolicy(formation_config())
         policy.catalog = self.catalog

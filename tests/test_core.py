@@ -1060,6 +1060,46 @@ class DatasetTests(unittest.TestCase):
         self.assertIn("splash", derived["roles"])
         self.assertIn("cheap", derived["roles"])
 
+    def test_community_sync_derives_only_unambiguous_target_capabilities(self) -> None:
+        community = [
+            {
+                "id": 26000101,
+                "key": "ground-cannon",
+                "name": "Ground Cannon",
+                "elixir": 3,
+                "rarity": "Common",
+                "type": "Building",
+                "description": "Cannot target flying troops.",
+            },
+            {
+                "id": 26000102,
+                "key": "melee-guard",
+                "name": "Melee Guard",
+                "elixir": 3,
+                "rarity": "Common",
+                "type": "Troop",
+                "description": "A tough melee fighter.",
+            },
+            {
+                "id": 26000103,
+                "key": "ambiguous-shooter",
+                "name": "Ambiguous Shooter",
+                "elixir": 4,
+                "rarity": "Rare",
+                "type": "Troop",
+                "description": "Shoots a powerful projectile.",
+            },
+        ]
+
+        cards = merge_community_cards({"schema_version": 1, "cards": []}, community)[
+            "cards"
+        ]
+        by_id = {card["id"]: card for card in cards}
+
+        self.assertEqual(by_id["ground_cannon"]["targets"], ["ground"])
+        self.assertEqual(by_id["melee_guard"]["targets"], ["ground"])
+        self.assertEqual(by_id["ambiguous_shooter"]["targets"], [])
+
 
 class WorkflowTests(unittest.TestCase):
     def test_workflow_recognition(self) -> None:

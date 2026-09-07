@@ -161,6 +161,120 @@ class ActionConfirmationTracker:
         self._pending: dict[str, dict[str, Any]] = {}
         self._resolved: dict[str, ActionConfirmation] = {}
 
+    @staticmethod
+    def _new_pending_state(sent_at: float) -> dict[str, Any]:
+        return {
+            "sent_at": float(sent_at),
+            "frames": 0,
+            "positive_frames": 0,
+            "last_signature": None,
+            "last_evidence": {},
+            "best_evidence": {},
+            "partial_seen": False,
+            "observed_signals": set(),
+        }
+
+    @staticmethod
+    def _has_partial_evidence(evidence: dict[str, Any]) -> bool:
+        return bool(
+            int(evidence.get("independent_signals", 0)) > 0
+            or evidence.get("hand_change")
+            or evidence.get("hand_uncertain_change")
+            or evidence.get("elixir_change")
+            or evidence.get("visual_change")
+        )
+
+    @staticmethod
+    def _evidence_rank(evidence: dict[str, Any]) -> tuple[int, int, float]:
+        partial_count = sum(
+            int(bool(evidence.get(key)))
+            for key in (
+                "hand_change",
+                "hand_uncertain_change",
+                "elixir_change",
+                "visual_change",
+            )
+        )
+        return (
+            int(evidence.get("independent_signals", 0)),
+            partial_count,
+            float(evidence.get("confidence", 0.0)),
+        )
+
+    def _remember_evidence(
+        self,
+        state: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> None:
+        observation = dict(evidence)
+        state["last_evidence"] = observation
+        state["partial_seen"] = bool(
+            state.get("partial_seen") or self._has_partial_evidence(observation)
+        )
+        observed_signals = state.setdefault("observed_signals", set())
+        for key in (
+            "hand_change",
+            "hand_uncertain_change",
+            "elixir_change",
+            "visual_change",
+        ):
+            if observation.get(key):
+                observed_signals.add(key)
+        best = dict(state.get("best_evidence") or {})
+        if not best or self._evidence_rank(observation) > self._evidence_rank(best):
+            state["best_evidence"] = observation
+
+    @staticmethod
+    def _preserved_evidence(state: dict[str, Any]) -> dict[str, Any]:
+        evidence = dict(state.get("best_evidence") or state.get("last_evidence") or {})
+        observed_signals = sorted(
+            str(value) for value in state.get("observed_signals", set())
+        )
+        evidence.update(
+            {
+                "evidence_frames": int(state.get("frames", 0)),
+                "partial_evidence_seen": bool(state.get("partial_seen", False)),
+                "best_independent_signals": int(
+                    (state.get("best_evidence") or {}).get("independent_signals", 0)
+                ),
+                "observed_signals": observed_signals,
+                "cumulative_independent_signals": sum(
+                    signal in observed_signals
+                    for signal in ("hand_change", "elixir_change", "visual_change")
+                ),
+            }
+        )
+        return evidence
+
+    def _finish_timeout(
+        self,
+        action_id: str,
+        state: dict[str, Any],
+        current: float,
+    ) -> ActionConfirmation:
+        evidence = self._preserved_evidence(state)
+        has_partial = bool(
+            state.get("partial_seen") or int(state.get("positive_frames", 0)) > 0
+        )
+        status = "unknown" if has_partial else "rejected"
+        reason = (
+            "超时但曾观察到部分或不稳定证据，保留为未知"
+            if status == "unknown"
+            else "超时且未观察到手牌、费用或卡槽变化"
+        )
+        return self._finish(
+            action_id,
+            ActionConfirmation(
+                action_id,
+                status,
+                max(0.0, min(1.0, float(evidence.get("confidence", 0.0)))),
+                reason,
+                evidence,
+                max(0.0, current - float(state["sent_at"])),
+                int(state.get("frames", 0)),
+            ),
+        )
+
     def register(self, action_id: str, *, sent_at: float | None = None) -> ActionConfirmation:
         action_id = str(action_id).strip()
         if not action_id:
@@ -169,12 +283,8 @@ class ActionConfirmationTracker:
         if existing is not None:
             return existing
         if action_id not in self._pending:
-            self._pending[action_id] = {
-                "sent_at": time.monotonic() if sent_at is None else float(sent_at),
-                "frames": 0,
-                "positive_frames": 0,
-                "last_signature": None,
-            }
+            registered_at = time.monotonic() if sent_at is None else float(sent_at)
+            self._pending[action_id] = self._new_pending_state(registered_at)
         return ActionConfirmation(action_id, "sent", 0.0, "等待出牌证据", {}, 0.0, 0)
 
     def observe(
@@ -187,13 +297,14 @@ class ActionConfirmationTracker:
         action_id = str(action_id).strip()
         if action_id in self._resolved:
             return self._resolved[action_id]
+        current = time.monotonic() if now is None else float(now)
         state = self._pending.setdefault(
             action_id,
-            {"sent_at": time.monotonic(), "frames": 0, "positive_frames": 0, "last_signature": None},
+            self._new_pending_state(current),
         )
-        current = time.monotonic() if now is None else float(now)
         elapsed = max(0.0, current - float(state["sent_at"]))
         state["frames"] += 1
+        self._remember_evidence(state, evidence)
         signals = int(evidence.get("independent_signals", 0))
         signature = tuple(
             bool(evidence.get(key)) for key in ("hand_change", "elixir_change", "visual_change")
@@ -224,30 +335,7 @@ class ActionConfirmationTracker:
             return result
 
         if elapsed >= self.timeout_s:
-            has_partial = bool(
-                evidence.get("hand_change")
-                or evidence.get("hand_uncertain_change")
-                or evidence.get("elixir_change")
-                or evidence.get("visual_change")
-            )
-            status = "unknown" if has_partial else "rejected"
-            reason = (
-                "超时但证据互相不一致，保留为未知"
-                if status == "unknown"
-                else "超时且未观察到手牌、费用或卡槽变化"
-            )
-            return self._finish(
-                action_id,
-                ActionConfirmation(
-                    action_id,
-                    status,
-                    max(0.0, min(1.0, float(evidence.get("confidence", 0.0)))),
-                    reason,
-                    dict(evidence),
-                    elapsed,
-                    int(state["frames"]),
-                ),
-            )
+            return self._finish_timeout(action_id, state, current)
 
         return ActionConfirmation(
             action_id,
@@ -260,15 +348,18 @@ class ActionConfirmationTracker:
         )
 
     def timeout(self, action_id: str, *, now: float | None = None) -> ActionConfirmation:
-        state = self._pending.get(str(action_id).strip())
+        action_id = str(action_id).strip()
+        resolved = self._resolved.get(action_id)
+        if resolved is not None:
+            return resolved
+        state = self._pending.get(action_id)
         if state is None:
-            return self._resolved.get(str(action_id).strip()) or ActionConfirmation(
-                str(action_id), "unknown", 0.0, "未注册的动作", {}, 0.0, 0
+            return ActionConfirmation(
+                action_id, "unknown", 0.0, "未注册的动作", {}, 0.0, 0
             )
-        empty = {"independent_signals": 0}
         current = time.monotonic() if now is None else float(now)
-        state["sent_at"] = min(float(state["sent_at"]), current - self.timeout_s)
-        return self.observe(str(action_id), empty, now=current)
+        current = max(current, float(state["sent_at"]) + self.timeout_s)
+        return self._finish_timeout(action_id, state, current)
 
     def force_unknown(
         self,
@@ -283,17 +374,20 @@ class ActionConfirmationTracker:
         existing = self._resolved.get(action_id)
         if existing is not None:
             return existing
+        current = time.monotonic() if now is None else float(now)
         state = self._pending.setdefault(
             action_id,
-            {"sent_at": time.monotonic(), "frames": 0},
+            self._new_pending_state(current),
         )
-        current = time.monotonic() if now is None else float(now)
+        if evidence:
+            self._remember_evidence(state, evidence)
+        preserved = self._preserved_evidence(state)
         result = ActionConfirmation(
             action_id,
             "unknown",
-            float((evidence or {}).get("confidence", 0.0)),
+            max(0.0, min(1.0, float(preserved.get("confidence", 0.0)))),
             reason,
-            dict(evidence or {}),
+            preserved,
             max(0.0, current - float(state.get("sent_at", current))),
             int(state.get("frames", 0)),
         )

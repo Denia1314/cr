@@ -70,6 +70,14 @@ def action_payload(slot_index: int = 1) -> dict[str, object]:
         "battle_elapsed_s": 42.0,
         "threat_type": "single",
         "enemy_cards": [],
+        "left_threat_unit_layers": ["air"],
+        "right_threat_unit_layers": [],
+        "threat_unit_layers": ["air"],
+        "left_threat_layer_confidence": 0.91,
+        "right_threat_layer_confidence": 0.0,
+        "threat_layer_confidence": 0.91,
+        "card_attack_targets": ["ground", "air"],
+        "card_targeting_source": "catalog",
     }
 
 
@@ -140,6 +148,14 @@ class ExperienceReplayTests(unittest.TestCase):
             self.assertEqual(rows[0]["state"]["left_threat_type"], "heavy")
             self.assertEqual(rows[0]["state"]["left_unit_count"], 2)
             self.assertEqual(rows[0]["state"]["battle_elapsed_s"], 42.0)
+            self.assertEqual(rows[0]["state"]["threat_unit_layers"], ["air"])
+            self.assertAlmostEqual(
+                rows[0]["state"]["threat_layer_confidence"], 0.91
+            )
+            self.assertEqual(
+                rows[0]["action"]["card_attack_targets"], ["ground", "air"]
+            )
+            self.assertEqual(rows[0]["action"]["card_targeting_source"], "catalog")
             self.assertFalse(rows[0]["done"])
             self.assertEqual(rows[1]["reward"], 1.1)
             self.assertTrue(rows[1]["done"])

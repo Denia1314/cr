@@ -98,6 +98,7 @@ class BotEngine:
             "mode": self.policy.mode,
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "temporal_observation_schema": "hand_elixir_formation_v1",
+            "tactical_observation_schema": "threat_layers_v1",
         }
         if (
             self.policy.imitation_model is not None
@@ -655,8 +656,6 @@ class BotEngine:
         """Send one action and resolve it from bounded post-click evidence."""
         decision = self.policy.prepare_action(decision, policy_snapshot)
         action_id = decision.action_id
-        sent_at = time.monotonic()
-        self.action_confirmation.register(action_id, sent_at=sent_at)
         self.recorder.record(
             "battle_action_proposed",
             image,
@@ -712,7 +711,7 @@ class BotEngine:
                 0.0,
                 0,
             )
-            self.policy.resolve_action(action_id, "unknown", now=sent_at)
+            self.policy.resolve_action(action_id, "unknown", now=time.monotonic())
             return (
                 replace(decision, action_status="unknown"),
                 card_pixel,
@@ -738,19 +737,19 @@ class BotEngine:
             timing["adb_s"] = send_elapsed
         self.response_timing.record("send", send_elapsed)
         self.response_timing.record("adb", send_elapsed)
-        self.recorder.record(
-            "battle_action_sent",
-            image,
-            {
-                "action_id": action_id,
-                "card_pixel": card_pixel,
-                "deploy_pixel": deploy_pixel,
-                "send_error": send_error,
-            },
-        )
 
+        # The evidence budget starts only after the deployment tap attempt has
+        # completed.  Pre-action recognition and ADB latency must not consume
+        # the short confirmation window.  Keep event-image encoding outside
+        # the critical loop as well so slow disks cannot steal observation
+        # frames.
+        confirmation_window_started_at = time.monotonic()
+        self.action_confirmation.register(
+            action_id,
+            sent_at=confirmation_window_started_at,
+        )
         timeout_s = self.action_confirmation.timeout_s
-        deadline = sent_at + timeout_s
+        deadline = confirmation_window_started_at + timeout_s
         post_image: Image.Image | None = None
         confirmation: ActionConfirmation | None = None
         last_evidence: dict[str, Any] = {}
@@ -824,6 +823,20 @@ class BotEngine:
         if timing is not None:
             timing["confirmation_s"] = confirmation_elapsed
         self.response_timing.record("confirmation", confirmation_elapsed)
+        self.recorder.record(
+            "battle_action_sent",
+            image,
+            {
+                "action_id": action_id,
+                "card_pixel": card_pixel,
+                "deploy_pixel": deploy_pixel,
+                "send_error": send_error,
+                "confirmation_timeout_s": timeout_s,
+                "confirmation_elapsed_s": round(confirmation_elapsed, 6),
+                "confirmation_status": confirmation.status,
+                "confirmation_window_starts_after_send": True,
+            },
+        )
         return (
             replace(decision, action_status=confirmation.status),
             card_pixel,

@@ -93,6 +93,24 @@ def state_from_action(image: Image.Image, payload: dict[str, Any]) -> dict[str, 
             payload.get("threat_approach_rate", 0.0)
         ),
         "enemy_cards": [str(value) for value in payload.get("enemy_cards", [])],
+        "left_threat_unit_layers": [
+            str(value) for value in payload.get("left_threat_unit_layers", [])
+        ],
+        "right_threat_unit_layers": [
+            str(value) for value in payload.get("right_threat_unit_layers", [])
+        ],
+        "threat_unit_layers": [
+            str(value) for value in payload.get("threat_unit_layers", [])
+        ],
+        "left_threat_layer_confidence": float(
+            payload.get("left_threat_layer_confidence", 0.0)
+        ),
+        "right_threat_layer_confidence": float(
+            payload.get("right_threat_layer_confidence", 0.0)
+        ),
+        "threat_layer_confidence": float(
+            payload.get("threat_layer_confidence", 0.0)
+        ),
         "battlefield_edges": [round(float(value), 6) for value in visual],
         "allies_observed": bool(payload.get("allies_observed", False)),
         "observed_allies": list(payload.get("observed_allies", [])),
@@ -122,6 +140,10 @@ def action_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "formation_phase": str(payload.get("formation_phase", "")),
         "card_formation_role": str(payload.get("card_formation_role", "")),
         "desired_formation_role": str(payload.get("desired_formation_role", "")),
+        "card_attack_targets": [
+            str(value) for value in payload.get("card_attack_targets", [])
+        ],
+        "card_targeting_source": str(payload.get("card_targeting_source", "unknown")),
     }
 
 

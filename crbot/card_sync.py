@@ -214,8 +214,30 @@ def _derived_targets(card: dict[str, Any]) -> list[str]:
     description = str(card.get("description", "")).casefold()
     if "only attacks buildings" in description or "targets buildings" in description:
         return ["buildings"]
-    if "ground and air" in description:
+    if any(
+        phrase in description
+        for phrase in ("ground and air", "air and ground", "ground or air", "air or ground")
+    ):
         return ["ground", "air"]
+    if any(
+        phrase in description
+        for phrase in (
+            "cannot target flying",
+            "cannot attack flying",
+            "does not affect flying",
+            "doesn't affect flying",
+            "ground troops only",
+            "ground units only",
+        )
+    ):
+        return ["ground"]
+    kind = str(card.get("type", "")).casefold()
+    is_flying = any(
+        phrase in description
+        for phrase in ("flying troop", "flying unit", "can fly", "flies above")
+    )
+    if kind == "troop" and "melee" in description and not is_flying:
+        return ["ground"]
     return []
 
 

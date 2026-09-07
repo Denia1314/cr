@@ -137,6 +137,12 @@ def _lane_threat(value: dict[str, Any], lane: str) -> LaneThreat:
         threat=str(raw.get("threat", "none")),
         centers=centers,
         enemy_cards=tuple(str(card_id) for card_id in raw.get("enemy_cards", [])),
+        unit_layers=tuple(
+            str(layer)
+            for layer in raw.get("unit_layers", [])
+            if str(layer) in {"ground", "air"}
+        ),
+        layer_confidence=float(raw.get("layer_confidence", 0.0)),
     )
 
 

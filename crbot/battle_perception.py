@@ -39,11 +39,14 @@ class LaneThreat:
     centers: tuple[tuple[float, float], ...]
     enemy_cards: tuple[str, ...] = ()
     approach_rate: float = 0.0
+    unit_layers: tuple[str, ...] = ()
+    layer_confidence: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["centers"] = [list(center) for center in self.centers]
         value["enemy_cards"] = list(self.enemy_cards)
+        value["unit_layers"] = list(self.unit_layers)
         return value
 
 

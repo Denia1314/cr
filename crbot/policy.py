@@ -50,6 +50,14 @@ class BattleDecision:
     threat_proximity: float = 0.0
     threat_approach_rate: float = 0.0
     enemy_cards: tuple[str, ...] = ()
+    left_threat_unit_layers: tuple[str, ...] = ()
+    right_threat_unit_layers: tuple[str, ...] = ()
+    threat_unit_layers: tuple[str, ...] = ()
+    left_threat_layer_confidence: float = 0.0
+    right_threat_layer_confidence: float = 0.0
+    threat_layer_confidence: float = 0.0
+    card_attack_targets: tuple[str, ...] = ()
+    card_targeting_source: str = "unknown"
     imitation_used: bool = False
     replay_learning_used: bool = False
     card_formation_role: str = ""
@@ -67,6 +75,10 @@ class BattleDecision:
         value = asdict(self)
         value["hand"] = list(self.hand)
         value["enemy_cards"] = list(self.enemy_cards)
+        value["left_threat_unit_layers"] = list(self.left_threat_unit_layers)
+        value["right_threat_unit_layers"] = list(self.right_threat_unit_layers)
+        value["threat_unit_layers"] = list(self.threat_unit_layers)
+        value["card_attack_targets"] = list(self.card_attack_targets)
         return value
 
 
@@ -775,8 +787,19 @@ class BattlePolicy:
     ) -> float:
         roles = set(card.roles)
         tactics = card_tactics(card)
+        target_coverage = tactics.target_coverage(
+            self._trusted_threat_layers(threat)
+        )
+        if target_coverage == 0.0:
+            # This is a hard mechanics constraint, not a preference that a
+            # learned score may override.  Unknown target mechanics remain
+            # eligible and are represented by ``None`` instead.
+            return -1_000.0
         cost = self._effective_cost(card, float(self.policy.get("unknown_card_cost", 3)))
         score = 0.0
+        if target_coverage is not None:
+            score += 2.5 * target_coverage
+            score -= 1.5 * (1.0 - target_coverage)
         exact_counter = any(
             enemy_card in set(card.counters) for enemy_card in threat.enemy_cards
         )
@@ -824,6 +847,18 @@ class BattlePolicy:
             score -= max(0.0, cost - 3.0) * 0.55
         score += max(-1.5, 1.8 - 0.35 * cost)
         return score
+
+    def _trusted_threat_layers(self, threat: LaneThreat) -> tuple[str, ...]:
+        minimum = float(self.policy.get("threat_layer_min_confidence", 0.70))
+        if float(threat.layer_confidence) < minimum:
+            return ()
+        return tuple(
+            dict.fromkeys(
+                layer
+                for layer in threat.unit_layers
+                if layer in {"ground", "air"}
+            )
+        )
 
     def _push_score(self, card: CardDefinition, *, supporting: bool) -> float:
         roles = set(card.roles)
@@ -989,6 +1024,7 @@ class BattlePolicy:
         state: dict[str, Any] = {
             "schema": "action_observation_v1",
             "temporal_schema": "hand_elixir_formation_v1",
+            "tactical_schema": "threat_layers_v1",
             "battle_elapsed_s": round(max(0.0, now - self.battle_started_at), 3),
             "elixir": round(float(elixir), 3),
             "elixir_source": elixir_source,
@@ -1016,7 +1052,9 @@ class BattlePolicy:
         for lane, threat in threats.items():
             state.update({lane + "_threat": threat.score,
                           lane + "_threat_proximity": threat.proximity,
-                          lane + "_unit_count": threat.unit_count})
+                          lane + "_unit_count": threat.unit_count,
+                          lane + "_threat_unit_layers": list(threat.unit_layers),
+                          lane + "_layer_confidence": threat.layer_confidence})
         return state
 
     def _perceive_threats(
@@ -1135,6 +1173,7 @@ class BattlePolicy:
 
         if defending:
             lane = strongest.lane
+            trusted_threat_layers = self._trusted_threat_layers(strongest)
             if strongest.proximity < 0.43:
                 reserve = float(
                     self.policy.get("early_defense_elixir_reserve", 1.5)
@@ -1145,9 +1184,33 @@ class BattlePolicy:
                 )
             else:
                 reserve = 0.0
+            candidate_coverages = [
+                (
+                    value,
+                    card_tactics(value[1]).target_coverage(trusted_threat_layers),
+                )
+                for value in affordable
+            ]
+            known_capability_candidates = [
+                value
+                for value, coverage in candidate_coverages
+                if coverage is not None and coverage > 0.0
+            ]
+            unknown_capability_candidates = [
+                value
+                for value, coverage in candidate_coverages
+                if coverage is None
+            ]
+            capability_candidates = (
+                known_capability_candidates
+                if known_capability_candidates
+                else unknown_capability_candidates
+            )
+            if not capability_candidates:
+                return None
             defensive_affordable = [
                 value
-                for value in affordable
+                for value in capability_candidates
                 if self._effective_cost(
                     value[1], float(self.policy.get("unknown_card_cost", 3))
                 )
@@ -1159,7 +1222,7 @@ class BattlePolicy:
                 )
                 if strongest.score < emergency_score:
                     return None
-                defensive_affordable = affordable
+                defensive_affordable = capability_candidates
             match, card = max(
                 defensive_affordable,
                 key=lambda value: (
@@ -1488,6 +1551,16 @@ class BattlePolicy:
             threat_proximity=strongest.proximity if defending else 0.0,
             threat_approach_rate=strongest.approach_rate if defending else 0.0,
             enemy_cards=strongest.enemy_cards if defending else (),
+            left_threat_unit_layers=left_threat.unit_layers,
+            right_threat_unit_layers=right_threat.unit_layers,
+            threat_unit_layers=strongest.unit_layers if defending else (),
+            left_threat_layer_confidence=left_threat.layer_confidence,
+            right_threat_layer_confidence=right_threat.layer_confidence,
+            threat_layer_confidence=(
+                strongest.layer_confidence if defending else 0.0
+            ),
+            card_attack_targets=card_tactics(card).attack_targets,
+            card_targeting_source=card_tactics(card).targeting_source,
             imitation_used=imitation_available,
             replay_learning_used=replay_available,
             card_formation_role=card_tactics(card).formation_role,

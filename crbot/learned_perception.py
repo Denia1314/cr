@@ -138,5 +138,7 @@ class LearnedBattlefieldDetector:
                 centers=centers,
                 enemy_cards=enemy_cards,
                 approach_rate=base.approach_rate,
+                unit_layers=base.unit_layers,
+                layer_confidence=base.layer_confidence,
             )
         return merged
