@@ -72,6 +72,9 @@ class BattleDecision:
     elixir_phase: str = "normal"
     defense_elixir_reserve: float = 0.0
     resource_allocation_reason: str = ""
+    placement_role: str = ""
+    placement_reason: str = ""
+    placement_candidates: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -81,6 +84,7 @@ class BattleDecision:
         value["right_threat_unit_layers"] = list(self.right_threat_unit_layers)
         value["threat_unit_layers"] = list(self.threat_unit_layers)
         value["card_attack_targets"] = list(self.card_attack_targets)
+        value["placement_candidates"] = list(self.placement_candidates)
         return value
 
 
@@ -664,6 +668,18 @@ class BattlePolicy:
         threat: LaneThreat,
     ) -> list[float]:
         """Choose a role-aware interception point from the observed push."""
+        point, _, _, _ = self._defense_placement(lane, card, threat)
+        return point
+
+    def _defense_placement(
+        self,
+        lane: str,
+        card: CardDefinition,
+        threat: LaneThreat,
+        *,
+        observation_age_s: float = 0.0,
+    ) -> tuple[list[float], str, str, tuple[str, ...]]:
+        """Return a legal role-aware point plus compact placement evidence."""
         roles = set(card.roles)
         tactics = card_tactics(card)
         lane_range = self.policy["left_x"] if lane == "left" else self.policy["right_x"]
@@ -681,14 +697,37 @@ class BattlePolicy:
 
         if card.kind == "spell":
             if threat.centers:
-                target_x = sum(point[0] for point in threat.centers) / len(threat.centers)
-                target_y = sum(point[1] for point in threat.centers) / len(threat.centers)
+                max_age = float(self.policy.get("placement_prediction_max_age_s", 0.8))
+                delay = float(self.policy.get("spell_prediction_delay_s", 0.10))
+                prediction = max(0.0, threat.approach_rate) * delay if observation_age_s <= max_age else 0.0
+                predicted = tuple(
+                    (float(x), self._clamp(float(y) + prediction, 0.22, 0.75))
+                    for x, y in threat.centers
+                )
+                radius = float(self.policy.get("spell_cluster_radius", 0.075))
+                candidates = list(predicted)
+                for index, first in enumerate(predicted):
+                    for second in predicted[index + 1 :]:
+                        candidates.append(((first[0] + second[0]) / 2.0, (first[1] + second[1]) / 2.0))
+
+                def coverage(point: tuple[float, float]) -> tuple[int, float, float]:
+                    distances = [((point[0] - unit[0]) ** 2 + (point[1] - unit[1]) ** 2) ** 0.5 for unit in predicted]
+                    covered = sum(distance <= radius for distance in distances)
+                    return covered, -sum(min(distance, radius * 2.0) for distance in distances), point[1]
+
+                target_x, target_y = max(candidates, key=coverage)
+                covered = coverage((target_x, target_y))[0]
+                freshness = "predicted" if prediction > 0.0 else ("stale_no_prediction" if observation_age_s > max_age else "stationary")
+                evidence = tuple(f"{x:.3f},{y:.3f}:cover={coverage((x, y))[0]}" for x, y in candidates[:8])
+                reason = f"cluster_cover={covered}/{len(predicted)};{freshness}"
             else:
                 target_y = threat.proximity
-            return [
+                evidence = ()
+                reason = "no_centers_lane_fallback"
+            return ([
                 self._clamp(target_x, 0.12, 0.88),
                 self._clamp(target_y, 0.22, 0.75),
-            ]
+            ], "spell_cluster", reason, evidence)
 
         # Meet an advancing unit between the bridge and our tower.  Earlier
         # observations produce a forward setup; fast motion pulls the point a
@@ -699,20 +738,26 @@ class BattlePolicy:
             target_x = 0.445 if lane == "left" else 0.555
             intercept_y = 0.56 + max(0.0, threat.proximity - 0.34) * 0.16
             bounds = self.policy.get("building_defense_y", [0.55, 0.63])
+            placement_role = "building_pull"
+            placement_reason = "inner_lane_pull_with_legal_bounds"
         elif tactics.is_backline and not tactics.is_frontline:
             inner_axis = 0.40 if lane == "left" else 0.60
             target_x = 0.35 * target_x + 0.65 * inner_axis
             intercept_y += 0.045
             bounds = self.policy.get("ranged_defense_y", [0.56, 0.69])
+            placement_role = "ranged_backline"
+            placement_reason = "protected_range_behind_intercept"
         else:
             bounds = self.policy.get("intercept_y", [0.52, 0.67])
             if intercept_y >= 0.57:
                 inner_axis = 0.40 if lane == "left" else 0.60
                 target_x = 0.55 * target_x + 0.45 * inner_axis
-        return [
+            placement_role = "melee_intercept"
+            placement_reason = "intercept_path_scaled_by_proximity_and_speed"
+        return ([
             self._clamp(target_x, 0.14, 0.86),
             self._clamp(intercept_y, float(bounds[0]), float(bounds[1])),
-        ]
+        ], placement_role, placement_reason, ())
 
     def _push_point(
         self,
@@ -1329,7 +1374,10 @@ class BattlePolicy:
             ) < minimum_defense_score:
                 return None
             reason = f"counter_{strongest.threat}_{lane}"
-            deploy = self._defense_point(lane, card, strongest)
+            observation_age_s = max(0.0, now - self._threat_observed_at) if self._threat_observed_at > -999.0 else 0.0
+            deploy, placement_role, placement_reason, placement_candidates = self._defense_placement(
+                lane, card, strongest, observation_age_s=observation_age_s
+            )
             self.last_defense_at = now
             self.last_defense_lane = lane
             self.last_defense_snapshots[lane] = (
@@ -1340,6 +1388,9 @@ class BattlePolicy:
             )
             self.push_support_count = 0
         else:
+            placement_role = "formation"
+            placement_reason = "formation_role_spacing"
+            placement_candidates = ()
             push_minimum = float(self.policy.get("push_min_elixir", 7.0))
             maximum_supports = int(self.policy.get("maximum_push_supports", 2))
             back_only = [
@@ -1644,6 +1695,9 @@ class BattlePolicy:
             elixir_phase=self._elixir_phase,
             defense_elixir_reserve=round(defense_reserve, 3),
             resource_allocation_reason=resource_allocation_reason,
+            placement_role=placement_role,
+            placement_reason=placement_reason,
+            placement_candidates=placement_candidates,
         )
 
     def _baseline_decide(

@@ -205,6 +205,8 @@ python -m crbot --config config.json replay review-audit
 
 `adaptive_counterpush_v5_m3_c1` 为双路费用版本：同时受压时按压力、距离、接近速度和单位数确定优先路，并为另一条仍可处理的路线预留最低有效防守费用；费用确实不足时允许处理更紧急路线，但在 `resource_allocation_reason` 中明确记录取舍。该模块可通过 `policy.dual_lane_elixir_enabled` 独立关闭。与新代码指纹不兼容的旧冠军不会加载。
 
+`adaptive_counterpush_v5_m3_c2` 增加按职责落点：建筑向内侧合法区域拉扯，近战按距离与接近速度截击，远程保持后排间距，法术从目标点和两两中点中选择覆盖最多的簇中心。法术移动预测仅使用新鲜观测；超时或无目标中心时会保守回退。决策记录新增 `placement_role`、`placement_reason` 和候选覆盖摘要，便于复盘。
+
 对尚未生成回放的旧对局做一次安全回填：
 
 ```text

@@ -73,8 +73,8 @@
     "minimum_losses": 10,
     "minimum_verified_transitions": 300,
     "minimum_distinct_cards_for_training": 8,
-    "training_policy_version": "adaptive_counterpush_v5_m3_c1",
-    "transfer_policy_versions": ["adaptive_counterpush_v5_m2_1", "adaptive_counterpush_v5_m2", "adaptive_counterpush_v5", "formation_counterpush_v4"],
+    "training_policy_version": "adaptive_counterpush_v5_m3_c2",
+    "transfer_policy_versions": ["adaptive_counterpush_v5_m3_c1", "adaptive_counterpush_v5_m2_1", "adaptive_counterpush_v5_m2", "adaptive_counterpush_v5", "formation_counterpush_v4"],
     "transfer_sample_weight": 0.25,
     "local_feedback_weight": 0.15,
     "minimum_local_validation_actions": 50,
@@ -161,7 +161,7 @@
   },
   "policy": {
     "mode": "reactive_catalog",
-    "version": "adaptive_counterpush_v5_m3_c1",
+    "version": "adaptive_counterpush_v5_m3_c2",
     "fallback_mode": "hold",
     "min_elixir_to_act": 4,
     "unknown_card_cost": 3,
@@ -235,6 +235,9 @@
       0.55,
       0.63
     ],
+    "spell_cluster_radius": 0.075,
+    "spell_prediction_delay_s": 0.1,
+    "placement_prediction_max_age_s": 0.8,
     "push_y": [
       0.68,
       0.74

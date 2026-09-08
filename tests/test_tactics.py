@@ -310,6 +310,63 @@ class CardTacticsTests(unittest.TestCase):
         self.assertEqual(decision.card_id, "guards")
         self.assertEqual(decision.formation_phase, "protect_surviving_backline")
 
+    def test_spell_placement_scores_cluster_candidates_and_predicts_motion(self) -> None:
+        policy = BattlePolicy(formation_config())
+        spell = self.catalog.get("fireball")
+        assert spell is not None
+        threat = LaneThreat(
+            "left", 0.9, 3, 0.50, "swarm",
+            ((0.24, 0.48), (0.30, 0.50), (0.72, 0.54)),
+            approach_rate=0.10,
+        )
+
+        point, role, reason, candidates = policy._defense_placement(
+            "left", spell, threat, observation_age_s=0.1
+        )
+
+        self.assertEqual(role, "spell_cluster")
+        self.assertIn("cluster_cover=2/3", reason)
+        self.assertIn("predicted", reason)
+        self.assertLess(point[0], 0.40)
+        self.assertGreater(point[1], 0.48)
+        self.assertTrue(candidates)
+
+    def test_stale_spell_observation_disables_motion_prediction(self) -> None:
+        policy = BattlePolicy(formation_config())
+        spell = self.catalog.get("fireball")
+        assert spell is not None
+        threat = LaneThreat(
+            "right", 0.8, 1, 0.52, "single", ((0.70, 0.52),),
+            approach_rate=0.20,
+        )
+
+        point, _, reason, _ = policy._defense_placement(
+            "right", spell, threat, observation_age_s=2.0
+        )
+
+        self.assertAlmostEqual(point[1], 0.52)
+        self.assertIn("stale_no_prediction", reason)
+
+    def test_role_placements_stay_inside_their_legal_bounds(self) -> None:
+        policy = BattlePolicy(formation_config())
+        threat = LaneThreat("left", 0.9, 1, 0.9, "single", ((0.01, 0.90),))
+        expectations = {
+            "cannon": ("building_pull", 0.55, 0.63),
+            "executioner": ("ranged_backline", 0.56, 0.69),
+            "knight": ("melee_intercept", 0.52, 0.67),
+        }
+
+        for card_id, (expected_role, low, high) in expectations.items():
+            card = self.catalog.get(card_id)
+            assert card is not None
+            point, role, reason, _ = policy._defense_placement("left", card, threat)
+            self.assertEqual(role, expected_role)
+            self.assertTrue(reason)
+            self.assertGreaterEqual(point[0], 0.14)
+            self.assertLessEqual(point[0], 0.86)
+            self.assertGreaterEqual(point[1], low)
+            self.assertLessEqual(point[1], high)
+
 
 if __name__ == "__main__":
     unittest.main()
