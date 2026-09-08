@@ -465,6 +465,31 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             self.assertTrue(model.available)
             np.testing.assert_array_equal(model.value_sample_weights, np.ones(len(model.value_y)))
 
+    def test_incompatible_champion_is_not_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model_root = root / "models" / "replay_policy"
+            model_root.mkdir(parents=True)
+            candidate = {
+                "version": "old",
+                "model_path": "candidate.npz",
+                "sync_compatibility": "not-current",
+            }
+            (model_root / "registry.json").write_text(
+                json.dumps({"champion": candidate, "candidates": [candidate]}),
+                encoding="utf-8",
+            )
+            (model_root / "candidate.npz").write_bytes(b"not-a-model")
+            (root / "config.json").write_text(
+                json.dumps({"replay": {}, "dataset": {"card_catalog": "cards.json"}}),
+                encoding="utf-8",
+            )
+
+            model = ReplayPolicyModel(root, {})
+
+            self.assertFalse(model.available)
+            self.assertEqual(model.load_error, "champion_incompatible")
+
     def test_old_data_weight_is_capped_and_applied_at_prediction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

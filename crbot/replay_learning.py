@@ -1424,7 +1424,11 @@ def train_replay_policy(
 
 
 class ReplayPolicyModel:
-    def __init__(self, project_root: Path):
+    def __init__(
+        self,
+        project_root: Path,
+        replay_config: dict[str, Any] | None = None,
+    ):
         self.registry = ReplayPolicyRegistry(project_root)
         self.champion = self.registry.champion()
         self.available = False
@@ -1438,6 +1442,14 @@ class ReplayPolicyModel:
         self.local_arrays = (np.empty((0, 0)), np.empty(0), np.empty(0))
         self._cached_image_id: int | None = None
         self._cached_battlefield: np.ndarray | None = None
+        compatibility = (self.champion or {}).get("sync_compatibility")
+        if (
+            replay_config is not None
+            and compatibility
+            and compatibility != ReplaySync(project_root).compatibility(replay_config)
+        ):
+            self.load_error = "champion_incompatible"
+            return
         path = self.registry.champion_path()
         if path is None:
             self.load_error = "champion_model_missing" if self.champion else "no_champion"

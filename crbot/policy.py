@@ -70,6 +70,8 @@ class BattleDecision:
     elixir_confidence: float = 0.0
     elixir_age_s: float = 0.0
     elixir_phase: str = "normal"
+    defense_elixir_reserve: float = 0.0
+    resource_allocation_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -237,7 +239,9 @@ class BattlePolicy:
             )
             self.imitation_model = ImitationPolicyModel(project_root)
             if bool(self.config_replay.get("allow_bot_training", False)):
-                self.replay_model = ReplayPolicyModel(project_root)
+                self.replay_model = ReplayPolicyModel(
+                    project_root, self.config_replay
+                )
             if not self.hand_recognizer.available:
                 self.perception_error = "OpenCV 不可用"
             elif not self.hand_recognizer.templates:
@@ -848,6 +852,29 @@ class BattlePolicy:
         score += max(-1.5, 1.8 - 0.35 * cost)
         return score
 
+    def _threat_urgency(self, threat: LaneThreat) -> float:
+        """Combine pressure, arrival distance and motion for lane priority."""
+        return (
+            float(threat.score)
+            + 0.35 * float(threat.proximity)
+            + min(0.25, max(0.0, float(threat.approach_rate)) * 1.5)
+            + min(0.15, max(0, int(threat.unit_count)) * 0.03)
+        )
+
+    def _minimum_defense_cost(
+        self,
+        candidates: list[tuple[HandCardMatch, CardDefinition]],
+        threat: LaneThreat,
+    ) -> float:
+        unknown_cost = float(self.policy.get("unknown_card_cost", 3))
+        minimum_score = float(self.policy.get("defense_min_card_score", 1.25))
+        costs = [
+            self._effective_cost(card, unknown_cost)
+            for _, card in candidates
+            if self._defense_score(card, threat, multi_lane=True) >= minimum_score
+        ]
+        return min(costs, default=0.0)
+
     def _trusted_threat_layers(self, threat: LaneThreat) -> tuple[str, ...]:
         minimum = float(self.policy.get("threat_layer_min_confidence", 0.70))
         if float(threat.layer_confidence) < minimum:
@@ -1157,7 +1184,7 @@ class BattlePolicy:
             return None
         defending = bool(due_threats)
         strongest = (
-            max(due_threats, key=lambda threat: threat.score)
+            max(due_threats, key=self._threat_urgency)
             if defending
             else (
                 left_threat
@@ -1170,20 +1197,22 @@ class BattlePolicy:
         desired_role = ""
         formation_source = "defense" if defending else "attack"
         staged_backline = False
+        defense_reserve = 0.0
+        resource_allocation_reason = ""
 
         if defending:
             lane = strongest.lane
             trusted_threat_layers = self._trusted_threat_layers(strongest)
             if strongest.proximity < 0.43:
-                reserve = float(
+                defense_reserve = float(
                     self.policy.get("early_defense_elixir_reserve", 1.5)
                 )
             elif strongest.proximity < 0.56:
-                reserve = float(
+                defense_reserve = float(
                     self.policy.get("engaged_defense_elixir_reserve", 0.75)
                 )
             else:
-                reserve = 0.0
+                defense_reserve = 0.0
             candidate_coverages = [
                 (
                     value,
@@ -1208,21 +1237,49 @@ class BattlePolicy:
             )
             if not capability_candidates:
                 return None
+            other: LaneThreat | None = None
+            if bool(self.policy.get("dual_lane_elixir_enabled", True)) and len(due_threats) > 1:
+                other = max(
+                    (threat for threat in due_threats if threat.lane != strongest.lane),
+                    key=self._threat_urgency,
+                )
+            stage_reserve = defense_reserve
+            reserve_cap = float(self.policy.get("dual_lane_defense_reserve_max", 4.0))
+            reserve_by_slot: dict[int, tuple[float, float]] = {}
+            for value in capability_candidates:
+                other_reserve = (
+                    self._minimum_defense_cost(
+                        [candidate for candidate in affordable if candidate[0].slot_index != value[0].slot_index],
+                        other,
+                    )
+                    if other is not None
+                    else 0.0
+                )
+                reserve_by_slot[int(value[0].slot_index)] = (
+                    max(stage_reserve, min(max(0.0, reserve_cap), other_reserve)),
+                    other_reserve,
+                )
             defensive_affordable = [
                 value
                 for value in capability_candidates
                 if self._effective_cost(
                     value[1], float(self.policy.get("unknown_card_cost", 3))
                 )
-                <= elixir - reserve
+                <= elixir - reserve_by_slot[int(value[0].slot_index)][0]
             ]
             if not defensive_affordable:
                 emergency_score = float(
                     self.policy.get("emergency_threat_score", 0.75)
                 )
                 if strongest.score < emergency_score:
-                    return None
+                    if len(due_threats) <= 1:
+                        return None
                 defensive_affordable = capability_candidates
+                resource_allocation_reason = (
+                    "dual_lane_priority_insufficient_elixir"
+                    if len(due_threats) > 1
+                    else "single_lane_emergency_override"
+                )
             match, card = max(
                 defensive_affordable,
                 key=lambda value: (
@@ -1257,6 +1314,15 @@ class BattlePolicy:
                     ),
                 ),
             )
+            defense_reserve, other_reserve = reserve_by_slot[int(match.slot_index)]
+            if not resource_allocation_reason:
+                resource_allocation_reason = (
+                    "dual_lane_reserve"
+                    if other is not None and other_reserve > 0
+                    else "dual_lane_other_lane_no_solution"
+                    if other is not None
+                    else "single_lane_stage_reserve"
+                )
             minimum_defense_score = float(self.policy.get("defense_min_card_score", 1.25))
             if self._defense_score(
                 card, strongest, multi_lane=len(threatening) > 1
@@ -1576,6 +1642,8 @@ class BattlePolicy:
                 3,
             ),
             elixir_phase=self._elixir_phase,
+            defense_elixir_reserve=round(defense_reserve, 3),
+            resource_allocation_reason=resource_allocation_reason,
         )
 
     def _baseline_decide(

@@ -230,6 +230,82 @@ class ScenarioRecognizer:
 
 
 class M3FixedScenarioTests(unittest.TestCase):
+    def _decide(
+        self,
+        hand: tuple[str, ...],
+        threats: dict[str, LaneThreat],
+        *,
+        elixir: float,
+    ):
+        policy = BattlePolicy(_config(elixir))
+        policy.catalog = SCENARIO_CARDS
+        policy.hand_recognizer = ScenarioRecognizer(hand)
+        policy.learned_detector = None
+        policy.imitation_model = None
+        policy.replay_model = None
+        policy.reset_battle(now=0.0)
+        policy.next_action_at = 0.0
+        with (
+            patch("crbot.policy.detect_lane_threats", return_value=threats),
+            patch("crbot.policy.estimate_elixir", return_value=(None, 0.0)),
+        ):
+            return policy.decide(Image.new("RGB", (600, 1000), "black"), None, now=1.0)
+
+    def test_dual_lane_reserves_a_valid_second_defense(self) -> None:
+        decision = self._decide(
+            ("anti_air_ranger", "ground_guard", "building_runner"),
+            {
+                "left": _threat("left", 0.90, 2, 0.55, "single", ("air",)),
+                "right": _threat("right", 0.66, 1, 0.48, "single", ("ground",)),
+            },
+            elixir=7.0,
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.card_id, "anti_air_ranger")
+        self.assertEqual(decision.lane, "left")
+        self.assertEqual(decision.defense_elixir_reserve, 3.0)
+        self.assertEqual(decision.resource_allocation_reason, "dual_lane_reserve")
+        self.assertGreaterEqual(decision.elixir - decision.card_cost, decision.defense_elixir_reserve)
+
+    def test_dual_lane_low_elixir_records_priority_tradeoff(self) -> None:
+        decision = self._decide(
+            ("anti_air_ranger", "ground_guard", "building_runner"),
+            {
+                "left": _threat("left", 0.90, 2, 0.58, "single", ("air",)),
+                "right": _threat("right", 0.66, 1, 0.48, "single", ("ground",)),
+            },
+            elixir=5.0,
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.card_id, "anti_air_ranger")
+        self.assertEqual(decision.lane, "left")
+        self.assertEqual(
+            decision.resource_allocation_reason,
+            "dual_lane_priority_insufficient_elixir",
+        )
+
+    def test_dual_lane_does_not_reserve_the_same_card_twice(self) -> None:
+        decision = self._decide(
+            ("anti_air_ranger",),
+            {
+                "left": _threat("left", 0.90, 2, 0.58, "single", ("air",)),
+                "right": _threat("right", 0.66, 1, 0.58, "single", ("ground",)),
+            },
+            elixir=4.0,
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.defense_elixir_reserve, 0.0)
+        self.assertEqual(
+            decision.resource_allocation_reason,
+            "dual_lane_other_lane_no_solution",
+        )
+
     def test_fixed_scenario_contracts_are_complete(self) -> None:
         required_categories = {
             "anti_air",
