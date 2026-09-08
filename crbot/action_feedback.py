@@ -83,11 +83,42 @@ def action_feedback(row: dict[str, Any]) -> tuple[float, float, str]:
 
     # Attack/counterpush: only measured allied detections can show advancement.
     # Formation memory predicts survival; it must never supply reward labels.
+    if not sustained:
+        return 0.0, 0.0, "unobserved_window"
+    capable_states = [before, *samples]
+    if not any(state.get("allies_observed") for state in capable_states):
+        return 0.0, 0.0, "ally_detection_unavailable"
     allies = before.get("observed_allies")
-    if not before.get("allies_observed") or not isinstance(allies, list) or not sustained:
-        return 0.0, 0.0, "attack_unobserved"
+    tracking_samples = samples
+    # A newly deployed attacker cannot exist in the pre-action frame.  Once
+    # exact ally detection is available, use the first reliable post-action
+    # frame as a baseline and require later independent frames to show motion.
+    if not before.get("allies_observed") or not isinstance(allies, list) or not allies:
+        baseline = next(
+            (
+                state
+                for state in samples
+                if state.get("allies_observed")
+                and isinstance(state.get("observed_allies"), list)
+                and state.get("observed_allies")
+            ),
+            None,
+        )
+        if baseline is None:
+            return 0.0, 0.0, "attack_tracking_ambiguous"
+        allies = baseline["observed_allies"]
+        baseline_at = _number(baseline, "battle_elapsed_s")
+        tracking_samples = [
+            state
+            for state in samples
+            if _number(state, "battle_elapsed_s") is not None
+            and baseline_at is not None
+            and float(state["battle_elapsed_s"]) - baseline_at >= 0.6
+        ]
+        if not tracking_samples:
+            return 0.0, 0.0, "attack_tracking_too_short"
     changes = []
-    for after in samples:
+    for after in tracking_samples:
         if not after.get("allies_observed"):
             return 0.0, 0.0, "attack_unobserved"
         observed = after.get("observed_allies")

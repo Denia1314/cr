@@ -74,13 +74,29 @@ class ActionFeedbackTests(unittest.TestCase):
         row = transition()
         row["action"]["formation_phase"] = "support_counterpush"
         row["action_observations"] = [state(13), state(14)]
-        self.assertEqual(action_feedback(row)[1], 0)
+        self.assertEqual(action_feedback(row)[2], "ally_detection_unavailable")
         ally = {"card_id": "tank", "lane": "left", "x": 0.3, "y": 0.6}
         row["state"].update(allies_observed=True, observed_allies=[ally])
         for sample in row["action_observations"]:
             sample.update(allies_observed=True, observed_allies=[{**ally, "y": 0.53}])
         self.assertGreater(action_feedback(row)[0], 0)
         self.assertEqual(action_feedback(row)[2], "allied_advance_proxy")
+
+    def test_new_attacker_can_use_first_reliable_post_action_frame_as_baseline(self):
+        row = transition()
+        row["action"]["formation_phase"] = "support_counterpush"
+        row["state"].update(allies_observed=False, observed_allies=[])
+        ally = {"card_id": "tank", "lane": "left", "x": 0.3, "y": 0.62}
+        row["action_observations"] = [
+            {**state(13), "allies_observed": True, "observed_allies": [ally]},
+            {**state(14), "allies_observed": True, "observed_allies": [{**ally, "y": 0.53}]},
+        ]
+
+        effect, confidence, source = action_feedback(row)
+
+        self.assertGreater(effect, 0)
+        self.assertEqual(confidence, 0.35)
+        self.assertEqual(source, "allied_advance_proxy")
 
     def test_recorder_observes_holding_periods_but_not_other_actions_or_battles(self):
         with tempfile.TemporaryDirectory() as folder:

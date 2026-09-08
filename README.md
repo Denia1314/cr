@@ -201,6 +201,8 @@ python -m crbot --config config.json replay review-audit
 
 `replay audit` 的 `learning_audit` 同时按训练实际使用的反馈函数汇总 `feedback_source_counts`、防守/进攻/反打覆盖，以及有效反馈动作和对局数。这样缺失反馈不会被强行解释为成功。
 
+进攻与反打反馈只接受实际己方单位检测。新部署单位可在首个可靠的出牌后帧建立跟踪基线，再由后续独立帧验证推进；模型没有己方检测类别时明确记为 `ally_detection_unavailable`，不会用阵型记忆或敌军消失代替存活证据。
+
 对尚未生成回放的旧对局做一次安全回填：
 
 ```text
