@@ -75,6 +75,8 @@ class BattleDecision:
     placement_role: str = ""
     placement_reason: str = ""
     placement_candidates: tuple[str, ...] = ()
+    counterpush_investment: float = 0.0
+    rejected_candidate_reasons: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -85,6 +87,7 @@ class BattleDecision:
         value["threat_unit_layers"] = list(self.threat_unit_layers)
         value["card_attack_targets"] = list(self.card_attack_targets)
         value["placement_candidates"] = list(self.placement_candidates)
+        value["rejected_candidate_reasons"] = list(self.rejected_candidate_reasons)
         return value
 
 
@@ -190,6 +193,8 @@ class BattlePolicy:
         self.last_push_at = -1_000.0
         self.last_push_roles: frozenset[str] = frozenset()
         self.push_support_count = 0
+        self.counterpush_investment = {"left": 0.0, "right": 0.0}
+        self.last_formation_rejections: tuple[str, ...] = ()
         self.last_defense_at = -1_000.0
         self.last_defense_lane = "left"
         self.last_defense_snapshots: dict[
@@ -289,6 +294,8 @@ class BattlePolicy:
         self.last_push_at = -1_000.0
         self.last_push_roles = frozenset()
         self.push_support_count = 0
+        self.counterpush_investment = {"left": 0.0, "right": 0.0}
+        self.last_formation_rejections = ()
         self.last_defense_at = -1_000.0
         self.last_defense_lane = "left"
         self.last_defense_snapshots = {}
@@ -325,6 +332,8 @@ class BattlePolicy:
             "last_push_at": self.last_push_at,
             "last_push_roles": self.last_push_roles,
             "push_support_count": self.push_support_count,
+            "counterpush_investment": copy.deepcopy(self.counterpush_investment),
+            "last_formation_rejections": self.last_formation_rejections,
             "last_defense_at": self.last_defense_at,
             "last_defense_lane": self.last_defense_lane,
             "last_defense_snapshots": copy.deepcopy(self.last_defense_snapshots),
@@ -363,6 +372,8 @@ class BattlePolicy:
         self.last_push_at = float(snapshot["last_push_at"])
         self.last_push_roles = frozenset(snapshot["last_push_roles"])
         self.push_support_count = int(snapshot["push_support_count"])
+        self.counterpush_investment = copy.deepcopy(snapshot.get("counterpush_investment", {"left": 0.0, "right": 0.0}))
+        self.last_formation_rejections = tuple(snapshot.get("last_formation_rejections", ()))
         self.last_defense_at = float(snapshot["last_defense_at"])
         self.last_defense_lane = str(snapshot["last_defense_lane"])
         self.last_defense_snapshots = copy.deepcopy(snapshot["last_defense_snapshots"])
@@ -1068,6 +1079,38 @@ class BattlePolicy:
             sources.append(formation.backline_source)
         return "defense" if "defense" in sources else (sources[0] if sources else "")
 
+    def _counterpush_gate(
+        self,
+        lane: str,
+        threats: dict[str, LaneThreat],
+        current: Image.Image,
+        previous: Image.Image | None,
+    ) -> tuple[bool, tuple[str, ...]]:
+        """Require current survival evidence and acceptable off-lane risk."""
+        if not bool(self.policy.get("counterpush_evidence_enabled", False)):
+            return True, ()
+        reasons: list[str] = []
+        other_lane = "right" if lane == "left" else "left"
+        other_risk = threats[other_lane].score
+        if other_risk >= float(self.policy.get("counterpush_other_lane_risk_max", 0.12)):
+            reasons.append(f"other_lane_risk={other_risk:.3f}")
+
+        detector = self.learned_detector
+        supports_allies = bool(detector is not None and getattr(detector, "allies_observed", False))
+        allies = getattr(detector, "observed_allies", []) if detector is not None else []
+        min_confidence = float(self.policy.get("counterpush_ally_min_confidence", 0.55))
+        ally_seen = any(
+            ally.get("lane") == lane and float(ally.get("confidence", 0.0)) >= min_confidence
+            for ally in allies
+        )
+        roi = self.vision["friendly_left_roi"] if lane == "left" else self.vision["friendly_right_roi"]
+        lane_motion = motion_score(current, previous, roi)
+        motion_seen = lane_motion >= float(self.policy.get("counterpush_motion_min", 0.018))
+        if not ally_seen and not motion_seen:
+            evidence = "ally_detector_no_match" if supports_allies else "no_fresh_motion_evidence"
+            reasons.append(evidence)
+        return not reasons, tuple(reasons)
+
     def _defense_response_due(self, threat: LaneThreat, now: float) -> bool:
         previous = self.last_defense_snapshots.get(threat.lane)
         if previous is None:
@@ -1109,6 +1152,8 @@ class BattlePolicy:
             ),
             "elixir_phase": self._elixir_phase,
             "formation_metadata": self.formation_metadata(now),
+            "counterpush_investment": dict(self.counterpush_investment),
+            "formation_rejections": list(self.last_formation_rejections),
             "allies_observed": bool(getattr(self.learned_detector, "allies_observed", False)),
             "observed_allies": list(getattr(self.learned_detector, "observed_allies", [])),
         }
@@ -1244,6 +1289,7 @@ class BattlePolicy:
         staged_backline = False
         defense_reserve = 0.0
         resource_allocation_reason = ""
+        rejected_candidate_reasons: tuple[str, ...] = ()
 
         if defending:
             lane = strongest.lane
@@ -1387,6 +1433,7 @@ class BattlePolicy:
                 strongest.proximity,
             )
             self.push_support_count = 0
+            self.counterpush_investment[lane] = 0.0
         else:
             placement_role = "formation"
             placement_reason = "formation_role_spacing"
@@ -1468,6 +1515,13 @@ class BattlePolicy:
                 existing_formation, now
             ) or self._formation_has_backline(existing_formation, now)
             if has_formation and self._formation_source(existing_formation, now) == "defense":
+                allowed, rejected_candidate_reasons = self._counterpush_gate(
+                    lane, threats, current, previous
+                )
+                if not allowed:
+                    self.last_formation_rejections = rejected_candidate_reasons
+                    return None
+            if has_formation and self._formation_source(existing_formation, now) == "defense":
                 required_elixir = float(
                     self.policy.get("counterpush_min_elixir", 3.0)
                 )
@@ -1539,6 +1593,19 @@ class BattlePolicy:
             minimum_score = float(self.policy.get("formation_min_card_score", 1.0))
             if best_score < minimum_score:
                 return None
+            card_cost = self._effective_cost(card, float(self.policy.get("unknown_card_cost", 3)))
+            if formation_source == "defense":
+                investment_cap = float(self.policy.get("counterpush_investment_max", 6.0))
+                projected = self.counterpush_investment[lane] + card_cost
+                if projected > investment_cap:
+                    self.last_formation_rejections = (
+                        f"investment_cap={projected:.1f}>{investment_cap:.1f}",
+                    )
+                    return None
+                self.counterpush_investment[lane] = projected
+            else:
+                self.counterpush_investment[lane] = 0.0
+            self.last_formation_rejections = ()
             reason = f"{formation_phase}_{lane}"
             deploy = self._push_point(
                 lane,
@@ -1698,6 +1765,8 @@ class BattlePolicy:
             placement_role=placement_role,
             placement_reason=placement_reason,
             placement_candidates=placement_candidates,
+            counterpush_investment=round(self.counterpush_investment.get(lane, 0.0), 3),
+            rejected_candidate_reasons=rejected_candidate_reasons,
         )
 
     def _baseline_decide(

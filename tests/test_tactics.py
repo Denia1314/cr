@@ -367,6 +367,73 @@ class CardTacticsTests(unittest.TestCase):
             self.assertGreaterEqual(point[1], low)
             self.assertLessEqual(point[1], high)
 
+    def test_counterpush_requires_fresh_survival_evidence_when_enabled(self) -> None:
+        config = formation_config()
+        config["policy"]["counterpush_evidence_enabled"] = True
+        policy = BattlePolicy(config)
+        quiet = {
+            "left": LaneThreat("left", 0.0, 0, 0.0, "none", ()),
+            "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
+        }
+        image = Image.new("RGB", (600, 1000), "black")
+
+        allowed, reasons = policy._counterpush_gate("left", quiet, image, None)
+
+        self.assertFalse(allowed)
+        self.assertIn("no_fresh_motion_evidence", reasons)
+
+    def test_counterpush_stops_for_other_lane_risk_even_with_motion(self) -> None:
+        config = formation_config()
+        config["policy"].update({
+            "counterpush_evidence_enabled": True,
+            "counterpush_other_lane_risk_max": 0.12,
+        })
+        policy = BattlePolicy(config)
+        threats = {
+            "left": LaneThreat("left", 0.0, 0, 0.0, "none", ()),
+            "right": LaneThreat("right", 0.15, 1, 0.35, "single", ((0.70, 0.35),)),
+        }
+        image = Image.new("RGB", (600, 1000), "black")
+
+        with patch("crbot.policy.motion_score", return_value=0.10):
+            allowed, reasons = policy._counterpush_gate("left", threats, image, image)
+
+        self.assertFalse(allowed)
+        self.assertIn("other_lane_risk=0.150", reasons)
+
+    def test_counterpush_investment_cap_stops_another_support(self) -> None:
+        config = formation_config()
+        config["policy"].update({
+            "counterpush_evidence_enabled": True,
+            "counterpush_investment_max": 6.0,
+        })
+        policy = BattlePolicy(config)
+        policy.catalog = self.catalog
+        policy.hand_recognizer = FakeRecognizer(["guards"])
+        policy.imitation_model = None
+        policy.replay_model = None
+        defender = self.catalog.get("executioner")
+        assert defender is not None
+        policy.reset_battle(now=0.0)
+        policy._remember_formation("left", defender, [0.30, 0.62], 1.0, "defense")
+        policy.counterpush_investment["left"] = 5.0
+        policy.virtual_elixir = 10.0
+        policy.last_update = 2.0
+        policy.next_action_at = 0.0
+        quiet = {
+            "left": LaneThreat("left", 0.0, 0, 0.0, "none", ()),
+            "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
+        }
+        image = Image.new("RGB", (600, 1000), "black")
+
+        with patch("crbot.policy.detect_lane_threats", return_value=quiet), patch(
+            "crbot.policy.motion_score", return_value=0.10
+        ):
+            decision = policy.decide(image, image.copy(), now=2.0)
+
+        self.assertIsNone(decision)
+        self.assertEqual(policy.last_formation_rejections, ("investment_cap=8.0>6.0",))
+
 
 if __name__ == "__main__":
     unittest.main()

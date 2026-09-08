@@ -207,6 +207,8 @@ python -m crbot --config config.json replay review-audit
 
 `adaptive_counterpush_v5_m3_c2` 增加按职责落点：建筑向内侧合法区域拉扯，近战按距离与接近速度截击，远程保持后排间距，法术从目标点和两两中点中选择覆盖最多的簇中心。法术移动预测仅使用新鲜观测；超时或无目标中心时会保守回退。决策记录新增 `placement_role`、`placement_reason` 和候选覆盖摘要，便于复盘。
 
+`adaptive_counterpush_v5_m3_c3` 为防守后反打增加停止投入门控：只有友军检测或己方区域新鲜运动能够证明防守单位可能仍存活时才继续补牌；另一侧风险超过门槛、反打累计费用超过上限或观测中断时停止。运行状态记录累计投入和最近拒绝原因；可通过 `policy.counterpush_evidence_enabled` 单独回退。
+
 对尚未生成回放的旧对局做一次安全回填：
 
 ```text
