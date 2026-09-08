@@ -14,6 +14,7 @@ from .action_confirmation import (
     ActionConfirmationTracker,
     assess_action_evidence,
 )
+from .controlled_experiment import ControlledExperiment
 from .policy import BattlePolicy
 from .recorder import TrainingRecorder
 from .replay import ExperienceReplayRecorder
@@ -124,6 +125,9 @@ class BotEngine:
             self.recorder.run_dir,
             replay_config,
             policy_metadata=policy_metadata,
+        )
+        self.experiment = ControlledExperiment(
+            dict(config.get("controlled_experiment", {})), self.policy.replay_model
         )
         automation_config = dict(config.get("automation", {}))
         self.action_confirmation = ActionConfirmationTracker(
@@ -354,6 +358,11 @@ class BotEngine:
                         event.get("frame"),
                     )
                     result_reward_recorded = episode is not None
+                    if episode is not None:
+                        stop_reason = self.experiment.observe(episode)
+                        if stop_reason:
+                            print(f"[实验护栏] {stop_reason}，将在局间停止。")
+                            self.request_stop()
                 print(
                     f"[确定] {'试运行：' if self.dry_run else ''}"
                     f"全局识别并点击 {confirm_point} score={confirm_score:.3f}"
@@ -455,6 +464,9 @@ class BotEngine:
                     self.battle_seen = True
                     self.previous_battle_frame = None
                     self.policy.reset_battle(now)
+                    self.replay.policy_metadata.update(
+                        self.experiment.activate(self.completed_battles + 1)
+                    )
                     # Each new match must return to the marked offline screen
                     # before the following match can be started.
                     self.offline_verified = False
