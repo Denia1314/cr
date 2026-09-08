@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any
 
 
@@ -62,3 +64,68 @@ class ControlledExperiment:
         elif unconfirmed_rate > float(self.config.get("maximum_unconfirmed_action_rate", 0.10)):
             self.stop_reason = f"unconfirmed_action_rate={unconfirmed_rate:.3f}"
         return self.stop_reason
+
+    def rollback_to_baseline(self) -> dict[str, Any]:
+        """Disable candidate influence without replacing or deleting its model."""
+        if self.replay_model is not None:
+            self.replay_model.influence_scale = 0.0
+        return {
+            "experiment_arm": "baseline",
+            "runtime_replay_influence_scale": 0.0,
+            "rollback_reason": self.stop_reason or "manual_boundary_rollback",
+        }
+
+
+def audit_controlled_experiment(project_root: Path) -> dict[str, Any]:
+    """Summarize completed experiment episodes and detect arm contamination."""
+    rows: list[dict[str, Any]] = []
+    for path in sorted((project_root.resolve() / "runs").glob("*/replay_episodes.jsonl")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            policy = row.get("policy", {})
+            if isinstance(policy, dict) and policy.get("experiment_enabled"):
+                rows.append(row)
+    arms: dict[str, dict[str, Any]] = {}
+    contamination: list[str] = []
+    for row in rows:
+        policy = row.get("policy", {})
+        arm = str(policy.get("experiment_arm", "unknown"))
+        summary = arms.setdefault(arm, {
+            "episodes": 0, "verified": 0, "wins": 0, "losses": 0,
+            "draws": 0, "unknown": 0, "actions": 0, "confirmed_actions": 0,
+        })
+        summary["episodes"] += 1
+        verified = bool(row.get("reward_verified"))
+        summary["verified"] += int(verified)
+        outcome = str(row.get("outcome", "unknown")) if verified else "unknown"
+        summary[outcome if outcome in {"wins", "losses", "draws"} else {
+            "win": "wins", "loss": "losses", "draw": "draws"
+        }.get(outcome, "unknown")] += 1
+        summary["actions"] += int(row.get("action_count", 0))
+        summary["confirmed_actions"] += int(row.get("confirmed_action_count", 0))
+        scale = float(policy.get("runtime_replay_influence_scale", 0.0))
+        loaded = bool(policy.get("runtime_replay_loaded", False))
+        episode_id = str(row.get("episode_id", "unknown"))
+        if arm == "baseline" and scale != 0.0:
+            contamination.append(f"{episode_id}:baseline_nonzero_scale")
+        if arm == "candidate" and (not loaded or scale <= 0.0):
+            contamination.append(f"{episode_id}:candidate_not_active")
+    for summary in arms.values():
+        verified = int(summary["verified"])
+        actions = int(summary["actions"])
+        summary["win_rate"] = round(summary["wins"] / verified, 6) if verified else None
+        summary["confirmation_rate"] = round(summary["confirmed_actions"] / actions, 6) if actions else None
+    return {
+        "schema": "controlled_experiment_audit_v1",
+        "episodes": len(rows),
+        "arms": arms,
+        "contamination": contamination,
+        "ready_for_comparison": bool(arms.get("baseline", {}).get("verified") and arms.get("candidate", {}).get("verified") and not contamination),
+    }

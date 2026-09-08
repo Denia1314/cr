@@ -14,6 +14,7 @@ from .annotate import run_annotation
 from .calibrate import run_calibration
 from .card_sync import bootstrap_community_catalog, sync_card_catalog
 from .config import load_config, resolve_project_path
+from .controlled_experiment import audit_controlled_experiment
 from .engine import BotEngine
 from .demonstration import DemonstrationRecorder
 from .cards import CardCatalog
@@ -73,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay = subcommands.add_parser("replay", help="审计、回填或影子训练自动战斗经验")
     replay.add_argument(
         "action",
-        choices=("audit", "backfill", "evaluate", "review-export", "review-audit", "train"),
+        choices=("audit", "backfill", "evaluate", "experiment-audit", "review-export", "review-audit", "train"),
     )
     replay.add_argument("--review-file", help="动作确认人工复核 JSONL 文件")
     replay.add_argument("--review-limit", type=int, default=200, help="复核导出的完整尝试数")
@@ -231,6 +232,10 @@ def main(argv: list[str] | None = None) -> int:
                 if arguments.review_file
                 else config_path.parent / "reports" / "action_confirmation_review_v2.jsonl"
             )
+            if arguments.action == "experiment-audit":
+                result["experiment_audit"] = audit_controlled_experiment(config_path.parent)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             if arguments.action == "review-export":
                 result["review_export"] = export_action_review(
                     config_path.parent,

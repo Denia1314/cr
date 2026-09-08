@@ -362,6 +362,12 @@ class BotEngine:
                         stop_reason = self.experiment.observe(episode)
                         if stop_reason:
                             print(f"[实验护栏] {stop_reason}，将在局间停止。")
+                            rollback = self.experiment.rollback_to_baseline()
+                            self.replay.policy_metadata.update(rollback)
+                            ReplaySync(self.project_root).write_runtime_status({
+                                "rule_version": self.policy.policy.get("version", "unversioned"),
+                                "experiment": rollback,
+                            })
                             self.request_stop()
                 print(
                     f"[确定] {'试运行：' if self.dry_run else ''}"
