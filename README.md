@@ -192,7 +192,7 @@ M2 不会把旧回放改写成新版本数据。新的确认动作应在新版�
 python -m crbot --config config.json replay audit
 ```
 
-确认质量必须独立复核完整尝试，而不是只抽取 `confirmed`。下面的命令会按确认状态交错、确定性抽取 200 次尝试到忽略的本地报告目录；填写每行的 `review_actual_success`（`true`、`false` 或 `unknown`）后再计算精确率、成功动作召回率、未知占比和按整局重采样的 95% 区间：
+确认质量必须独立复核完整尝试，而不是只抽取 `confirmed`。确认循环结束后会在关键时序路径之外保存最后一张观察画面，且不会通过私有训练数据同步上传。下面的命令会按确认状态交错、确定性抽取 200 次尝试到忽略的本地报告目录，并给出出牌前与确认后画面路径；填写每行的 `review_actual_success`（`true`、`false` 或 `unknown`）后再计算精确率、成功动作召回率、未知占比和按整局重采样的 95% 区间：
 
 ```powershell
 python -m crbot --config config.json replay review-export --review-limit 200

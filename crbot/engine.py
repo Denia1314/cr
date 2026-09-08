@@ -851,7 +851,7 @@ class BotEngine:
         self.response_timing.record("confirmation", confirmation_elapsed)
         self.recorder.record(
             "battle_action_sent",
-            image,
+            post_image,
             {
                 "action_id": action_id,
                 "card_pixel": card_pixel,
@@ -863,6 +863,9 @@ class BotEngine:
                 "confirmation_failure_code": confirmation.failure_code,
                 "confirmation_observations": observation_timings,
                 "confirmation_summary": self.action_confirmation.summary(),
+                "confirmation_frame_role": (
+                    "final_observation" if post_image is not None else "unavailable"
+                ),
                 "confirmation_window_starts_after_send": True,
             },
         )

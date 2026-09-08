@@ -23,6 +23,21 @@ def export_action_review(project_root: Path, output: Path, *, limit: int = 200, 
         raise ValueError(f"复核文件已存在，未覆盖：{output}")
     rows: list[dict[str, Any]] = []
     for run_dir in sorted((project_root.resolve() / "runs").glob("*")):
+        proposed_frames: dict[str, str] = {}
+        confirmation_frames: dict[str, str] = {}
+        for event in _read_jsonl(run_dir / "events.jsonl"):
+            action_id = str(event.get("action_id", "")).strip()
+            frame = event.get("frame")
+            if not action_id or not isinstance(frame, str) or not frame:
+                continue
+            absolute = str((run_dir / frame).resolve())
+            if event.get("event") == "battle_action_proposed":
+                proposed_frames[action_id] = absolute
+            elif (
+                event.get("event") == "battle_action_sent"
+                and event.get("confirmation_frame_role") == "final_observation"
+            ):
+                confirmation_frames[action_id] = absolute
         for row in _read_jsonl(run_dir / "replay_transitions.jsonl"):
             action = row.get("action", {})
             if not isinstance(action, dict):
@@ -34,15 +49,18 @@ def export_action_review(project_root: Path, output: Path, *, limit: int = 200, 
             if status not in {"confirmed", "rejected", "unknown"}:
                 continue
             state_frame = row.get("state_frame")
+            action_id = str(action.get("action_id", "")).strip()
             rows.append({
                 "transition_id": transition_id,
                 "run": run_dir.name,
                 "battle_index": row.get("battle_index"),
                 "action_status": status,
-                "action_id": action.get("action_id"),
+                "action_id": action_id,
                 "card_id": action.get("card_id"),
                 "lane": action.get("lane"),
                 "state_frame": str((run_dir / state_frame).resolve()) if isinstance(state_frame, str) and state_frame else None,
+                "pre_action_frame": proposed_frames.get(action_id),
+                "post_confirmation_frame": confirmation_frames.get(action_id),
                 "confirmation": action.get("action_confirmation", {}),
                 "review_actual_success": None,
                 "review_delay_s": None,
@@ -71,6 +89,10 @@ def export_action_review(project_root: Path, output: Path, *, limit: int = 200, 
         "output": str(output),
         "sampled_attempts": len(selected),
         "status_counts": {status: sum(row["action_status"] == status for row in selected) for status in sorted({row["action_status"] for row in selected})},
+        "paired_frame_attempts": sum(
+            bool(row.get("pre_action_frame") and row.get("post_confirmation_frame"))
+            for row in selected
+        ),
         "labels_required": ["true", "false", "unknown"],
     }
 

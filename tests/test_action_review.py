@@ -22,14 +22,26 @@ class ActionReviewTests(unittest.TestCase):
                         "action_status": status,
                         "action": {"action_id": f"a{index}", "action_status": status},
                     }) + "\n")
+            with (run / "events.jsonl").open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "event": "battle_action_proposed", "action_id": "a0", "frame": "frames/pre.jpg"
+                }) + "\n")
+                handle.write(json.dumps({
+                    "event": "battle_action_sent", "action_id": "a0", "frame": "frames/post.jpg",
+                    "confirmation_frame_role": "final_observation",
+                }) + "\n")
             output = root / "review.jsonl"
 
-            result = export_action_review(root, output, limit=3)
+            result = export_action_review(root, output, limit=4)
 
-            self.assertEqual(result["sampled_attempts"], 3)
+            self.assertEqual(result["sampled_attempts"], 4)
             self.assertEqual(set(result["status_counts"]), {"confirmed", "unknown", "rejected"})
+            exported = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+            linked = next(row for row in exported if row["action_id"] == "a0")
+            self.assertTrue(linked["pre_action_frame"].endswith("pre.jpg"))
+            self.assertTrue(linked["post_confirmation_frame"].endswith("post.jpg"))
             with self.assertRaisesRegex(ValueError, "未覆盖"):
-                export_action_review(root, output, limit=3)
+                export_action_review(root, output, limit=4)
 
     def test_audit_reports_precision_recall_unknown_and_battle_interval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

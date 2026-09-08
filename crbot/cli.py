@@ -229,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
             review_file = (
                 Path(arguments.review_file).expanduser().resolve()
                 if arguments.review_file
-                else config_path.parent / "reports" / "action_confirmation_review.jsonl"
+                else config_path.parent / "reports" / "action_confirmation_review_v2.jsonl"
             )
             if arguments.action == "review-export":
                 result["review_export"] = export_action_review(

@@ -337,6 +337,7 @@ class M1UpgradeTests(unittest.TestCase):
         sent_event = engine.recorder.events[-1]
         self.assertEqual(sent_event[0], "battle_action_sent")
         self.assertEqual(sent_event[1]["confirmation_status"], "confirmed")
+        self.assertEqual(sent_event[1]["confirmation_frame_role"], "final_observation")
         self.assertTrue(sent_event[1]["confirmation_window_starts_after_send"])
 
     def test_policy_rejected_reservation_rolls_back_mutations(self) -> None:
