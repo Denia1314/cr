@@ -15,6 +15,7 @@ from .cards import CardCatalog, CardDefinition
 from .learned_perception import LearnedBattlefieldDetector
 from .imitation import ImitationPolicyModel
 from .replay_learning import ReplayPolicyModel
+from .runtime_model import normalize_runtime_model, runtime_model_allows
 from .tactics import card_tactics
 from .temporal import HandHistory
 from .vision import estimate_elixir, motion_score
@@ -164,6 +165,9 @@ class BattlePolicy:
         self.config_demonstration = dict(config.get("demonstration", {}))
         self.config_replay = dict(config.get("replay", {}))
         self.mode = str(self.policy.get("mode", "baseline"))
+        self.runtime_model = normalize_runtime_model(
+            self.policy.get("runtime_model", "hybrid")
+        )
         self.random = random.Random(self.policy.get("seed"))
         self.virtual_elixir = float(self.policy.get("initial_elixir", 5.0))
         self.confirmed_virtual_elixir = self.virtual_elixir
@@ -246,8 +250,12 @@ class BattlePolicy:
                 self.catalog,
                 dict(config.get("training", {})),
             )
-            self.imitation_model = ImitationPolicyModel(project_root)
-            if bool(self.config_replay.get("allow_bot_training", False)):
+            if runtime_model_allows(self.runtime_model, "imitation"):
+                self.imitation_model = ImitationPolicyModel(project_root)
+            if (
+                runtime_model_allows(self.runtime_model, "replay")
+                and bool(self.config_replay.get("allow_bot_training", False))
+            ):
                 self.replay_model = ReplayPolicyModel(
                     project_root, self.config_replay
                 )

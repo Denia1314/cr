@@ -18,3 +18,4 @@ venv/
 *.key
 .training-sync/
 reports/
+.royal-lab.json

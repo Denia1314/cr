@@ -8,7 +8,7 @@ import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import tkinter as tk
 from typing import Any, Callable
 
@@ -33,6 +33,14 @@ from .replay_learning import (
     ReplayPolicyRegistry,
     audit_replay_learning,
     train_replay_policy,
+)
+from .runtime_model import (
+    DEFAULT_RUNTIME_MODEL,
+    RUNTIME_MODEL_LABELS,
+    apply_runtime_model,
+    load_runtime_model,
+    runtime_model_label,
+    save_runtime_model,
 )
 from .vision import WorkflowRecognizer
 from .training_sync import ReplaySync, SyncWorker, training_allowed
@@ -138,6 +146,11 @@ class RoyalTrainerApp:
         self.preview_photo: ImageTk.PhotoImage | None = None
         self.last_frame_identity: int | None = None
         self.closing = False
+        try:
+            initial_config, _ = load_config(self.config_path)
+            self.runtime_model = load_runtime_model(self.config_path, initial_config)
+        except (OSError, ValueError):
+            self.runtime_model = DEFAULT_RUNTIME_MODEL
 
         self._configure_window()
         self._build_interface()
@@ -162,6 +175,26 @@ class RoyalTrainerApp:
         y = max(0, (screen_h - height) // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
         self.root.minsize(1040, 700)
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure(
+            "Model.TCombobox",
+            fieldbackground=Palette.SURFACE,
+            background=Palette.CARD_ALT,
+            foreground=Palette.TEXT,
+            arrowcolor=Palette.MUTED,
+            bordercolor=Palette.BORDER,
+            lightcolor=Palette.BORDER,
+            darkcolor=Palette.BORDER,
+            padding=7,
+        )
+        style.map(
+            "Model.TCombobox",
+            fieldbackground=[("readonly", Palette.SURFACE), ("disabled", Palette.CARD)],
+            foreground=[("readonly", Palette.TEXT), ("disabled", Palette.FAINT)],
+            selectbackground=[("readonly", Palette.SURFACE)],
+            selectforeground=[("readonly", Palette.TEXT)],
+        )
 
     def _build_interface(self) -> None:
         header = tk.Frame(self.root, background=Palette.SURFACE, height=76)
@@ -523,74 +556,57 @@ class RoyalTrainerApp:
         options = tk.Frame(card, background=Palette.CARD_ALT, highlightbackground=Palette.BORDER, highlightthickness=1)
         options.pack(fill="x", padx=18, pady=(0, 9))
 
-        row_one = tk.Frame(options, background=Palette.CARD_ALT)
-        row_one.pack(fill="x", padx=13, pady=(8, 3))
+        model_row = tk.Frame(options, background=Palette.CARD_ALT)
+        model_row.pack(fill="x", padx=13, pady=(10, 9))
+        model_labels = tk.Frame(model_row, background=Palette.CARD_ALT)
+        model_labels.pack(side="left", fill="x", expand=True)
         tk.Label(
-            row_one,
-            text="本次局数",
+            model_labels,
+            text="运行模型",
+            font=(FONT, 9, "bold"),
+            foreground=Palette.TEXT,
+            background=Palette.CARD_ALT,
+        ).pack(anchor="w")
+        self.model_note = tk.Label(
+            model_labels,
+            text="切换后从下一次启动生效",
+            font=(FONT, 7),
+            foreground=Palette.FAINT,
+            background=Palette.CARD_ALT,
+        )
+        self.model_note.pack(anchor="w")
+        self.model_key_by_label = {
+            label: key for key, label in RUNTIME_MODEL_LABELS.items()
+        }
+        self.model_var = tk.StringVar(value=runtime_model_label(self.runtime_model))
+        self.model_combo = ttk.Combobox(
+            model_row,
+            textvariable=self.model_var,
+            values=list(RUNTIME_MODEL_LABELS.values()),
+            state="readonly",
+            width=18,
+            style="Model.TCombobox",
+            font=(FONT, 9),
+        )
+        self.model_combo.pack(side="right", padx=(12, 0))
+        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
+
+        mode_row = tk.Frame(options, background=Palette.CARD_ALT)
+        mode_row.pack(fill="x", padx=13, pady=(0, 9))
+        tk.Label(
+            mode_row,
+            text="运行方式",
             font=(FONT, 9, "bold"),
             foreground=Palette.TEXT,
             background=Palette.CARD_ALT,
         ).pack(side="left")
-        self.max_battles_var = tk.StringVar(value="3")
-        self.max_battles_input = tk.Spinbox(
-            row_one,
-            from_=0,
-            to=99,
-            textvariable=self.max_battles_var,
-            width=5,
-            justify="center",
-            font=("Segoe UI", 10, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.SURFACE,
-            buttonbackground=Palette.CARD_ALT,
-            insertbackground=Palette.TEXT,
-            relief="flat",
-            highlightbackground=Palette.BORDER,
-            highlightcolor=Palette.BLUE,
-            highlightthickness=1,
-        )
-        self.max_battles_input.pack(side="right")
-
-        row_two = tk.Frame(options, background=Palette.CARD_ALT)
-        row_two.pack(fill="x", padx=13, pady=(2, 7))
-        labels = tk.Frame(row_two, background=Palette.CARD_ALT)
-        labels.pack(side="left")
         tk.Label(
-            labels,
-            text="试运行",
-            font=(FONT, 9, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.CARD_ALT,
-        ).pack(anchor="w")
-        tk.Label(
-            labels,
-            text="只识别和记录，不会点击",
-            font=(FONT, 7),
-            foreground=Palette.FAINT,
-            background=Palette.CARD_ALT,
-        ).pack(anchor="w")
-        self.dry_run_var = tk.BooleanVar(value=True)
-        self.dry_run_toggle = tk.Checkbutton(
-            row_two,
-            variable=self.dry_run_var,
-            text="开启",
-            onvalue=True,
-            offvalue=False,
-            indicatoron=False,
-            selectcolor=Palette.BLUE,
-            background=Palette.SURFACE,
-            activebackground=Palette.BLUE,
-            foreground=Palette.MUTED,
-            activeforeground=Palette.TEXT,
+            mode_row,
+            text="无限循环，直到安全停止",
             font=(FONT, 8, "bold"),
-            relief="flat",
-            borderwidth=0,
-            padx=11,
-            pady=5,
-            cursor="hand2",
-        )
-        self.dry_run_toggle.pack(side="right")
+            foreground=Palette.GREEN,
+            background=Palette.CARD_ALT,
+        ).pack(side="right")
 
         action_row = tk.Frame(card, background=Palette.CARD)
         action_row.pack(fill="x", padx=18, pady=(1, 8))
@@ -614,6 +630,16 @@ class RoyalTrainerApp:
             state="disabled",
         )
         self.stop_button.pack(fill="x", padx=18)
+
+        tk.Label(
+            card,
+            text="启动后会持续进行离线人机对局；需要结束时点击“安全停止”。",
+            wraplength=300,
+            justify="left",
+            font=(FONT, 8),
+            foreground=Palette.FAINT,
+            background=Palette.CARD,
+        ).pack(anchor="w", padx=18, pady=(10, 12))
 
     def _build_log_card(self, parent: tk.Frame) -> None:
         card = tk.Frame(
@@ -749,14 +775,24 @@ class RoyalTrainerApp:
     def _set_running_controls(self, running: bool) -> None:
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
-        self.max_battles_input.configure(state="disabled" if running else "normal")
-        self.dry_run_toggle.configure(state="disabled" if running else "normal")
+        self.model_combo.configure(state="disabled" if running else "readonly")
         self.check_button.configure(state="disabled" if running else "normal")
         self.connection_button.configure(state="disabled" if running else "normal")
         if running:
             self._set_header("任务运行中", Palette.GREEN)
         elif self.device_value.cget("text") == "已连接":
             self._set_header("设备已就绪", Palette.GREEN)
+
+    def _on_model_selected(self, _event: tk.Event[Any] | None = None) -> None:
+        label = self.model_var.get()
+        key = self.model_key_by_label.get(label, DEFAULT_RUNTIME_MODEL)
+        try:
+            self.runtime_model = save_runtime_model(self.config_path, key)
+        except OSError as exc:
+            self.model_var.set(runtime_model_label(self.runtime_model))
+            messagebox.showerror("无法保存模型选择", str(exc), parent=self.root)
+            return
+        self._append_log(f"运行模型已切换为：{runtime_model_label(key)}", "success")
 
     def _refresh_connection_button(self, config: dict[str, Any] | None = None) -> None:
         try:
@@ -1016,22 +1052,18 @@ class RoyalTrainerApp:
         if self.background_busy:
             messagebox.showinfo("请稍候", "设备操作正在进行，请稍候再开始。", parent=self.root)
             return
-        try:
-            max_battles = int(self.max_battles_var.get().strip())
-            if not 0 <= max_battles <= 99:
-                raise ValueError
-        except ValueError:
-            messagebox.showwarning("局数无效", "请输入 0 到 99 之间的整数；0 表示持续运行。", parent=self.root)
-            return
-
-        dry_run = bool(self.dry_run_var.get())
+        selected_label = self.model_var.get()
+        selected_model = self.model_key_by_label.get(
+            selected_label, DEFAULT_RUNTIME_MODEL
+        )
         self.stop_event = threading.Event()
         self.engine = None
         self.run_mode = "automation"
         self.battle_value.configure(text="0 局", foreground=Palette.TEXT)
-        mode_text = "试运行" if dry_run else "正式运行"
-        count_text = "持续" if max_battles == 0 else f"{max_battles} 局"
-        self._append_log(f"准备启动：{mode_text} · {count_text}", "action")
+        self._append_log(
+            f"准备无限运行 · 模型：{runtime_model_label(selected_model)}",
+            "action",
+        )
         self._set_run_state("正在连接设备", Palette.BLUE)
         self._set_running_controls(True)
 
@@ -1041,6 +1073,7 @@ class RoyalTrainerApp:
             try:
                 with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
                     config, config_path = load_config(self.config_path)
+                    config = apply_runtime_model(config, selected_model)
                     device = MumuDevice(config)
                     serial = device.connect()
                     print(f"[设备] 已连接模拟器：{serial}")
@@ -1051,8 +1084,8 @@ class RoyalTrainerApp:
                         device,
                         config,
                         config_path,
-                        dry_run=dry_run,
-                        max_battles=max_battles,
+                        dry_run=False,
+                        max_battles=0,
                         stop_event=self.stop_event,
                     )
                     self.engine = engine

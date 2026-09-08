@@ -16,6 +16,7 @@ from .action_confirmation import (
 )
 from .controlled_experiment import ControlledExperiment
 from .policy import BattlePolicy
+from .runtime_model import runtime_model_label
 from .recorder import TrainingRecorder
 from .replay import ExperienceReplayRecorder
 from .temporal import TimingStats
@@ -51,6 +52,7 @@ class BotEngine:
         self.stop_event = stop_event or Event()
         self.recognizer = WorkflowRecognizer(config, config_path)
         self.policy = BattlePolicy(config, config_path)
+        print(f"[模型] 当前运行：{runtime_model_label(self.policy.runtime_model)}")
         if self.policy.mode == "reactive_catalog":
             if self.policy.reactive_ready:
                 print(
@@ -87,6 +89,22 @@ class BotEngine:
                         "version", "unknown"
                     )
                     print(f"[策略] 已加载验证晋升的回放自学习策略：{version}")
+                if (
+                    self.policy.runtime_model == "imitation"
+                    and not (
+                        self.policy.imitation_model is not None
+                        and self.policy.imitation_model.available
+                    )
+                ):
+                    print("[模型] 示范模型尚未通过验证，本次回退到规则策略。")
+                if (
+                    self.policy.runtime_model == "replay"
+                    and not (
+                        self.policy.replay_model is not None
+                        and self.policy.replay_model.available
+                    )
+                ):
+                    print("[模型] 回放模型尚未通过验证，本次回退到规则策略。")
             else:
                 print(f"[策略] 通用响应策略未就绪，将停止盲目出牌：{self.policy.perception_error}")
         self.recorder = TrainingRecorder(
@@ -98,6 +116,7 @@ class BotEngine:
             replay_config["enabled"] = False
         policy_metadata: dict[str, Any] = {
             "mode": self.policy.mode,
+            "runtime_model": self.policy.runtime_model,
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "temporal_observation_schema": "hand_elixir_formation_v1",
             "tactical_observation_schema": "threat_layers_v1",
