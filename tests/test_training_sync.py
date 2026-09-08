@@ -186,6 +186,55 @@ class ReplaySyncTests(unittest.TestCase):
         self.assertEqual(registry["candidates"][0]["status"], "rejected")
         self.assertIsNone(registry["champion"])
 
+        status = self.b.status()
+        self.assertEqual(status["models"]["remote_latest_candidate"]["status"], "rejected")
+        self.assertEqual(status["models"]["downloaded_latest_candidate"]["status"], "rejected")
+        self.assertIsNone(status["models"]["champion"])
+        self.assertFalse(status["runtime"]["verified"])
+
+    def test_status_distinguishes_remote_downloaded_champion_and_runtime(self):
+        candidate = self.make_model(promoted=True)
+        self.a.sync()
+        self.b._pull()
+        before = self.b.status()
+        self.assertEqual(before["models"]["remote_latest_candidate"]["version"], "one")
+        self.assertIsNone(before["models"]["downloaded_latest_candidate"])
+        self.assertIsNone(before["models"]["champion"])
+
+        self.b.sync()
+        downloaded = self.b.status()
+        self.assertEqual(downloaded["models"]["downloaded_latest_candidate"]["version"], "one")
+        self.assertIsNone(downloaded["models"]["champion"])
+
+        config = read_json(self.b.root / "config.json")
+        config["replay"]["allow_bot_training"] = True
+        atomic_write(self.b.root / "config.json", encode(config))
+        self.b.sync()
+        champion = self.b.status()
+        self.assertEqual(champion["models"]["champion"]["version"], candidate["version"])
+        self.assertTrue(champion["models"]["champion_file_present"])
+
+        self.b.write_runtime_status({
+            "rule_version": "v5",
+            "replay_model": {"version": "one", "loaded": False, "load_error": "bad model"},
+        })
+        runtime = self.b.status()["runtime"]
+        self.assertTrue(runtime["verified"])
+        self.assertFalse(runtime["replay_model"]["loaded"])
+        self.assertEqual(runtime["replay_model"]["load_error"], "bad model")
+
+    def test_status_marks_incompatible_remote_candidate_without_importing(self):
+        self.make_model()
+        self.a.sync()
+        config = read_json(self.b.root / "config.json")
+        config["replay"]["training_policy_version"] = "other"
+        atomic_write(self.b.root / "config.json", encode(config))
+
+        status = self.b.status()
+
+        self.assertFalse(status["models"]["remote_compatibility_matches"])
+        self.assertIsNone(status["models"]["downloaded_latest_candidate"])
+
     def test_model_compatibility_and_checksum_failure_preserve_existing(self):
         atomic_write(self.a.root / "crbot/replay.py", b"first\nsecond\n")
         atomic_write(self.b.root / "crbot/replay.py", b"first\r\nsecond\r\n")

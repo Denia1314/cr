@@ -18,6 +18,7 @@ from .policy import BattlePolicy
 from .recorder import TrainingRecorder
 from .replay import ExperienceReplayRecorder
 from .temporal import TimingStats
+from .training_sync import ReplaySync
 from .vision import (
     ProbeMatch,
     WorkflowRecognizer,
@@ -149,6 +150,15 @@ class BotEngine:
         self.response_timing = TimingStats(
             max_samples=int(automation_config.get("timing_max_samples", 512))
         )
+        replay_model = self.policy.replay_model
+        ReplaySync(self.project_root).write_runtime_status({
+            "rule_version": self.policy.policy.get("version", "unversioned"),
+            "replay_model": {
+                "version": ((replay_model.champion or {}).get("version") if replay_model else None),
+                "loaded": bool(replay_model is not None and replay_model.available),
+                "load_error": (getattr(replay_model, "load_error", None) if replay_model else "disabled"),
+            },
+        })
 
     def request_stop(self) -> None:
         """Ask the engine to stop at the next safe boundary."""
@@ -755,13 +765,18 @@ class BotEngine:
         last_evidence: dict[str, Any] = {}
         confirmation_error = False
         confirmation_started = time.perf_counter()
+        observation_timings: list[dict[str, Any]] = []
         while time.monotonic() < deadline and not self._stop_requested():
+            capture_started = time.perf_counter()
             try:
                 post_image = self.device.screenshot()
             except Exception as exc:
                 send_error = send_error or f"确认截图失败：{exc}"
                 confirmation_error = True
+                last_evidence = {**last_evidence, "capture_error": True}
                 break
+            capture_elapsed = time.perf_counter() - capture_started
+            recognition_started = time.perf_counter()
             post_matches = None
             if self.policy.hand_recognizer is not None:
                 try:
@@ -773,6 +788,9 @@ class BotEngine:
             )
             if post_elixir_confidence < 0.08:
                 post_elixir = None
+            recognition_elapsed = time.perf_counter() - recognition_started
+            self.response_timing.record("confirmation_capture", capture_elapsed)
+            self.response_timing.record("confirmation_recognition", recognition_elapsed)
             center = None
             centers = self.config["vision"].get("card_slot_centers", [])
             if 0 <= int(decision.slot_index) < len(centers):
@@ -789,6 +807,14 @@ class BotEngine:
                 slot_center=center,
                 vision_config=self.config["vision"],
             )
+            if send_error:
+                last_evidence["click_error"] = True
+            observation_timings.append({
+                "index": len(observation_timings) + 1,
+                "observed_after_send_s": round(max(0.0, time.monotonic() - confirmation_window_started_at), 6),
+                "capture_s": round(capture_elapsed, 6),
+                "recognition_s": round(recognition_elapsed, 6),
+            })
             confirmation = self.action_confirmation.observe(
                 action_id, last_evidence, now=time.monotonic()
             )
@@ -807,7 +833,7 @@ class BotEngine:
                         if self._stop_requested()
                         else "确认截图失败，保留为未知"
                     ),
-                    evidence=last_evidence,
+                    evidence={**last_evidence, "click_error": bool(send_error)},
                     now=time.monotonic(),
                 )
             else:
@@ -834,6 +860,9 @@ class BotEngine:
                 "confirmation_timeout_s": timeout_s,
                 "confirmation_elapsed_s": round(confirmation_elapsed, 6),
                 "confirmation_status": confirmation.status,
+                "confirmation_failure_code": confirmation.failure_code,
+                "confirmation_observations": observation_timings,
+                "confirmation_summary": self.action_confirmation.summary(),
                 "confirmation_window_starts_after_send": True,
             },
         )

@@ -68,7 +68,9 @@ class M1UpgradeTests(unittest.TestCase):
         tracker = ActionConfirmationTracker(timeout_s=2.0, stable_frames=2)
         tracker.register("a", sent_at=0.0)
         self.assertEqual(tracker.observe("a", evidence, now=0.5).status, "sent")
-        confirmed = tracker.observe("a", evidence, now=0.7)
+        confirmed = tracker.observe(
+            "a", {**evidence, "frame_fingerprint": "next-frame"}, now=0.7
+        )
         self.assertEqual(confirmed.status, "confirmed")
         self.assertEqual(tracker.observe("a", evidence, now=0.8), confirmed)
 
@@ -177,6 +179,42 @@ class M1UpgradeTests(unittest.TestCase):
         self.assertEqual(result.observed_frames, 0)
         self.assertEqual(result.evidence["evidence_frames"], 0)
 
+    def test_confirmation_summary_classifies_missing_second_frame(self) -> None:
+        tracker = ActionConfirmationTracker(timeout_s=1.0, stable_frames=2)
+        tracker.register("late", sent_at=0.0)
+        tracker.observe(
+            "late",
+            {"independent_signals": 1, "visual_change": True, "confidence": 0.35},
+            now=0.7,
+        )
+
+        result = tracker.timeout("late", now=1.1)
+        summary = tracker.summary()
+
+        self.assertEqual(result.failure_code, "second_frame_unavailable")
+        self.assertEqual(summary["outcome_counts"], {"unknown": 1})
+        self.assertEqual(summary["failure_counts"], {"second_frame_unavailable": 1})
+        self.assertEqual(summary["elapsed_s"]["count"], 1)
+
+    def test_duplicate_confirmation_frame_does_not_confirm(self) -> None:
+        tracker = ActionConfirmationTracker(timeout_s=1.0, stable_frames=2)
+        tracker.register("duplicate", sent_at=0.0)
+        evidence = {
+            "independent_signals": 2,
+            "hand_change": True,
+            "elixir_change": True,
+            "confidence": 0.8,
+            "frame_fingerprint": "same-frame",
+        }
+        self.assertEqual(tracker.observe("duplicate", evidence, now=0.3).status, "sent")
+        self.assertEqual(tracker.observe("duplicate", evidence, now=0.6).status, "sent")
+
+        result = tracker.timeout("duplicate", now=1.1)
+
+        self.assertEqual(result.status, "unknown")
+        self.assertEqual(result.failure_code, "stale_frame")
+        self.assertEqual(result.evidence["duplicate_frames"], 1)
+
     def test_confirmation_window_starts_after_slow_precheck_and_deploy_tap(self) -> None:
         image = Image.new("RGB", (600, 1000), (30, 40, 50))
 
@@ -222,13 +260,19 @@ class M1UpgradeTests(unittest.TestCase):
                 return True
 
         class FakeDevice:
+            def __init__(self) -> None:
+                self.screenshots = 0
+
             def tap_normalized(self, point, _size):
                 clock.advance(0.25)
                 return [round(point[0] * 600), round(point[1] * 1000)]
 
             def screenshot(self) -> Image.Image:
                 clock.advance(0.1)
-                return image.copy()
+                self.screenshots += 1
+                return Image.new(
+                    "RGB", image.size, (30 + 10 * self.screenshots, 40, 50)
+                )
 
         class FakeRecorder:
             def __init__(self) -> None:

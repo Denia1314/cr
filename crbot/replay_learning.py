@@ -1141,6 +1141,7 @@ class ReplayPolicyRegistry:
             "rejection_reasons": reasons,
             "promotion_blockers": promotion_blockers,
             "ranking_metric_version": ranking_metric_version,
+            "model_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
             "sync_compatibility": ReplaySync(self.root.parent.parent).compatibility(config),
         }
         if promoted:
@@ -1301,6 +1302,15 @@ def train_replay_policy(
         "copied_battles_deduplicated": True,
         "evaluation_protocol_version": evaluation_groups.protocol_version,
         "evaluation_groups": evaluation_groups.to_dict(),
+        "data_identity": evaluation_groups.to_dict().get("set_fingerprint"),
+        "training_config_fingerprint": hashlib.sha256(
+            json.dumps(
+                config,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
         "evaluation_seed": seed,
         "validation_fraction": validation_fraction,
         "freeze_evaluation_fraction": float(
@@ -1349,6 +1359,7 @@ class ReplayPolicyModel:
         self.registry = ReplayPolicyRegistry(project_root)
         self.champion = self.registry.champion()
         self.available = False
+        self.load_error: str | None = None
         self.influence_scale = 0.0
         self.visual_weight = 0.0
         self.visual_feature_count = 0
@@ -1360,6 +1371,7 @@ class ReplayPolicyModel:
         self._cached_battlefield: np.ndarray | None = None
         path = self.registry.champion_path()
         if path is None:
+            self.load_error = "champion_model_missing" if self.champion else "no_champion"
             return
         try:
             with np.load(path) as data:
@@ -1387,8 +1399,11 @@ class ReplayPolicyModel:
                 (self.champion or {}).get("influence_scale", 0.10)
             )
             self.available = bool(len(self.value_x) and len(self.deploy_x))
-        except (OSError, ValueError, KeyError, IndexError):
+            if not self.available:
+                self.load_error = "model_arrays_empty"
+        except (OSError, ValueError, KeyError, IndexError) as exc:
             self.available = False
+            self.load_error = f"{type(exc).__name__}: {exc}"
 
     def _battlefield(self, image: Image.Image | None) -> np.ndarray | None:
         if self.visual_feature_count <= 0:

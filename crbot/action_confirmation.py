@@ -6,6 +6,7 @@ be replayed in tests and used by both live execution and diagnostics.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import time
 from dataclasses import asdict, dataclass
@@ -42,6 +43,7 @@ class ActionConfirmation:
     evidence: dict[str, Any]
     elapsed_s: float = 0.0
     observed_frames: int = 0
+    failure_code: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in ACTION_STATUSES:
@@ -142,6 +144,11 @@ def assess_action_evidence(
         "before_confidence": round(before_conf, 4),
         "after_confidence": round(after_conf, 4),
         "confidence": round(confidence, 4),
+        "frame_fingerprint": (
+            hashlib.sha256(post_image.resize((16, 16)).convert("L").tobytes()).hexdigest()[:16]
+            if post_image is not None
+            else None
+        ),
     }
 
 
@@ -160,6 +167,10 @@ class ActionConfirmationTracker:
         self.stable_frames = max(1, int(stable_frames))
         self._pending: dict[str, dict[str, Any]] = {}
         self._resolved: dict[str, ActionConfirmation] = {}
+        self._outcome_counts: dict[str, int] = {}
+        self._failure_counts: dict[str, int] = {}
+        self._elapsed_samples: list[float] = []
+        self._frame_samples: list[int] = []
 
     @staticmethod
     def _new_pending_state(sent_at: float) -> dict[str, Any]:
@@ -172,6 +183,8 @@ class ActionConfirmationTracker:
             "best_evidence": {},
             "partial_seen": False,
             "observed_signals": set(),
+            "last_frame_fingerprint": None,
+            "duplicate_frames": 0,
         }
 
     @staticmethod
@@ -242,6 +255,7 @@ class ActionConfirmationTracker:
                     signal in observed_signals
                     for signal in ("hand_change", "elixir_change", "visual_change")
                 ),
+                "duplicate_frames": int(state.get("duplicate_frames", 0)),
             }
         )
         return evidence
@@ -257,6 +271,7 @@ class ActionConfirmationTracker:
             state.get("partial_seen") or int(state.get("positive_frames", 0)) > 0
         )
         status = "unknown" if has_partial else "rejected"
+        failure_code = self._failure_code(state, status=status)
         reason = (
             "超时但曾观察到部分或不稳定证据，保留为未知"
             if status == "unknown"
@@ -272,8 +287,52 @@ class ActionConfirmationTracker:
                 evidence,
                 max(0.0, current - float(state["sent_at"])),
                 int(state.get("frames", 0)),
+                failure_code,
             ),
         )
+
+    @staticmethod
+    def _failure_code(state: dict[str, Any], *, status: str) -> str | None:
+        if status == "confirmed":
+            return None
+        evidence = dict(state.get("best_evidence") or state.get("last_evidence") or {})
+        frames = int(state.get("frames", 0))
+        if evidence.get("click_error"):
+            return "click_error"
+        if evidence.get("capture_error"):
+            return "capture_error"
+        if evidence.get("stale_frame") or int(state.get("duplicate_frames", 0)) > 0:
+            return "stale_frame"
+        if evidence.get("evidence_conflict"):
+            return "evidence_conflict"
+        if frames < 2:
+            return "second_frame_unavailable"
+        if evidence.get("hand_uncertain_change") or (
+            evidence.get("hand_change") and int(evidence.get("independent_signals", 0)) < 2
+        ):
+            return "hand_change_unstable"
+        if not evidence.get("elixir_change"):
+            return "insufficient_elixir_evidence"
+        return "unclassified"
+
+    def summary(self) -> dict[str, Any]:
+        """Return bounded, non-mutating confirmation coverage diagnostics."""
+        from .temporal import TimingStats
+
+        return {
+            "outcome_counts": dict(sorted(self._outcome_counts.items())),
+            "failure_counts": dict(sorted(self._failure_counts.items())),
+            "elapsed_s": {
+                "count": len(self._elapsed_samples),
+                "p50_s": TimingStats.percentile(self._elapsed_samples, 0.50),
+                "p95_s": TimingStats.percentile(self._elapsed_samples, 0.95),
+            },
+            "observed_frames": {
+                "count": len(self._frame_samples),
+                "p50": TimingStats.percentile(self._frame_samples, 0.50),
+                "p95": TimingStats.percentile(self._frame_samples, 0.95),
+            },
+        }
 
     def register(self, action_id: str, *, sent_at: float | None = None) -> ActionConfirmation:
         action_id = str(action_id).strip()
@@ -304,12 +363,21 @@ class ActionConfirmationTracker:
         )
         elapsed = max(0.0, current - float(state["sent_at"]))
         state["frames"] += 1
+        fingerprint = evidence.get("frame_fingerprint")
+        duplicate_frame = bool(
+            fingerprint and fingerprint == state.get("last_frame_fingerprint")
+        )
+        if fingerprint:
+            state["last_frame_fingerprint"] = fingerprint
+        if duplicate_frame:
+            state["duplicate_frames"] = int(state.get("duplicate_frames", 0)) + 1
+            evidence = {**evidence, "stale_frame": True}
         self._remember_evidence(state, evidence)
         signals = int(evidence.get("independent_signals", 0))
         signature = tuple(
             bool(evidence.get(key)) for key in ("hand_change", "elixir_change", "visual_change")
         )
-        if signals >= 2:
+        if signals >= 2 and not duplicate_frame:
             if signature == state.get("last_signature"):
                 state["positive_frames"] += 1
             else:
@@ -390,12 +458,21 @@ class ActionConfirmationTracker:
             preserved,
             max(0.0, current - float(state.get("sent_at", current))),
             int(state.get("frames", 0)),
+            self._failure_code(state, status="unknown"),
         )
         return self._finish(action_id, result)
 
     def _finish(self, action_id: str, result: ActionConfirmation) -> ActionConfirmation:
         self._pending.pop(action_id, None)
         self._resolved[action_id] = result
+        self._outcome_counts[result.status] = self._outcome_counts.get(result.status, 0) + 1
+        if result.failure_code:
+            self._failure_counts[result.failure_code] = self._failure_counts.get(result.failure_code, 0) + 1
+        self._elapsed_samples.append(float(result.elapsed_s))
+        self._frame_samples.append(int(result.observed_frames))
+        if len(self._elapsed_samples) > 512:
+            del self._elapsed_samples[:-512]
+            del self._frame_samples[:-512]
         # Resolved IDs are only an idempotence guard; avoid unbounded growth in
         # a long-running bot while retaining a useful recent window.
         if len(self._resolved) > 256:

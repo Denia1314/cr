@@ -95,4 +95,6 @@ python tools/evaluate_replay_transfer.py --train
 python -m crbot sync status
 ```
 
+状态输出刻意区分四层：`remote_latest_candidate` 只是共享仓库指针，`downloaded_latest_candidate` 只是本机收到的候选，`champion` 是本机注册表选择，`runtime.replay_model` 才是进程实际加载结果。未验证或不兼容候选不会被描述为冠军；没有运行中的进程时 `runtime.verified` 为 `false`。该命令不执行同步、训练、候选晋升或冠军变更。
+
 同步使用系统 HTTPS 代理（若已设置）以及 GitHub CLI 的凭据，不写入或上传密码和 Token。单局记录上限 10 MiB，单模型上限 50 MiB；共享工作文件超过 512 MiB 时暂停新上传并提示迁移存储。Git 历史另占空间，应定期关注数据仓库大小；本方案适合当前小规模结构化回放，不用于无限存放图片。

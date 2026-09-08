@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.request import getproxies
 
+from . import __version__
+
 
 DEFAULT_REPOSITORY = "Denia1314/cr-training-data"
 SCHEMA = 1
@@ -244,7 +246,90 @@ class ReplaySync:
                 "repository": self.config.get("repository", DEFAULT_REPOSITORY),
                 "device_id": self.config.get("device_id"),
                 "role": "trainer" if self.config.get("trainer") else "collector",
+                "code": self._code_status(),
+                "models": self._model_status(),
+                "runtime": self._runtime_status(),
                 "last_sync": read_json(self.state / "status.json", {})}
+
+    def _code_status(self) -> dict[str, Any]:
+        try:
+            commit = command(["git", "rev-parse", "HEAD"], self.root)
+        except SyncError:
+            commit = None
+        config = read_json(self.root / "config.json", {})
+        return {
+            "commit": commit,
+            "package_version": __version__,
+            "rule_version": config.get("policy", {}).get("version"),
+            "training_policy_version": config.get("replay", {}).get("training_policy_version"),
+            "compatibility": self.compatibility(),
+        }
+
+    @staticmethod
+    def _candidate_identity(candidate: Any) -> dict[str, Any] | None:
+        if not isinstance(candidate, dict):
+            return None
+        manifest = candidate.get("manifest") if isinstance(candidate.get("manifest"), dict) else {}
+        return {
+            "version": candidate.get("version"),
+            "created_at_unix": candidate.get("created_at_unix"),
+            "quality_passed": candidate.get("quality_passed"),
+            "status": candidate.get("status"),
+            "promoted": candidate.get("promoted"),
+            "compatibility": candidate.get("sync_compatibility"),
+            "data_identity": manifest.get("data_identity") or manifest.get("dataset_fingerprint"),
+            "training_config_fingerprint": manifest.get("training_config_fingerprint"),
+            "model_sha256": candidate.get("model_sha256") or candidate.get("sync_sha256"),
+            "rejection_reasons": list(candidate.get("rejection_reasons", [])),
+            "promotion_blockers": list(candidate.get("promotion_blockers", [])),
+        }
+
+    def _model_status(self) -> dict[str, Any]:
+        compatibility = self.compatibility()
+        pointer = read_json(self.checkout / "models/replay_policy.json", {})
+        remote = pointer.get("candidate") if isinstance(pointer, dict) else None
+        registry = read_json(self.root / "models/replay_policy/registry.json", {})
+        candidates = registry.get("candidates", []) if isinstance(registry, dict) else []
+        downloaded = [item for item in candidates if isinstance(item, dict) and item.get("sync_publication")]
+        latest_downloaded = max(downloaded, key=lambda item: float(item.get("created_at_unix", 0)), default=None)
+        champion = registry.get("champion") if isinstance(registry, dict) else None
+        return {
+            "remote_latest_candidate": self._candidate_identity(remote),
+            "remote_compatibility_matches": bool(pointer) and pointer.get("compatibility") == compatibility,
+            "downloaded_latest_candidate": self._candidate_identity(latest_downloaded),
+            "champion": self._candidate_identity(champion),
+            "champion_file_present": bool(
+                isinstance(champion, dict)
+                and (self.root / "models/replay_policy" / str(champion.get("model_path", ""))).is_file()
+            ),
+        }
+
+    def _runtime_status(self) -> dict[str, Any]:
+        value = read_json(self.state / "runtime-status.json", {})
+        if not isinstance(value, dict) or not value:
+            return {"verified": False, "reason": "no_runtime_report"}
+        pid = value.get("pid")
+        alive = False
+        if isinstance(pid, int) and pid > 0:
+            if os.name == "nt":
+                import ctypes
+
+                process = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+                if process:
+                    alive = True
+                    ctypes.windll.kernel32.CloseHandle(process)
+            else:
+                try:
+                    os.kill(pid, 0)
+                    alive = True
+                except OSError:
+                    pass
+        return {**value, "verified": alive, "reason": None if alive else "process_not_running"}
+
+    def write_runtime_status(self, value: dict[str, Any]) -> None:
+        atomic_write(self.state / "runtime-status.json", encode({
+            "reported_at_unix": time.time(), "pid": os.getpid(), **value
+        }))
 
     def _origin(self, run: Path) -> dict[str, Any]:
         path = run / ".sync-origin.json"
