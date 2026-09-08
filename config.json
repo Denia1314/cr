@@ -168,7 +168,7 @@
   },
   "policy": {
     "mode": "reactive_catalog",
-    "runtime_model": "hybrid",
+    "runtime_model": "m3_c3",
     "version": "adaptive_counterpush_v5_m3_c3",
     "fallback_mode": "hold",
     "min_elixir_to_act": 4,

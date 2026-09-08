@@ -15,7 +15,7 @@ from .cards import CardCatalog, CardDefinition
 from .learned_perception import LearnedBattlefieldDetector
 from .imitation import ImitationPolicyModel
 from .replay_learning import ReplayPolicyModel
-from .runtime_model import normalize_runtime_model, runtime_model_allows
+from .runtime_model import normalize_runtime_model
 from .tactics import card_tactics
 from .temporal import HandHistory
 from .vision import estimate_elixir, motion_score
@@ -166,7 +166,10 @@ class BattlePolicy:
         self.config_replay = dict(config.get("replay", {}))
         self.mode = str(self.policy.get("mode", "baseline"))
         self.runtime_model = normalize_runtime_model(
-            self.policy.get("runtime_model", "hybrid")
+            self.policy.get("runtime_model", "m3_c3")
+        )
+        self.temporal_perception_enabled = bool(
+            self.policy.get("temporal_perception_enabled", True)
         )
         self.random = random.Random(self.policy.get("seed"))
         self.virtual_elixir = float(self.policy.get("initial_elixir", 5.0))
@@ -250,12 +253,8 @@ class BattlePolicy:
                 self.catalog,
                 dict(config.get("training", {})),
             )
-            if runtime_model_allows(self.runtime_model, "imitation"):
-                self.imitation_model = ImitationPolicyModel(project_root)
-            if (
-                runtime_model_allows(self.runtime_model, "replay")
-                and bool(self.config_replay.get("allow_bot_training", False))
-            ):
+            self.imitation_model = ImitationPolicyModel(project_root)
+            if bool(self.config_replay.get("allow_bot_training", False)):
                 self.replay_model = ReplayPolicyModel(
                     project_root, self.config_replay
                 )
@@ -716,6 +715,24 @@ class BattlePolicy:
 
         if card.kind == "spell":
             if threat.centers:
+                if not bool(
+                    self.policy.get("role_aware_placement_enabled", True)
+                ):
+                    target_x = sum(point[0] for point in threat.centers) / len(
+                        threat.centers
+                    )
+                    target_y = sum(point[1] for point in threat.centers) / len(
+                        threat.centers
+                    )
+                    return (
+                        [
+                            self._clamp(target_x, 0.12, 0.88),
+                            self._clamp(target_y, 0.22, 0.75),
+                        ],
+                        "legacy_spell_center",
+                        "pre_m3_c2_average_center",
+                        (),
+                    )
                 max_age = float(self.policy.get("placement_prediction_max_age_s", 0.8))
                 delay = float(self.policy.get("spell_prediction_delay_s", 0.10))
                 prediction = max(0.0, threat.approach_rate) * delay if observation_age_s <= max_age else 0.0
@@ -1012,6 +1029,8 @@ class BattlePolicy:
         self._last_hand_matches = list(observed)
         self._last_hand_image = current
         self._last_hand_observed_at = float(now)
+        if not self.temporal_perception_enabled:
+            return observed
         return self.hand_history.matches_for_decision(observed, now)
 
     @property
@@ -1229,8 +1248,12 @@ class BattlePolicy:
             self._last_hand_image is current
             and abs(self._last_hand_observed_at - now) <= 1e-9
         ):
-            matches = self.hand_history.matches_for_decision(
-                self._last_hand_matches, now
+            matches = (
+                self.hand_history.matches_for_decision(
+                    self._last_hand_matches, now
+                )
+                if self.temporal_perception_enabled
+                else list(self._last_hand_matches)
             )
         else:
             matches = self._stable_hand_matches(current, now)

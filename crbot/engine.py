@@ -89,22 +89,6 @@ class BotEngine:
                         "version", "unknown"
                     )
                     print(f"[策略] 已加载验证晋升的回放自学习策略：{version}")
-                if (
-                    self.policy.runtime_model == "imitation"
-                    and not (
-                        self.policy.imitation_model is not None
-                        and self.policy.imitation_model.available
-                    )
-                ):
-                    print("[模型] 示范模型尚未通过验证，本次回退到规则策略。")
-                if (
-                    self.policy.runtime_model == "replay"
-                    and not (
-                        self.policy.replay_model is not None
-                        and self.policy.replay_model.available
-                    )
-                ):
-                    print("[模型] 回放模型尚未通过验证，本次回退到规则策略。")
             else:
                 print(f"[策略] 通用响应策略未就绪，将停止盲目出牌：{self.policy.perception_error}")
         self.recorder = TrainingRecorder(

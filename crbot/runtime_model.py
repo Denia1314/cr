@@ -7,13 +7,122 @@ from typing import Any
 
 
 RUNTIME_MODEL_LABELS: dict[str, str] = {
-    "hybrid": "混合增强（推荐）",
-    "rules": "规则策略",
-    "imitation": "示范模仿模型",
-    "replay": "回放自学习模型",
+    "v5": "V5 · 基础策略",
+    "m1": "M1 · 动作确认",
+    "m2": "M2 · 时序感知",
+    "m2_1": "M2.1 · 稳定修复",
+    "m3_c1": "M3-C1 · 双路留费",
+    "m3_c2": "M3-C2 · 职责落点",
+    "m3_c3": "M3-C3 · 反打门控（最新）",
 }
-DEFAULT_RUNTIME_MODEL = "hybrid"
+DEFAULT_RUNTIME_MODEL = "m3_c3"
 LOCAL_SETTINGS_NAME = ".royal-lab.json"
+
+
+RUNTIME_MODEL_PROFILES: dict[str, dict[str, Any]] = {
+    "v5": {
+        "policy_version": "adaptive_counterpush_v5",
+        "training_policy_version": "adaptive_counterpush_v5",
+        "transfer_policy_versions": ["formation_counterpush_v4"],
+        "require_action_confirmation": False,
+        "temporal_perception_enabled": False,
+        "hand_stability_frames": 1,
+        "dual_lane_elixir_enabled": False,
+        "role_aware_placement_enabled": False,
+        "counterpush_evidence_enabled": False,
+    },
+    "m1": {
+        "policy_version": "adaptive_counterpush_v5",
+        "training_policy_version": "adaptive_counterpush_v5",
+        "transfer_policy_versions": ["formation_counterpush_v4"],
+        "require_action_confirmation": True,
+        "temporal_perception_enabled": False,
+        "hand_stability_frames": 1,
+        "dual_lane_elixir_enabled": False,
+        "role_aware_placement_enabled": False,
+        "counterpush_evidence_enabled": False,
+    },
+    "m2": {
+        "policy_version": "adaptive_counterpush_v5_m2",
+        "training_policy_version": "adaptive_counterpush_v5_m2",
+        "transfer_policy_versions": [
+            "adaptive_counterpush_v5",
+            "formation_counterpush_v4",
+        ],
+        "require_action_confirmation": True,
+        "temporal_perception_enabled": True,
+        "hand_stability_frames": 1,
+        "dual_lane_elixir_enabled": False,
+        "role_aware_placement_enabled": False,
+        "counterpush_evidence_enabled": False,
+    },
+    "m2_1": {
+        "policy_version": "adaptive_counterpush_v5_m2_1",
+        "training_policy_version": "adaptive_counterpush_v5_m2_1",
+        "transfer_policy_versions": [
+            "adaptive_counterpush_v5_m2",
+            "adaptive_counterpush_v5",
+            "formation_counterpush_v4",
+        ],
+        "require_action_confirmation": True,
+        "temporal_perception_enabled": True,
+        "hand_stability_frames": 2,
+        "dual_lane_elixir_enabled": False,
+        "role_aware_placement_enabled": False,
+        "counterpush_evidence_enabled": False,
+    },
+    "m3_c1": {
+        "policy_version": "adaptive_counterpush_v5_m3_c1",
+        "training_policy_version": "adaptive_counterpush_v5_m3_c1",
+        "transfer_policy_versions": [
+            "adaptive_counterpush_v5_m2_1",
+            "adaptive_counterpush_v5_m2",
+            "adaptive_counterpush_v5",
+            "formation_counterpush_v4",
+        ],
+        "require_action_confirmation": True,
+        "temporal_perception_enabled": True,
+        "hand_stability_frames": 2,
+        "dual_lane_elixir_enabled": True,
+        "role_aware_placement_enabled": False,
+        "counterpush_evidence_enabled": False,
+    },
+    "m3_c2": {
+        "policy_version": "adaptive_counterpush_v5_m3_c2",
+        "training_policy_version": "adaptive_counterpush_v5_m3_c2",
+        "transfer_policy_versions": [
+            "adaptive_counterpush_v5_m3_c1",
+            "adaptive_counterpush_v5_m2_1",
+            "adaptive_counterpush_v5_m2",
+            "adaptive_counterpush_v5",
+            "formation_counterpush_v4",
+        ],
+        "require_action_confirmation": True,
+        "temporal_perception_enabled": True,
+        "hand_stability_frames": 2,
+        "dual_lane_elixir_enabled": True,
+        "role_aware_placement_enabled": True,
+        "counterpush_evidence_enabled": False,
+    },
+    "m3_c3": {
+        "policy_version": "adaptive_counterpush_v5_m3_c3",
+        "training_policy_version": "adaptive_counterpush_v5_m3_c3",
+        "transfer_policy_versions": [
+            "adaptive_counterpush_v5_m3_c2",
+            "adaptive_counterpush_v5_m3_c1",
+            "adaptive_counterpush_v5_m2_1",
+            "adaptive_counterpush_v5_m2",
+            "adaptive_counterpush_v5",
+            "formation_counterpush_v4",
+        ],
+        "require_action_confirmation": True,
+        "temporal_perception_enabled": True,
+        "hand_stability_frames": 2,
+        "dual_lane_elixir_enabled": True,
+        "role_aware_placement_enabled": True,
+        "counterpush_evidence_enabled": True,
+    },
+}
 
 
 def normalize_runtime_model(value: object) -> str:
@@ -23,15 +132,6 @@ def normalize_runtime_model(value: object) -> str:
 
 def runtime_model_label(value: object) -> str:
     return RUNTIME_MODEL_LABELS[normalize_runtime_model(value)]
-
-
-def runtime_model_allows(value: object, source: str) -> bool:
-    key = normalize_runtime_model(value)
-    if source == "imitation":
-        return key in {"hybrid", "imitation"}
-    if source == "replay":
-        return key in {"hybrid", "replay"}
-    return True
 
 
 def local_settings_path(config_path: Path) -> Path:
@@ -66,5 +166,26 @@ def save_runtime_model(config_path: Path, value: object) -> str:
 
 def apply_runtime_model(config: dict[str, Any], value: object) -> dict[str, Any]:
     effective = copy.deepcopy(config)
-    effective.setdefault("policy", {})["runtime_model"] = normalize_runtime_model(value)
+    key = normalize_runtime_model(value)
+    profile = RUNTIME_MODEL_PROFILES[key]
+    policy = effective.setdefault("policy", {})
+    replay = effective.setdefault("replay", {})
+    policy["runtime_model"] = key
+    policy["version"] = profile["policy_version"]
+    policy["hand_stability_frames"] = profile["hand_stability_frames"]
+    policy["temporal_perception_enabled"] = profile[
+        "temporal_perception_enabled"
+    ]
+    policy["dual_lane_elixir_enabled"] = profile["dual_lane_elixir_enabled"]
+    policy["role_aware_placement_enabled"] = profile[
+        "role_aware_placement_enabled"
+    ]
+    policy["counterpush_evidence_enabled"] = profile[
+        "counterpush_evidence_enabled"
+    ]
+    replay["training_policy_version"] = profile["training_policy_version"]
+    replay["transfer_policy_versions"] = list(profile["transfer_policy_versions"])
+    replay["require_action_confirmation"] = profile[
+        "require_action_confirmation"
+    ]
     return effective

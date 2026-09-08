@@ -584,7 +584,7 @@ class RoyalTrainerApp:
             textvariable=self.model_var,
             values=list(RUNTIME_MODEL_LABELS.values()),
             state="readonly",
-            width=18,
+            width=24,
             style="Model.TCombobox",
             font=(FONT, 9),
         )
