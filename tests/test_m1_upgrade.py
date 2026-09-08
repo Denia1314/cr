@@ -19,7 +19,12 @@ from crbot.cards import CardCatalog, CardDefinition
 from crbot.engine import BotEngine
 from crbot.policy import BattleDecision, BattlePolicy
 from crbot.replay import ExperienceReplayRecorder
-from crbot.replay_evaluation import reserve_frozen_groups
+from crbot.replay_evaluation import (
+    champion_frozen_exposure,
+    content_fingerprint,
+    experiment_protocol_fingerprint,
+    reserve_frozen_groups,
+)
 from crbot.replay_learning import collect_replay_learning_actions
 from crbot.temporal import TimingStats
 from crbot.vision import BattleResult
@@ -410,6 +415,42 @@ class M1UpgradeTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertTrue(first.to_dict()["groups_are_disjoint"])
         self.assertTrue(first.frozen)
+
+    def test_content_fingerprint_detects_changed_rows_but_not_order(self) -> None:
+        rows = [{"battle": "a", "reward": 1}, {"battle": "b", "reward": -1}]
+        self.assertEqual(content_fingerprint(rows), content_fingerprint(reversed(rows)))
+        self.assertNotEqual(
+            content_fingerprint(rows),
+            content_fingerprint([{**rows[0], "reward": 0}, rows[1]]),
+        )
+
+    def test_experiment_protocol_fingerprint_freezes_config_and_split(self) -> None:
+        base = experiment_protocol_fingerprint(
+            data_fingerprint="data",
+            split={"train_groups": ["a"], "frozen_groups": ["z"]},
+            filter_config={"policy": "v5"},
+            model_config={"seed": 7},
+        )
+        changed = experiment_protocol_fingerprint(
+            data_fingerprint="data",
+            split={"train_groups": ["a"], "frozen_groups": ["z"]},
+            filter_config={"policy": "v5"},
+            model_config={"seed": 8},
+        )
+        self.assertNotEqual(base, changed)
+
+    def test_champion_exposure_reports_seen_frozen_games(self) -> None:
+        champion = {
+            "version": "old",
+            "manifest": {
+                "train_battles": ["train-a", "frozen-seen"],
+                "validation_battles": ["val-a"],
+            },
+        }
+        report = champion_frozen_exposure(champion, ["frozen-new", "frozen-seen"])
+        self.assertEqual(report["status"], "overlap")
+        self.assertEqual(report["overlap_groups"], ["frozen-seen"])
+        self.assertFalse(champion_frozen_exposure(None, ["a"])["overlap_groups"])
 
 
 if __name__ == "__main__":

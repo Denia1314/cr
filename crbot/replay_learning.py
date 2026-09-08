@@ -22,7 +22,13 @@ from .imitation import (
 )
 from .tactics import card_tactics
 from .action_feedback import action_feedback
-from .replay_evaluation import EvaluationGroups, reserve_frozen_groups
+from .replay_evaluation import (
+    EvaluationGroups,
+    champion_frozen_exposure,
+    content_fingerprint,
+    experiment_protocol_fingerprint,
+    reserve_frozen_groups,
+)
 
 
 REPLAY_POLICY_SCHEMA_VERSION = 1
@@ -1344,6 +1350,28 @@ def train_replay_policy(
     )
     train_groups = sorted({action.group_id for action in train})
     validation_groups = sorted({action.group_id for action in validation})
+    evaluation_dict = evaluation_groups.to_dict()
+    data_fingerprint = content_fingerprint(actions)
+    filter_keys = (
+        "training_policy_version", "transfer_policy_versions", "require_action_confirmation",
+        "minimum_result_confidence", "local_feedback_weight", "transfer_sample_weight",
+    )
+    model_keys = (
+        "training_seed", "training_neighbors", "battlefield_visual_weight",
+        "validation_fraction", "temporal_validation_fraction", "freeze_evaluation_fraction",
+        "ranking_metric_version",
+    )
+    filter_config = {key: config.get(key) for key in filter_keys}
+    model_config = {key: config.get(key) for key in model_keys}
+    champion_exposure = champion_frozen_exposure(
+        ReplayPolicyRegistry(project_root).champion(), evaluation_groups.frozen
+    )
+    protocol_fingerprint = experiment_protocol_fingerprint(
+        data_fingerprint=data_fingerprint,
+        split=evaluation_dict,
+        filter_config=filter_config,
+        model_config=model_config,
+    )
     manifest = {
         "source": "verified_offline_ai_replay",
         "policy_actions_are_ground_truth": False,
@@ -1370,8 +1398,13 @@ def train_replay_policy(
         "validation_policy_version": audit.target_policy_version,
         "copied_battles_deduplicated": True,
         "evaluation_protocol_version": evaluation_groups.protocol_version,
-        "evaluation_groups": evaluation_groups.to_dict(),
-        "data_identity": evaluation_groups.to_dict().get("set_fingerprint"),
+        "evaluation_groups": evaluation_dict,
+        "data_identity": evaluation_dict.get("set_fingerprint"),
+        "data_content_fingerprint": data_fingerprint,
+        "filter_config": filter_config,
+        "model_config": model_config,
+        "experiment_protocol_fingerprint": protocol_fingerprint,
+        "champion_frozen_exposure": champion_exposure,
         "training_config_fingerprint": hashlib.sha256(
             json.dumps(
                 config,

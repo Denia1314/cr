@@ -7,11 +7,70 @@ copying raw screenshots or writing a local registry during evaluation.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
-from typing import Iterable
+import json
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any, Iterable, Mapping
 
 
 EVALUATION_PROTOCOL_VERSION = "frozen_group_v1"
+
+
+def content_fingerprint(rows: Iterable[Any]) -> str:
+    """Fingerprint normalized row content, independent of input ordering."""
+    normalized: list[str] = []
+    for row in rows:
+        if is_dataclass(row):
+            value = asdict(row)
+        elif isinstance(row, Mapping):
+            value = dict(row)
+        else:
+            raise TypeError("实验数据行必须是 dataclass 或 mapping")
+        normalized.append(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    payload = "\n".join(sorted(normalized))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def experiment_protocol_fingerprint(
+    *,
+    data_fingerprint: str,
+    split: Mapping[str, object],
+    filter_config: Mapping[str, object],
+    model_config: Mapping[str, object],
+) -> str:
+    payload = {
+        "protocol_version": EVALUATION_PROTOCOL_VERSION,
+        "data_fingerprint": str(data_fingerprint),
+        "split": dict(split),
+        "filter_config": dict(filter_config),
+        "model_config": dict(model_config),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def champion_frozen_exposure(
+    champion: Mapping[str, Any] | None,
+    frozen_groups: Iterable[str],
+) -> dict[str, object]:
+    """Report whether an existing champion previously saw frozen evaluation games."""
+    frozen = set(map(str, frozen_groups))
+    if not champion:
+        return {"status": "no_champion", "overlap_groups": [], "checked": True}
+    manifest = champion.get("manifest")
+    if not isinstance(manifest, Mapping):
+        return {"status": "unknown_legacy_manifest", "overlap_groups": [], "checked": False}
+    seen: set[str] = set()
+    for key in ("train_battles", "validation_battles", "temporal_validation_battles", "transfer_battles"):
+        values = manifest.get(key, [])
+        if isinstance(values, list):
+            seen.update(map(str, values))
+    overlap = sorted(frozen & seen)
+    return {
+        "status": "overlap" if overlap else "unseen",
+        "overlap_groups": overlap,
+        "checked": True,
+        "champion_version": champion.get("version"),
+    }
 
 
 def group_fingerprint(group_id: str) -> str:
