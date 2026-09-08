@@ -149,6 +149,11 @@ class ReplayLearningAudit:
     deduplicated_actions: int
     confirmation_status_counts: dict[str, int]
     excluded_action_counts: dict[str, int]
+    feedback_source_counts: dict[str, int]
+    feedback_stage_counts: dict[str, dict[str, int]]
+    valid_feedback_actions: int
+    valid_feedback_battles: int
+    feedback_validation: dict[str, dict[str, int | bool]]
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -460,10 +465,30 @@ def audit_replay_learning(
     outcomes: dict[str, str] = {}
     runs: set[str] = set()
     cards: set[str] = set()
+    feedback_sources: dict[str, int] = {}
+    feedback_stages: dict[str, dict[str, int]] = {}
+    feedback_battles: set[str] = set()
     for action in actions:
         outcomes[action.group_id] = action.outcome
         runs.add(action.group_id.split(":battle-", 1)[0])
         cards.add(action.card_id)
+        source = action.local_source or "missing_state"
+        feedback_sources[source] = feedback_sources.get(source, 0) + 1
+        phase = action.formation_phase.lower()
+        stage = (
+            "counterpush"
+            if "counterpush" in phase
+            else "defense"
+            if "defense" in phase or "defend" in phase or phase.startswith("counter_")
+            else "attack"
+        )
+        stage_counts = feedback_stages.setdefault(
+            stage, {"actions": 0, "valid_feedback": 0}
+        )
+        stage_counts["actions"] += 1
+        if action.local_confidence > 0:
+            stage_counts["valid_feedback"] += 1
+            feedback_battles.add(action.group_id)
     wins = sum(value == "win" for value in outcomes.values())
     losses = sum(value == "loss" for value in outcomes.values())
     minimum_episodes = int(config.get("minimum_verified_episodes", 50))
@@ -482,6 +507,42 @@ def audit_replay_learning(
         reasons.append(f"同版本可信动作 {len(actions)}/{minimum_actions} 条")
     if len(cards) < minimum_cards:
         reasons.append(f"同版本已用卡牌 {len(cards)}/{minimum_cards} 种")
+    seed = int(config.get("training_seed", config.get("seed", 20260903)))
+    frozen = reserve_frozen_groups(
+        {action.group_id for action in actions},
+        validation_fraction=0.0,
+        freeze_fraction=float(config.get("freeze_evaluation_fraction", 0.0)),
+        seed=seed,
+    )
+    trainable = [action for action in actions if action.group_id not in set(frozen.frozen)]
+    group_outcomes = {action.group_id: action.outcome for action in trainable}
+    if sum(value == "win" for value in group_outcomes.values()) >= 2 and sum(value == "loss" for value in group_outcomes.values()) >= 2:
+        try:
+            _, random_validation = _stratified_group_split(
+                trainable, float(config.get("validation_fraction", 0.25)), seed
+            )
+        except ValueError:
+            random_validation = []
+        try:
+            _, temporal_validation = _temporal_group_split(
+                trainable, float(config.get("temporal_validation_fraction", 0.25))
+            )
+        except ValueError:
+            temporal_validation = []
+    else:
+        random_validation, temporal_validation = [], []
+
+    def feedback_coverage(rows: list[ReplayLearningAction]) -> dict[str, int | bool]:
+        valid = [action for action in rows if action.local_confidence > 0]
+        return {
+            "available": bool(rows),
+            "validation_actions": len(rows),
+            "validation_battles": len({action.group_id for action in rows}),
+            "actions": len(valid),
+            "battles": len({action.group_id for action in valid}),
+            "required_actions": int(config.get("minimum_local_validation_actions", 50)),
+            "required_battles": int(config.get("minimum_local_validation_battles", 12)),
+        }
     return ReplayLearningAudit(
         runs=len(runs),
         verified_episodes=len(outcomes),
@@ -497,6 +558,14 @@ def audit_replay_learning(
         deduplicated_actions=len(actions),
         confirmation_status_counts=confirmation_status_counts,
         excluded_action_counts=excluded_action_counts,
+        feedback_source_counts=feedback_sources,
+        feedback_stage_counts=feedback_stages,
+        valid_feedback_actions=sum(action.local_confidence > 0 for action in actions),
+        valid_feedback_battles=len(feedback_battles),
+        feedback_validation={
+            "random": feedback_coverage(random_validation),
+            "temporal": feedback_coverage(temporal_validation),
+        },
     )
 
 

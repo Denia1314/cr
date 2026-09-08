@@ -192,6 +192,15 @@ M2 不会把旧回放改写成新版本数据。新的确认动作应在新版�
 python -m crbot --config config.json replay audit
 ```
 
+确认质量必须独立复核完整尝试，而不是只抽取 `confirmed`。下面的命令会按确认状态交错、确定性抽取 200 次尝试到忽略的本地报告目录；填写每行的 `review_actual_success`（`true`、`false` 或 `unknown`）后再计算精确率、成功动作召回率、未知占比和按整局重采样的 95% 区间：
+
+```powershell
+python -m crbot --config config.json replay review-export --review-limit 200
+python -m crbot --config config.json replay review-audit
+```
+
+`replay audit` 的 `learning_audit` 同时按训练实际使用的反馈函数汇总 `feedback_source_counts`、防守/进攻/反打覆盖，以及有效反馈动作和对局数。这样缺失反馈不会被强行解释为成功。
+
 对尚未生成回放的旧对局做一次安全回填：
 
 ```text

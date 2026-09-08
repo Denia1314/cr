@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import __version__
 from .adb import DeviceError, MumuDevice
+from .action_review import audit_action_review, export_action_review
 from .annotate import run_annotation
 from .calibrate import run_calibration
 from .card_sync import bootstrap_community_catalog, sync_card_catalog
@@ -70,7 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
     imitate = subcommands.add_parser("imitate", help="审计或训练手动示范模仿策略")
     imitate.add_argument("action", choices=("audit", "train"))
     replay = subcommands.add_parser("replay", help="审计、回填或影子训练自动战斗经验")
-    replay.add_argument("action", choices=("audit", "backfill", "evaluate", "train"))
+    replay.add_argument(
+        "action",
+        choices=("audit", "backfill", "evaluate", "review-export", "review-audit", "train"),
+    )
+    replay.add_argument("--review-file", help="动作确认人工复核 JSONL 文件")
+    replay.add_argument("--review-limit", type=int, default=200, help="复核导出的完整尝试数")
     sync = subcommands.add_parser("sync", help="双机回放数据共享")
     sync.add_argument("action", choices=("setup", "now", "status"), nargs="?", default="now")
     sync.add_argument("--repository", default=DEFAULT_REPOSITORY)
@@ -220,6 +226,27 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "replay":
             replay_config = dict(config.get("replay", {}))
             result: dict[str, object] = {}
+            review_file = (
+                Path(arguments.review_file).expanduser().resolve()
+                if arguments.review_file
+                else config_path.parent / "reports" / "action_confirmation_review.jsonl"
+            )
+            if arguments.action == "review-export":
+                result["review_export"] = export_action_review(
+                    config_path.parent,
+                    review_file,
+                    limit=arguments.review_limit,
+                    seed=int(replay_config.get("training_seed", 20260908)),
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if arguments.action == "review-audit":
+                result["review_audit"] = audit_action_review(
+                    review_file,
+                    seed=int(replay_config.get("training_seed", 20260908)),
+                )
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             if arguments.action == "backfill":
                 result["backfill"] = backfill_replay_history(
                     config_path.parent,

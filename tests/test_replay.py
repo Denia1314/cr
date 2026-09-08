@@ -318,6 +318,10 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             result = train_replay_policy(root, catalog, config)
 
             self.assertTrue(audit.ready)
+            self.assertIsInstance(audit.feedback_source_counts, dict)
+            self.assertIsInstance(audit.feedback_stage_counts, dict)
+            self.assertGreaterEqual(audit.valid_feedback_actions, 0)
+            self.assertGreaterEqual(audit.valid_feedback_battles, 0)
             self.assertTrue(result["candidate"]["quality_passed"])
             self.assertEqual(result["candidate"]["status"], "shadow_pass")
             self.assertFalse(result["candidate"]["promoted"])
