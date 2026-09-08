@@ -22,6 +22,8 @@ from crbot.replay_learning import (
     _transfer_actions,
     _training_arrays,
     _balanced_knn_predict,
+    _battle_cluster_intervals,
+    _validation_segments,
     collect_replay_learning_actions,
     audit_replay_learning,
     train_replay_policy,
@@ -535,6 +537,35 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             self.assertTrue(
                 any("时间外推" in reason for reason in candidate["rejection_reasons"])
             )
+
+    def test_uncertainty_resamples_whole_battles_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            actions = collect_replay_learning_actions(root, catalog, self._config(False))
+            predictions = np.asarray([0.8 if action.outcome == "win" else 0.2 for action in actions])
+
+            first = _battle_cluster_intervals(actions, predictions, 0.5, seed=9, samples=100)
+            second = _battle_cluster_intervals(actions, predictions, 0.5, seed=9, samples=100)
+
+            self.assertEqual(first, second)
+            self.assertEqual(first["balanced_accuracy"], [1.0, 1.0])
+
+    def test_validation_segments_report_battle_and_action_denominators(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            actions = collect_replay_learning_actions(root, catalog, self._config(False))
+
+            segments = _validation_segments(actions)
+
+            self.assertIn("formation_phase", segments)
+            self.assertIn("hand", segments)
+            self.assertEqual(
+                sum(bucket["actions"] for bucket in segments["hand"].values()),
+                len(actions),
+            )
+            self.assertTrue(all(bucket["battles"] > 0 for bucket in segments["hand"].values()))
 
 
 if __name__ == "__main__":

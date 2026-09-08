@@ -875,6 +875,61 @@ def _auc(targets: np.ndarray, predictions: np.ndarray) -> float:
     )
 
 
+def _battle_cluster_intervals(
+    validation: list[ReplayLearningAction], predictions: np.ndarray, prior: float,
+    *, seed: int = 20260903, samples: int = 500,
+) -> dict[str, list[float]]:
+    """Bootstrap uncertainty by whole battle, not by action row."""
+    grouped: dict[str, list[int]] = {}
+    for index, action in enumerate(validation):
+        grouped.setdefault(action.group_id, []).append(index)
+    wins = [indices for indices in grouped.values() if validation[indices[0]].outcome == "win"]
+    losses = [indices for indices in grouped.values() if validation[indices[0]].outcome == "loss"]
+    if not wins or not losses:
+        return {}
+    rng = np.random.default_rng(seed)
+    values = {"balanced_accuracy": [], "auc": [], "brier_improvement": []}
+    for _ in range(max(100, int(samples))):
+        sampled = [wins[index] for index in rng.integers(0, len(wins), len(wins))]
+        sampled += [losses[index] for index in rng.integers(0, len(losses), len(losses))]
+        group_predictions = np.asarray([float(np.mean(predictions[indices])) for indices in sampled])
+        targets = np.asarray([1.0] * len(wins) + [0.0] * len(losses))
+        guesses = group_predictions >= 0.5
+        balanced = (float(np.mean(guesses[: len(wins)])) + float(np.mean(~guesses[len(wins) :]))) / 2.0
+        numerator = group_predictions * prior
+        denominator = numerator + (1.0 - group_predictions) * (1.0 - prior)
+        calibrated = np.divide(numerator, denominator, out=np.full_like(group_predictions, prior), where=denominator > 1e-8)
+        brier = float(np.mean((calibrated - targets) ** 2))
+        baseline = float(np.mean((prior - targets) ** 2))
+        values["balanced_accuracy"].append(balanced)
+        values["auc"].append(_auc(targets, group_predictions))
+        values["brier_improvement"].append(baseline - brier)
+    return {
+        key: [round(float(np.quantile(metric, 0.025)), 6), round(float(np.quantile(metric, 0.975)), 6)]
+        for key, metric in values.items()
+    }
+
+
+def _validation_segments(actions: list[ReplayLearningAction]) -> dict[str, dict[str, dict[str, int]]]:
+    """Expose battle-level denominators by tactical phase and recognized hand."""
+    result: dict[str, dict[str, dict[str, int]]] = {"formation_phase": {}, "hand": {}}
+    dimensions = {
+        "formation_phase": lambda action: action.formation_phase or "unknown",
+        "hand": lambda action: ",".join(sorted({card for card in action.hand if card})) or "unknown",
+    }
+    for dimension, key_for in dimensions.items():
+        values = {key_for(action) for action in actions}
+        for value in sorted(values):
+            relevant = [action for action in actions if key_for(action) == value]
+            groups = {action.group_id: action.outcome for action in relevant}
+            result[dimension][value] = {
+                "actions": len(relevant), "battles": len(groups),
+                "wins": sum(outcome == "win" for outcome in groups.values()),
+                "losses": sum(outcome == "loss" for outcome in groups.values()),
+            }
+    return result
+
+
 def _evaluate_candidate(
     train: list[ReplayLearningAction],
     validation: list[ReplayLearningAction],
@@ -923,6 +978,7 @@ def _evaluate_candidate(
     )
     brier = float(np.mean((calibrated - targets) ** 2))
     baseline_brier = float(np.mean((prior - targets) ** 2))
+    battle_intervals = _battle_cluster_intervals(validation, predictions, prior)
 
     win_top_two: list[float] = []
     loss_bottom_two: list[float] = []
@@ -1009,6 +1065,8 @@ def _evaluate_candidate(
         "validation_episodes": float(len(groups)),
         "validation_wins": float(win_groups),
         "validation_losses": float(loss_groups),
+        "battle_cluster_confidence_intervals_95": battle_intervals,
+        "validation_segments": _validation_segments(validation),
         "balanced_accuracy": round(balanced_accuracy, 6),
         "auc": round(_auc(targets, predictions), 6),
         "brier_score": round(brier, 6),
@@ -1405,6 +1463,9 @@ def train_replay_policy(
         "model_config": model_config,
         "experiment_protocol_fingerprint": protocol_fingerprint,
         "champion_frozen_exposure": champion_exposure,
+        "recompute_command": "python -m crbot --config config.json replay train",
+        "uncertainty_method": "deterministic_stratified_whole_battle_bootstrap_500",
+        "segment_dimensions": ["formation_phase", "recognized_hand"],
         "training_config_fingerprint": hashlib.sha256(
             json.dumps(
                 config,
