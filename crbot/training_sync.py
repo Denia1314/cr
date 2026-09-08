@@ -369,9 +369,12 @@ class ReplaySync:
     def publish_model(self) -> int:
         if not self.config.get("trainer"):
             return 0
+        sync_config = read_json(self.root / "config.json", {}).get("training_sync", {})
+        publish_unvalidated = bool(sync_config.get("publish_unvalidated_models", False))
         registry = read_json(self.root / "models/replay_policy/registry.json", {})
         candidates = [item for item in registry.get("candidates", [])
-                      if item.get("quality_passed") is True and item.get("status") in {"champion", "shadow_pass"}]
+                      if item.get("status") in {"champion", "shadow_pass", "rejected"}
+                      and (publish_unvalidated or item.get("quality_passed") is True)]
         if not candidates:
             return 0
         compatibility = self.compatibility()
@@ -379,7 +382,12 @@ class ReplaySync:
         if not candidates:
             return 0
         champion = registry.get("champion")
-        candidate = champion if champion in candidates else max(candidates, key=lambda item: float(item.get("created_at_unix", 0)))
+        candidate = (
+            max(candidates, key=lambda item: float(item.get("created_at_unix", 0)))
+            if publish_unvalidated
+            else champion if champion in candidates
+            else max(candidates, key=lambda item: float(item.get("created_at_unix", 0)))
+        )
         # Compatibility was stamped when training, not inferred for an old model.
         model_root = self.root / "models/replay_policy"
         source = (model_root / str(candidate["model_path"])).resolve()
@@ -408,8 +416,14 @@ class ReplaySync:
             return 0
         digest = str(pointer.get("sha256", ""))
         candidate = dict(pointer.get("candidate", {}))
-        if not re.fullmatch(r"[0-9a-f]{64}", digest) or candidate.get("quality_passed") is not True or candidate.get("status") not in {"champion", "shadow_pass"} or candidate.get("sync_compatibility") != pointer["compatibility"]:
-            raise SyncError("远端模型未通过验证")
+        sync_config = read_json(self.root / "config.json", {}).get("training_sync", {})
+        receive_unvalidated = bool(sync_config.get("publish_unvalidated_models", False))
+        if (not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or candidate.get("status") not in {"champion", "shadow_pass", "rejected"}
+                or candidate.get("sync_compatibility") != pointer["compatibility"]):
+            raise SyncError("远端模型发布信息无效")
+        if candidate.get("quality_passed") is not True and not receive_unvalidated:
+            raise SyncError("远端模型未通过验证，且本机未允许接收未验证模型")
         source = self.checkout / "models" / (digest + ".npz")
         if source.is_symlink() or source.stat().st_size > MAX_MODEL_BYTES:
             raise SyncError("远端模型大小或类型无效")

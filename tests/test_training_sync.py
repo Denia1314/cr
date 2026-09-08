@@ -174,6 +174,18 @@ class ReplaySyncTests(unittest.TestCase):
         self.assertIsNone(registry["champion"])
         self.assertEqual(len(registry["candidates"]), 1)
 
+    def test_config_can_publish_and_receive_latest_rejected_model(self):
+        for service in (self.a, self.b):
+            config = read_json(service.root / "config.json")
+            config["training_sync"] = {"publish_unvalidated_models": True}
+            atomic_write(service.root / "config.json", encode(config))
+        self.make_model(passed=False)
+        self.assertEqual(self.a.sync()["published_models"], 1)
+        self.assertEqual(self.b.sync()["received_models"], 1)
+        registry = read_json(self.b.root / "models/replay_policy/registry.json")
+        self.assertEqual(registry["candidates"][0]["status"], "rejected")
+        self.assertIsNone(registry["champion"])
+
     def test_model_compatibility_and_checksum_failure_preserve_existing(self):
         atomic_write(self.a.root / "crbot/replay.py", b"first\nsecond\n")
         atomic_write(self.b.root / "crbot/replay.py", b"first\r\nsecond\r\n")
