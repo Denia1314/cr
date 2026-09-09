@@ -76,6 +76,7 @@
     "training_policy_version": "adaptive_counterpush_v5_m3_c3",
     "transfer_policy_versions": ["adaptive_counterpush_v5_m3_c2", "adaptive_counterpush_v5_m3_c1", "adaptive_counterpush_v5_m2_1", "adaptive_counterpush_v5_m2", "adaptive_counterpush_v5", "formation_counterpush_v4"],
     "transfer_sample_weight": 0.25,
+    "adaptive_transfer_selection_enabled": true,
     "local_feedback_weight": 0.15,
     "minimum_local_validation_actions": 50,
     "minimum_local_validation_battles": 12,

@@ -451,6 +451,15 @@ class ReplayPolicyLearningTests(unittest.TestCase):
                 self.assertAlmostEqual(float(data["value_sample_weights"][-1]), 0.125)
             self.assertFalse(result["candidate"]["quality_passed"])
             self.assertIn("旧版本经验未改善当前版本整局验证", result["candidate"]["rejection_reasons"])
+            adaptive = train_replay_policy(root, catalog, {
+                **config, "adaptive_transfer_selection_enabled": True,
+            })
+            self.assertEqual(adaptive["candidate"]["manifest"]["transfer_actions"], 0)
+            self.assertEqual(
+                adaptive["candidate"]["manifest"]["transfer_selection_reason"],
+                "current_only_due_to_validation_regression",
+            )
+            self.assertEqual(adaptive["candidate"]["metrics"]["evaluated_transfer_score_gain"], 0.0)
             # Synthetic identical policies have zero gain; explicitly allow it
             # here to exercise weighted runtime serialization, not production gates.
             promoted = train_replay_policy(root, catalog, {

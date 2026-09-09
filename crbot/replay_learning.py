@@ -1363,19 +1363,23 @@ def train_replay_policy(
     metrics = _evaluate_candidate(
         train, validation, catalog, neighbors, visual_weight, transfer, transfer_weight, local_weight
     )
+    current_only_metrics = _evaluate_candidate(
+        train, validation, catalog, neighbors, visual_weight, local_weight=local_weight
+    )
     local_baseline_metrics: dict[str, float] = {}
     if local_weight:
         local_baseline_metrics = _evaluate_candidate(train, validation, catalog, neighbors, visual_weight, transfer, transfer_weight)
         metrics["local_score_gain"] = round(_evaluation_score(metrics) - _evaluation_score(local_baseline_metrics), 6)
     baseline_metrics: dict[str, float] = {}
     if transfer:
-        baseline_metrics = _evaluate_candidate(train, validation, catalog, neighbors, visual_weight)
+        baseline_metrics = dict(current_only_metrics)
         metrics["transfer_score_gain"] = round(
             _evaluation_score(metrics) - _evaluation_score(baseline_metrics), 6
         )
     temporal_train: list[ReplayLearningAction] = []
     temporal_validation: list[ReplayLearningAction] = []
     temporal_transfer: list[ReplayLearningAction] = []
+    temporal_current_metrics: dict[str, Any] = {}
     if bool(config.get("require_temporal_validation", False)):
         temporal_train, temporal_validation = _temporal_group_split(
             trainable_actions, float(config.get("temporal_validation_fraction", 0.25))
@@ -1400,19 +1404,61 @@ def train_replay_policy(
         )
         if transfer:
             temporal_baseline = _evaluate_candidate(
-                temporal_train, temporal_validation, catalog, neighbors, visual_weight
+                temporal_train, temporal_validation, catalog, neighbors, visual_weight,
+                local_weight=local_weight,
             )
+            temporal_current_metrics = temporal_baseline
             baseline_metrics.update({f"temporal_{key}": value for key, value in temporal_baseline.items()})
             metrics["temporal_transfer_score_gain"] = round(
                 _evaluation_score(temporal_metrics) - _evaluation_score(temporal_baseline), 6
             )
 
+    selected_transfer = transfer
+    selected_temporal_transfer = temporal_transfer
+    transfer_selection_reason = "configured_transfer"
+    if transfer and bool(config.get("adaptive_transfer_selection_enabled", False)):
+        required_gain = float(config.get("minimum_transfer_score_gain", 0.01))
+        random_gain = float(metrics.get("transfer_score_gain", -math.inf))
+        temporal_gain = float(metrics.get("temporal_transfer_score_gain", 0.0))
+        if random_gain < required_gain or (
+            bool(config.get("require_temporal_validation", False)) and temporal_gain < 0.0
+        ):
+            evaluated_transfer_metrics = dict(metrics)
+            metrics = dict(current_only_metrics)
+            if temporal_current_metrics:
+                metrics.update({f"temporal_{key}": value for key, value in temporal_current_metrics.items()})
+            if local_weight:
+                current_local_baseline = _evaluate_candidate(
+                    train, validation, catalog, neighbors, visual_weight
+                )
+                local_baseline_metrics = dict(current_local_baseline)
+                metrics["local_score_gain"] = round(
+                    _evaluation_score(metrics) - _evaluation_score(current_local_baseline), 6
+                )
+                if temporal_current_metrics:
+                    temporal_local_baseline = _evaluate_candidate(
+                        temporal_train, temporal_validation, catalog, neighbors, visual_weight
+                    )
+                    local_baseline_metrics.update(
+                        {f"temporal_{key}": value for key, value in temporal_local_baseline.items()}
+                    )
+                    metrics["temporal_local_score_gain"] = round(
+                        _evaluation_score(temporal_current_metrics)
+                        - _evaluation_score(temporal_local_baseline), 6
+                    )
+            metrics["evaluated_transfer_score_gain"] = random_gain
+            metrics["evaluated_temporal_transfer_score_gain"] = temporal_gain
+            baseline_metrics = evaluated_transfer_metrics
+            selected_transfer = []
+            selected_temporal_transfer = []
+            transfer_selection_reason = "current_only_due_to_validation_regression"
+
     value_x, value_y, value_sample_weights = _training_arrays(
-        trainable_actions, transfer, catalog, visual_weight, transfer_weight,
+        trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight,
     )
     positive_weight, negative_weight = _class_weights(value_y, value_sample_weights)
     winning_actions = _deployment_examples(trainable_actions, local_weight)
-    local_x, local_y, local_sample_weights = _local_arrays(trainable_actions, transfer, catalog, visual_weight, transfer_weight)
+    local_x, local_y, local_sample_weights = _local_arrays(trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight)
     deploy_x = np.asarray(
         [
             _feature(action, catalog.by_id[action.card_id], visual_weight)
@@ -1485,13 +1531,15 @@ def train_replay_policy(
         "local_feedback_negative_actions": sum(a.local_confidence > 0 and a.local_effect < 0 for a in trainable_actions),
         "local_feedback_attack_actions": sum(a.local_source == "allied_advance_proxy" for a in trainable_actions),
         "without_local_feedback_baseline_metrics": local_baseline_metrics,
-        "transfer_actions": len(transfer),
-        "transfer_battles": sorted({a.group_id for a in transfer}),
-        "transfer_policy_versions": sorted({a.policy_version for a in transfer}),
+        "transfer_actions": len(selected_transfer),
+        "transfer_battles": sorted({a.group_id for a in selected_transfer}),
+        "transfer_policy_versions": sorted({a.policy_version for a in selected_transfer}),
+        "evaluated_transfer_actions": len(transfer),
+        "transfer_selection_reason": transfer_selection_reason,
         "transfer_sample_weight": transfer_weight,
         "transfer_weight_mass_cap": 0.5,
-        "temporal_transfer_actions": len(temporal_transfer),
-        "temporal_transfer_battles": sorted({a.group_id for a in temporal_transfer}),
+        "temporal_transfer_actions": len(selected_temporal_transfer),
+        "temporal_transfer_battles": sorted({a.group_id for a in selected_temporal_transfer}),
         "current_only_baseline_metrics": baseline_metrics,
         "validation_policy_version": audit.target_policy_version,
         "copied_battles_deduplicated": True,
