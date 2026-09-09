@@ -341,9 +341,20 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             model = ReplayPolicyModel(root)
 
             self.assertTrue(result["candidate"]["promoted"])
+            self.assertEqual(
+                result["metrics"]["outcome_metric_unit"],
+                "whole_battle_mean_prediction",
+            )
+            self.assertEqual(
+                result["candidate"]["manifest"]["training_weight_unit"],
+                "one_total_weight_per_current_battle",
+            )
             self.assertTrue(model.available)
             self.assertEqual(model.tactical_feature_count, TACTICAL_FEATURE_COUNT)
-            np.testing.assert_array_equal(model.value_sample_weights, np.ones(len(model.value_y)))
+            np.testing.assert_array_equal(
+                model.value_sample_weights,
+                np.full(len(model.value_y), 0.5, dtype=np.float32),
+            )
             quiet = LaneThreat("left", 0.0, 0, 0.0, "none", ())
             threats = {"left": quiet, "right": LaneThreat("right", 0.0, 0, 0.0, "none", ())}
             tank = catalog.get("tank")
@@ -437,7 +448,7 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             with np.load(root / "models/replay_policy" / result["candidate"]["model_path"]) as data:
                 self.assertEqual(len(data["value_y"]), 32)
                 self.assertEqual(len(data["deploy_y"]), 8)
-                self.assertAlmostEqual(float(data["value_sample_weights"][-1]), 0.25)
+                self.assertAlmostEqual(float(data["value_sample_weights"][-1]), 0.125)
             self.assertFalse(result["candidate"]["quality_passed"])
             self.assertIn("旧版本经验未改善当前版本整局验证", result["candidate"]["rejection_reasons"])
             # Synthetic identical policies have zero gain; explicitly allow it
@@ -448,7 +459,7 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             model = ReplayPolicyModel(root)
             self.assertTrue(promoted["candidate"]["promoted"])
             self.assertTrue(model.available)
-            self.assertAlmostEqual(float(model.value_sample_weights[-1]), 0.25)
+            self.assertAlmostEqual(float(model.value_sample_weights[-1]), 0.125)
             row = collect_replay_learning_actions(root, catalog, config)[0]
             card = catalog.by_id[row.card_id]
             self.assertAlmostEqual(model.card_score(card, row.elixir, row.threats()), 1.0)
@@ -503,6 +514,23 @@ class ReplayPolicyLearningTests(unittest.TestCase):
                 np.zeros((2, 1)), np.asarray([1., 0.]), np.zeros(1), 2, 1., 1., np.asarray([1., 0.25])
             )
             self.assertAlmostEqual(prediction, 0.8)
+
+    def test_current_training_weight_sums_to_one_per_battle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            actions = collect_replay_learning_actions(root, catalog, self._config(False))
+            rows = [
+                replace(actions[0], group_id="short"),
+                replace(actions[1], group_id="long"),
+                replace(actions[2], group_id="long"),
+                replace(actions[3], group_id="long"),
+            ]
+
+            _, _, weights = _training_arrays(rows, [], catalog, 0.0, 0.25)
+
+            self.assertAlmostEqual(float(weights[0]), 1.0)
+            self.assertAlmostEqual(float(weights[1:].sum()), 1.0)
 
     def test_temporal_regression_blocks_an_otherwise_valid_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -410,13 +410,28 @@ def _training_arrays(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if not math.isfinite(transfer_weight) or not 0 < transfer_weight <= 1:
         raise ValueError("transfer_sample_weight 必须在 (0, 1] 内")
-    # Total old-generation weight never exceeds half of current-generation data.
-    weight = min(transfer_weight, 0.5 * len(train) / max(1, len(transfer)))
+    train_counts: dict[str, int] = {}
+    transfer_counts: dict[str, int] = {}
+    for action in train:
+        train_counts[action.group_id] = train_counts.get(action.group_id, 0) + 1
+    for action in transfer:
+        transfer_counts[action.group_id] = transfer_counts.get(action.group_id, 0) + 1
+    # Every current battle contributes total mass 1 regardless of action count.
+    # Transfer battles receive a smaller fixed mass and remain capped at half
+    # the total current-generation battle mass.
+    transfer_battle_weight = min(
+        transfer_weight,
+        0.5 * len(train_counts) / max(1, len(transfer_counts)),
+    )
     rows = train + transfer
     x = np.asarray([_feature(a, catalog.by_id[a.card_id], visual_weight)
                     for a in rows], dtype=np.float32)
     y = np.asarray([a.target for a in rows], dtype=np.float32)
-    weights = np.asarray([1.0] * len(train) + [weight] * len(transfer), dtype=np.float32)
+    weights = np.asarray(
+        [1.0 / train_counts[action.group_id] for action in train]
+        + [transfer_battle_weight / transfer_counts[action.group_id] for action in transfer],
+        dtype=np.float32,
+    )
     return x, y, weights
 
 
@@ -964,14 +979,24 @@ def _evaluate_candidate(
                                       positive_weight, negative_weight, sample_weights)
         effect = _local_predict(local_arrays, feature, neighbors) if local_weight else 0.0
         return float(np.clip(value + local_weight * effect, 0.0, 1.0))
-    predictions = np.asarray(
+    action_predictions = np.asarray(
         [
             predict(catalog.by_id[action.card_id], action)
             for action in validation
         ],
         dtype=np.float32,
     )
-    targets = np.asarray([action.target for action in validation], dtype=np.float32)
+    grouped_indices: dict[str, list[int]] = {}
+    for index, action in enumerate(validation):
+        grouped_indices.setdefault(action.group_id, []).append(index)
+    predictions = np.asarray(
+        [float(np.mean(action_predictions[indices])) for indices in grouped_indices.values()],
+        dtype=np.float32,
+    )
+    targets = np.asarray(
+        [validation[indices[0]].target for indices in grouped_indices.values()],
+        dtype=np.float32,
+    )
     positive_mask = targets >= 0.5
     negative_mask = ~positive_mask
     guesses = predictions >= 0.5
@@ -991,7 +1016,7 @@ def _evaluate_candidate(
     )
     brier = float(np.mean((calibrated - targets) ** 2))
     baseline_brier = float(np.mean((prior - targets) ** 2))
-    battle_intervals = _battle_cluster_intervals(validation, predictions, prior)
+    battle_intervals = _battle_cluster_intervals(validation, action_predictions, prior)
 
     win_top_two: list[float] = []
     loss_bottom_two: list[float] = []
@@ -1078,6 +1103,7 @@ def _evaluate_candidate(
         "validation_episodes": float(len(groups)),
         "validation_wins": float(win_groups),
         "validation_losses": float(loss_groups),
+        "outcome_metric_unit": "whole_battle_mean_prediction",
         "battle_cluster_confidence_intervals_95": battle_intervals,
         "validation_segments": _validation_segments(validation),
         "balanced_accuracy": round(balanced_accuracy, 6),
@@ -1479,6 +1505,7 @@ def train_replay_policy(
         "champion_frozen_exposure": champion_exposure,
         "recompute_command": "python -m crbot --config config.json replay train",
         "uncertainty_method": "deterministic_stratified_whole_battle_bootstrap_500",
+        "training_weight_unit": "one_total_weight_per_current_battle",
         "segment_dimensions": ["formation_phase", "recognized_hand"],
         "training_config_fingerprint": hashlib.sha256(
             json.dumps(
