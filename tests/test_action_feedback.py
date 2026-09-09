@@ -13,7 +13,6 @@ from crbot.action_feedback import action_feedback
 from crbot.replay import ExperienceReplayRecorder
 from crbot.replay_learning import (
     CONTEXT_FEATURE_COUNT,
-    VALUE_PROBABILITY_SHRINKAGE,
     _deployment_examples, _feature, _local_arrays, _local_predict,
     collect_replay_learning_actions, ReplayPolicyRegistry, ReplayPolicyModel, train_replay_policy,
 )
@@ -159,10 +158,7 @@ class ActionFeedbackTests(unittest.TestCase):
                           local_sample_weights=np.asarray([1.0]), local_feedback_weight=np.asarray([0.15]))
             np.savez_compressed(path, **values)
             weighted = ReplayPolicyModel(root)
-            self.assertAlmostEqual(
-                weighted.card_score(catalog.by_id[row.card_id], row.elixir, row.threats()),
-                0.5 + (0.06 - 0.5) * (1.0 - VALUE_PROBABILITY_SHRINKAGE),
-            )
+            self.assertAlmostEqual(weighted.card_score(catalog.by_id[row.card_id], row.elixir, row.threats()), 0.06)
             candidate = ReplayPolicyRegistry(root).register(path, result["metrics"], helper._config(True), {"local_feedback_weight": 0.15})
             self.assertFalse(candidate["promoted"])
             self.assertTrue(any("短期效果" in reason for reason in candidate["rejection_reasons"]))

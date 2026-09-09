@@ -15,7 +15,6 @@ from crbot.replay import ExperienceReplayRecorder, audit_replay
 from crbot.replay_learning import (
     CONTEXT_FEATURE_COUNT,
     TACTICAL_FEATURE_COUNT,
-    VALUE_PROBABILITY_SHRINKAGE,
     ReplayPolicyRegistry,
     ReplayPolicyModel,
     _tactical_features,
@@ -493,10 +492,7 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             self.assertAlmostEqual(float(model.value_sample_weights[-1]), 0.125)
             row = collect_replay_learning_actions(root, catalog, config)[0]
             card = catalog.by_id[row.card_id]
-            self.assertAlmostEqual(
-                model.card_score(card, row.elixir, row.threats()),
-                1.0 - VALUE_PROBABILITY_SHRINKAGE / 2.0,
-            )
+            self.assertAlmostEqual(model.card_score(card, row.elixir, row.threats()), 1.0)
 
     def test_adaptive_local_feedback_excludes_regressing_signal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -532,29 +528,6 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             model = ReplayPolicyModel(root)
             self.assertTrue(model.available)
             np.testing.assert_array_equal(model.value_sample_weights, np.ones(len(model.value_y)))
-
-    def test_existing_uncalibrated_champion_keeps_legacy_scores(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            catalog = self._dataset(root)
-            train_replay_policy(root, catalog, self._config(True))
-            path = ReplayPolicyRegistry(root).champion_path()
-            assert path is not None
-            with np.load(path) as data:
-                legacy = {
-                    key: data[key].copy()
-                    for key in data.files
-                    if key != "value_probability_shrinkage"
-                }
-            np.savez_compressed(path, **legacy)
-            model = ReplayPolicyModel(root)
-            row = collect_replay_learning_actions(root, catalog, self._config(False))[0]
-
-            self.assertEqual(model.value_probability_shrinkage, 0.0)
-            self.assertAlmostEqual(
-                model.card_score(catalog.by_id[row.card_id], row.elixir, row.threats()),
-                1.0,
-            )
 
     def test_incompatible_champion_is_not_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
