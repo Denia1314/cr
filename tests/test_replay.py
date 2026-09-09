@@ -512,6 +512,7 @@ class ReplayPolicyLearningTests(unittest.TestCase):
                 **self._config(False),
                 "local_feedback_weight": 0.15,
                 "adaptive_local_feedback_selection_enabled": True,
+                "adaptive_joint_signal_selection_enabled": True,
             })
 
             manifest = result["candidate"]["manifest"]
@@ -519,11 +520,17 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             self.assertEqual(manifest["configured_local_feedback_weight"], 0.15)
             self.assertEqual(
                 manifest["local_feedback_selection_reason"],
-                "outcome_only_due_to_validation_regression",
+                "joint_selection:current_outcome",
             )
-            self.assertIn("evaluated_local_score_gain", result["metrics"])
             self.assertTrue(
                 manifest["value_probability_calibration"]["available"]
+            )
+            self.assertTrue(manifest["joint_signal_selection"]["enabled"])
+            self.assertEqual(
+                manifest["joint_signal_selection"]["selected"], "current_outcome"
+            )
+            self.assertFalse(
+                manifest["joint_signal_selection"]["combinations"]["current_local"]["eligible"]
             )
             with np.load(root / "models/replay_policy" / result["candidate"]["model_path"]) as data:
                 self.assertEqual(float(data["local_feedback_weight"][0]), 0.0)

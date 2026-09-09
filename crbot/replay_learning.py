@@ -1614,6 +1614,125 @@ def train_replay_policy(
             selected_local_weight = 0.0
             local_selection_reason = "outcome_only_due_to_validation_regression"
 
+    joint_selection: dict[str, Any] = {"enabled": False}
+    if bool(config.get("adaptive_joint_signal_selection_enabled", False)):
+        transfer_choices = [("current", [], [])]
+        if transfer:
+            transfer_choices.append(("transfer", transfer, temporal_transfer))
+        local_choices = [("outcome", 0.0)]
+        if local_weight:
+            local_choices.append(("local", local_weight))
+        combinations: dict[str, dict[str, Any]] = {}
+        for transfer_name, random_transfer, time_transfer in transfer_choices:
+            for local_name, candidate_local_weight in local_choices:
+                name = f"{transfer_name}_{local_name}"
+                candidate_metrics = _evaluate_candidate(
+                    train, validation, catalog, neighbors, visual_weight,
+                    random_transfer, transfer_weight, candidate_local_weight,
+                )
+                if temporal_validation:
+                    candidate_temporal = _evaluate_candidate(
+                        temporal_train, temporal_validation, catalog, neighbors,
+                        visual_weight, time_transfer, transfer_weight,
+                        candidate_local_weight,
+                    )
+                    candidate_metrics.update(
+                        {f"temporal_{key}": value for key, value in candidate_temporal.items()}
+                    )
+                combinations[name] = {
+                    "metrics": candidate_metrics,
+                    "transfer": random_transfer,
+                    "temporal_transfer": time_transfer,
+                    "local_weight": candidate_local_weight,
+                }
+
+        def metric_gain(name: str, baseline: str, prefix: str = "") -> float:
+            return round(
+                _evaluation_score(combinations[name]["metrics"], prefix)
+                - _evaluation_score(combinations[baseline]["metrics"], prefix), 6
+            )
+
+        def passed_core_gates(candidate_metrics: dict[str, Any]) -> int:
+            checks = (
+                ("balanced_accuracy", "minimum_balanced_accuracy", 0.55),
+                ("auc", "minimum_auc", 0.58),
+                ("brier_improvement", "minimum_brier_improvement", 0.005),
+                ("rank_separation_lift", "minimum_rank_separation_lift", 0.02),
+                ("temporal_balanced_accuracy", "minimum_temporal_balanced_accuracy", 0.55),
+                ("temporal_auc", "minimum_temporal_auc", 0.58),
+                ("temporal_brier_improvement", "minimum_temporal_brier_improvement", 0.0),
+                ("temporal_rank_separation_lift", "minimum_temporal_rank_separation_lift", 0.02),
+            )
+            return sum(
+                float(candidate_metrics.get(metric, -math.inf))
+                >= float(config.get(setting, default))
+                for metric, setting, default in checks
+                if not metric.startswith("temporal_")
+                or bool(config.get("require_temporal_validation", False))
+            )
+
+        diagnostics: dict[str, Any] = {}
+        eligible: list[str] = []
+        for name, candidate in combinations.items():
+            transfer_name, local_name = name.split("_", 1)
+            candidate_metrics = candidate["metrics"]
+            transfer_gain = 0.0
+            temporal_transfer_gain = 0.0
+            local_gain = 0.0
+            temporal_local_gain = 0.0
+            valid = True
+            if transfer_name == "transfer":
+                baseline = f"current_{local_name}"
+                transfer_gain = metric_gain(name, baseline)
+                temporal_transfer_gain = metric_gain(name, baseline, "temporal_")
+                valid = transfer_gain >= float(config.get("minimum_transfer_score_gain", 0.01))
+                if bool(config.get("require_temporal_validation", False)):
+                    valid = valid and temporal_transfer_gain >= 0.0
+                candidate_metrics["transfer_score_gain"] = transfer_gain
+                candidate_metrics["temporal_transfer_score_gain"] = temporal_transfer_gain
+            if local_name == "local":
+                baseline = f"{transfer_name}_outcome"
+                local_gain = metric_gain(name, baseline)
+                temporal_local_gain = metric_gain(name, baseline, "temporal_")
+                valid = valid and local_gain > 0.0
+                if bool(config.get("require_temporal_validation", False)):
+                    valid = valid and temporal_local_gain > 0.0
+                candidate_metrics["local_score_gain"] = local_gain
+                candidate_metrics["temporal_local_score_gain"] = temporal_local_gain
+            gate_count = passed_core_gates(candidate_metrics)
+            diagnostics[name] = {
+                "eligible": valid,
+                "core_gates_passed": gate_count,
+                "random_score": round(_evaluation_score(candidate_metrics), 6),
+                "temporal_score": round(_evaluation_score(candidate_metrics, "temporal_"), 6),
+                "transfer_score_gain": transfer_gain,
+                "temporal_transfer_score_gain": temporal_transfer_gain,
+                "local_score_gain": local_gain,
+                "temporal_local_score_gain": temporal_local_gain,
+            }
+            if valid:
+                eligible.append(name)
+        selected_name = max(
+            eligible or ["current_outcome"],
+            key=lambda name: (
+                diagnostics[name]["core_gates_passed"],
+                diagnostics[name]["random_score"] + diagnostics[name]["temporal_score"],
+            ),
+        )
+        selected = combinations[selected_name]
+        selected_transfer = selected["transfer"]
+        selected_temporal_transfer = selected["temporal_transfer"]
+        selected_local_weight = selected["local_weight"]
+        metrics = dict(selected["metrics"])
+        transfer_selection_reason = f"joint_selection:{selected_name}"
+        local_selection_reason = f"joint_selection:{selected_name}"
+        joint_selection = {
+            "enabled": True,
+            "method": "core_gate_count_then_random_plus_temporal_score_v1",
+            "selected": selected_name,
+            "combinations": diagnostics,
+        }
+
     probability_temperature, probability_calibration = _fit_probability_temperature(
         train,
         selected_transfer,
@@ -1773,6 +1892,7 @@ def train_replay_policy(
         "local_feedback_selection_reason": local_selection_reason,
         "value_probability_temperature": probability_temperature,
         "value_probability_calibration": probability_calibration,
+        "joint_signal_selection": joint_selection,
         "local_feedback_schema": "short_horizon_visual_proxy_v1",
         "local_feedback_is_causal_ground_truth": False,
         "local_feedback_actions": sum(a.local_confidence > 0 for a in trainable_actions),
