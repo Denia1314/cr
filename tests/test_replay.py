@@ -494,6 +494,27 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             card = catalog.by_id[row.card_id]
             self.assertAlmostEqual(model.card_score(card, row.elixir, row.threats()), 1.0)
 
+    def test_adaptive_local_feedback_excludes_regressing_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = self._dataset(root)
+            result = train_replay_policy(root, catalog, {
+                **self._config(False),
+                "local_feedback_weight": 0.15,
+                "adaptive_local_feedback_selection_enabled": True,
+            })
+
+            manifest = result["candidate"]["manifest"]
+            self.assertEqual(manifest["local_feedback_weight"], 0.0)
+            self.assertEqual(manifest["configured_local_feedback_weight"], 0.15)
+            self.assertEqual(
+                manifest["local_feedback_selection_reason"],
+                "outcome_only_due_to_validation_regression",
+            )
+            self.assertIn("evaluated_local_score_gain", result["metrics"])
+            with np.load(root / "models/replay_policy" / result["candidate"]["model_path"]) as data:
+                self.assertEqual(float(data["local_feedback_weight"][0]), 0.0)
+
     def test_existing_unweighted_champion_remains_loadable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

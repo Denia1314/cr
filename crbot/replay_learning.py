@@ -1473,11 +1473,59 @@ def train_replay_policy(
             selected_temporal_transfer = []
             transfer_selection_reason = "current_only_due_to_validation_regression"
 
+    selected_local_weight = local_weight
+    local_selection_reason = "configured_local_feedback"
+    if local_weight and bool(config.get("adaptive_local_feedback_selection_enabled", False)):
+        random_local_gain = float(metrics.get("local_score_gain", -math.inf))
+        temporal_local_gain = float(metrics.get("temporal_local_score_gain", 0.0))
+        if random_local_gain <= 0.0 or (
+            bool(config.get("require_temporal_validation", False))
+            and temporal_local_gain <= 0.0
+        ):
+            no_local_metrics = _evaluate_candidate(
+                train, validation, catalog, neighbors, visual_weight,
+                selected_transfer, transfer_weight,
+            )
+            if selected_transfer:
+                no_local_current = _evaluate_candidate(
+                    train, validation, catalog, neighbors, visual_weight
+                )
+                no_local_metrics["transfer_score_gain"] = round(
+                    _evaluation_score(no_local_metrics)
+                    - _evaluation_score(no_local_current), 6
+                )
+                baseline_metrics = dict(no_local_current)
+            if temporal_validation:
+                no_local_temporal = _evaluate_candidate(
+                    temporal_train, temporal_validation, catalog, neighbors,
+                    visual_weight, selected_temporal_transfer, transfer_weight,
+                )
+                if selected_temporal_transfer:
+                    no_local_temporal_current = _evaluate_candidate(
+                        temporal_train, temporal_validation, catalog, neighbors,
+                        visual_weight,
+                    )
+                    no_local_temporal["transfer_score_gain"] = round(
+                        _evaluation_score(no_local_temporal)
+                        - _evaluation_score(no_local_temporal_current), 6
+                    )
+                    baseline_metrics.update(
+                        {f"temporal_{key}": value for key, value in no_local_temporal_current.items()}
+                    )
+                no_local_metrics.update(
+                    {f"temporal_{key}": value for key, value in no_local_temporal.items()}
+                )
+            no_local_metrics["evaluated_local_score_gain"] = random_local_gain
+            no_local_metrics["evaluated_temporal_local_score_gain"] = temporal_local_gain
+            metrics = no_local_metrics
+            selected_local_weight = 0.0
+            local_selection_reason = "outcome_only_due_to_validation_regression"
+
     value_x, value_y, value_sample_weights = _training_arrays(
         trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight,
     )
     positive_weight, negative_weight = _class_weights(value_y, value_sample_weights)
-    winning_actions = _deployment_examples(trainable_actions, local_weight)
+    winning_actions = _deployment_examples(trainable_actions, selected_local_weight)
     local_x, local_y, local_sample_weights = _local_arrays(trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight)
     deploy_x = np.asarray(
         [
@@ -1500,7 +1548,7 @@ def train_replay_policy(
         local_x=local_x,
         local_y=local_y,
         local_sample_weights=local_sample_weights,
-        local_feedback_weight=np.asarray([local_weight], dtype=np.float32),
+        local_feedback_weight=np.asarray([selected_local_weight], dtype=np.float32),
         deploy_x=deploy_x,
         deploy_y=deploy_y,
         neighbors=np.asarray([neighbors], dtype=np.int32),
@@ -1543,7 +1591,9 @@ def train_replay_policy(
         "total_actions": len(actions),
         "trainable_actions_excluding_frozen": len(trainable_actions),
         "frozen_actions": sum(action.group_id in frozen_ids for action in actions),
-        "local_feedback_weight": local_weight,
+        "local_feedback_weight": selected_local_weight,
+        "configured_local_feedback_weight": local_weight,
+        "local_feedback_selection_reason": local_selection_reason,
         "local_feedback_schema": "short_horizon_visual_proxy_v1",
         "local_feedback_is_causal_ground_truth": False,
         "local_feedback_actions": sum(a.local_confidence > 0 for a in trainable_actions),

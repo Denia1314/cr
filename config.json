@@ -78,6 +78,7 @@
     "transfer_sample_weight": 0.25,
     "adaptive_transfer_selection_enabled": true,
     "local_feedback_weight": 0.15,
+    "adaptive_local_feedback_selection_enabled": true,
     "minimum_local_validation_actions": 50,
     "minimum_local_validation_battles": 12,
     "minimum_local_mse_improvement": 0.0001,
