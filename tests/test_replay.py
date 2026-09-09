@@ -24,6 +24,7 @@ from crbot.replay_learning import (
     _transfer_actions,
     _training_arrays,
     _balanced_knn_predict,
+    _temperature_scale_probability,
     _battle_cluster_intervals,
     _validation_segments,
     collect_replay_learning_actions,
@@ -419,6 +420,15 @@ class ReplayPolicyLearningTests(unittest.TestCase):
         self.assertEqual(single[-1], 0.0)
         self.assertEqual(dual[-1], 1.0)
 
+    def test_temperature_scaling_preserves_neutral_order_and_endpoints(self) -> None:
+        self.assertEqual(_temperature_scale_probability(0.0, 0.5), 0.0)
+        self.assertEqual(_temperature_scale_probability(0.5, 0.5), 0.5)
+        self.assertEqual(_temperature_scale_probability(1.0, 0.5), 1.0)
+        self.assertGreater(
+            _temperature_scale_probability(0.7, 0.5),
+            _temperature_scale_probability(0.7, 1.0),
+        )
+
     def test_copied_device_battles_are_deduplicated_before_splitting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -512,6 +522,9 @@ class ReplayPolicyLearningTests(unittest.TestCase):
                 "outcome_only_due_to_validation_regression",
             )
             self.assertIn("evaluated_local_score_gain", result["metrics"])
+            self.assertTrue(
+                manifest["value_probability_calibration"]["available"]
+            )
             with np.load(root / "models/replay_policy" / result["candidate"]["model_path"]) as data:
                 self.assertEqual(float(data["local_feedback_weight"][0]), 0.0)
 

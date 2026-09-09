@@ -38,6 +38,17 @@ TACTICAL_FEATURE_COUNT = 17
 ACTION_CONFIRMATION_REQUIRED_STATUS = "confirmed"
 
 
+def _temperature_scale_probability(value: float, temperature: float) -> float:
+    if float(value) <= 0.0:
+        return 0.0
+    if float(value) >= 1.0:
+        return 1.0
+    probability = float(value)
+    safe_temperature = max(0.05, float(temperature))
+    logit = math.log(probability / (1.0 - probability)) / safe_temperature
+    return float(1.0 / (1.0 + math.exp(-logit)))
+
+
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     if not path.is_file():
         return
@@ -987,6 +998,7 @@ def _evaluate_candidate(
     transfer: list[ReplayLearningAction] | None = None,
     transfer_weight: float = 0.25,
     local_weight: float = 0.0,
+    probability_temperature: float = 1.0,
 ) -> dict[str, Any]:
     training_x, training_y, sample_weights = _training_arrays(
         train, transfer or [], catalog, visual_weight, transfer_weight,
@@ -998,7 +1010,9 @@ def _evaluate_candidate(
         value = _balanced_knn_predict(training_x, training_y, feature, neighbors,
                                       positive_weight, negative_weight, sample_weights)
         effect = _local_predict(local_arrays, feature, neighbors) if local_weight else 0.0
-        return float(np.clip(value + local_weight * effect, 0.0, 1.0))
+        return _temperature_scale_probability(
+            value + local_weight * effect, probability_temperature
+        )
     action_predictions = np.asarray(
         [
             predict(catalog.by_id[action.card_id], action)
@@ -1153,6 +1167,85 @@ def _evaluate_candidate(
             6,
         ),
         "win_deploy_mae": round(float(np.mean(deploy_errors)), 6),
+    }
+
+
+def _fit_probability_temperature(
+    train: list[ReplayLearningAction],
+    transfer: list[ReplayLearningAction],
+    catalog: CardCatalog,
+    neighbors: int,
+    visual_weight: float,
+    transfer_weight: float,
+    local_weight: float,
+    seed: int,
+) -> tuple[float, dict[str, Any]]:
+    """Fit a temperature using only whole-battle out-of-fold predictions."""
+
+    groups = {action.group_id: action.outcome for action in train}
+    fold_by_group: dict[str, int] = {}
+    folds = min(5, min(sum(v == outcome for v in groups.values()) for outcome in ("win", "loss")))
+    if folds < 2:
+        return 1.0, {"available": False, "reason": "insufficient_stratified_battles"}
+    for outcome in ("win", "loss"):
+        ranked = sorted(
+            (group for group, value in groups.items() if value == outcome),
+            key=lambda value: hashlib.sha256(f"{seed}:calibration:{value}".encode()).hexdigest(),
+        )
+        for index, group in enumerate(ranked):
+            fold_by_group[group] = index % folds
+
+    raw_predictions: list[float] = []
+    targets: list[float] = []
+    priors: list[float] = []
+    for fold in range(folds):
+        fit_rows = [a for a in train if fold_by_group[a.group_id] != fold]
+        holdout = [a for a in train if fold_by_group[a.group_id] == fold]
+        training_x, training_y, sample_weights = _training_arrays(
+            fit_rows, transfer, catalog, visual_weight, transfer_weight
+        )
+        positive_weight, negative_weight = _class_weights(training_y, sample_weights)
+        local_arrays = _local_arrays(
+            fit_rows, transfer, catalog, visual_weight, transfer_weight
+        )
+        action_predictions: dict[str, list[float]] = {}
+        for action in holdout:
+            feature = _feature(action, catalog.by_id[action.card_id], visual_weight)
+            value = _balanced_knn_predict(
+                training_x, training_y, feature, neighbors,
+                positive_weight, negative_weight, sample_weights,
+            )
+            if local_weight:
+                value += local_weight * _local_predict(local_arrays, feature, neighbors)
+            action_predictions.setdefault(action.group_id, []).append(
+                float(np.clip(value, 0.0, 1.0))
+            )
+        prior = float(np.average(training_y, weights=sample_weights))
+        for group, values in action_predictions.items():
+            raw_predictions.append(float(np.mean(values)))
+            targets.append(1.0 if groups[group] == "win" else 0.0)
+            priors.append(prior)
+
+    candidates = (0.50, 0.67, 0.80, 1.00, 1.25, 1.50, 2.00)
+    losses: dict[str, float] = {}
+    for temperature in candidates:
+        calibrated: list[float] = []
+        for prediction, prior in zip(raw_predictions, priors):
+            balanced = _temperature_scale_probability(prediction, temperature)
+            numerator = balanced * prior
+            denominator = numerator + (1.0 - balanced) * (1.0 - prior)
+            calibrated.append(numerator / denominator if denominator > 1e-8 else prior)
+        losses[f"{temperature:.2f}"] = round(
+            float(np.mean((np.asarray(calibrated) - np.asarray(targets)) ** 2)), 6
+        )
+    best = min(candidates, key=lambda value: (losses[f"{value:.2f}"], abs(value - 1.0)))
+    return best, {
+        "available": True,
+        "method": "stratified_whole_battle_out_of_fold_temperature_v1",
+        "folds": folds,
+        "battles": len(targets),
+        "candidate_brier_scores": losses,
+        "selected_temperature": best,
     }
 
 
@@ -1521,6 +1614,87 @@ def train_replay_policy(
             selected_local_weight = 0.0
             local_selection_reason = "outcome_only_due_to_validation_regression"
 
+    probability_temperature, probability_calibration = _fit_probability_temperature(
+        train,
+        selected_transfer,
+        catalog,
+        neighbors,
+        visual_weight,
+        transfer_weight,
+        selected_local_weight,
+        seed,
+    )
+    selection_metrics = dict(metrics)
+    metrics = _evaluate_candidate(
+        train, validation, catalog, neighbors, visual_weight,
+        selected_transfer, transfer_weight, selected_local_weight,
+        probability_temperature,
+    )
+    for key, value in selection_metrics.items():
+        if key.startswith("evaluated_"):
+            metrics[key] = value
+    metrics["uncalibrated_brier_improvement"] = selection_metrics.get(
+        "brier_improvement", 0.0
+    )
+    if selected_transfer:
+        calibrated_current = _evaluate_candidate(
+            train, validation, catalog, neighbors, visual_weight,
+            local_weight=selected_local_weight,
+            probability_temperature=probability_temperature,
+        )
+        metrics["transfer_score_gain"] = round(
+            _evaluation_score(metrics) - _evaluation_score(calibrated_current), 6
+        )
+        baseline_metrics = dict(calibrated_current)
+    if selected_local_weight:
+        calibrated_without_local = _evaluate_candidate(
+            train, validation, catalog, neighbors, visual_weight,
+            selected_transfer, transfer_weight,
+            probability_temperature=probability_temperature,
+        )
+        metrics["local_score_gain"] = round(
+            _evaluation_score(metrics) - _evaluation_score(calibrated_without_local), 6
+        )
+        local_baseline_metrics = dict(calibrated_without_local)
+    if temporal_validation:
+        calibrated_temporal = _evaluate_candidate(
+            temporal_train, temporal_validation, catalog, neighbors, visual_weight,
+            selected_temporal_transfer, transfer_weight, selected_local_weight,
+            probability_temperature,
+        )
+        metrics.update(
+            {f"temporal_{key}": value for key, value in calibrated_temporal.items()}
+        )
+        metrics["temporal_uncalibrated_brier_improvement"] = selection_metrics.get(
+            "temporal_brier_improvement", 0.0
+        )
+        if selected_temporal_transfer:
+            calibrated_temporal_current = _evaluate_candidate(
+                temporal_train, temporal_validation, catalog, neighbors,
+                visual_weight, local_weight=selected_local_weight,
+                probability_temperature=probability_temperature,
+            )
+            metrics["temporal_transfer_score_gain"] = round(
+                _evaluation_score(calibrated_temporal)
+                - _evaluation_score(calibrated_temporal_current), 6
+            )
+            baseline_metrics.update(
+                {f"temporal_{key}": value for key, value in calibrated_temporal_current.items()}
+            )
+        if selected_local_weight:
+            calibrated_temporal_without_local = _evaluate_candidate(
+                temporal_train, temporal_validation, catalog, neighbors,
+                visual_weight, selected_temporal_transfer, transfer_weight,
+                probability_temperature=probability_temperature,
+            )
+            metrics["temporal_local_score_gain"] = round(
+                _evaluation_score(calibrated_temporal)
+                - _evaluation_score(calibrated_temporal_without_local), 6
+            )
+            local_baseline_metrics.update(
+                {f"temporal_{key}": value for key, value in calibrated_temporal_without_local.items()}
+            )
+
     value_x, value_y, value_sample_weights = _training_arrays(
         trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight,
     )
@@ -1549,6 +1723,9 @@ def train_replay_policy(
         local_y=local_y,
         local_sample_weights=local_sample_weights,
         local_feedback_weight=np.asarray([selected_local_weight], dtype=np.float32),
+        value_probability_temperature=np.asarray(
+            [probability_temperature], dtype=np.float32
+        ),
         deploy_x=deploy_x,
         deploy_y=deploy_y,
         neighbors=np.asarray([neighbors], dtype=np.int32),
@@ -1594,6 +1771,8 @@ def train_replay_policy(
         "local_feedback_weight": selected_local_weight,
         "configured_local_feedback_weight": local_weight,
         "local_feedback_selection_reason": local_selection_reason,
+        "value_probability_temperature": probability_temperature,
+        "value_probability_calibration": probability_calibration,
         "local_feedback_schema": "short_horizon_visual_proxy_v1",
         "local_feedback_is_causal_ground_truth": False,
         "local_feedback_actions": sum(a.local_confidence > 0 for a in trainable_actions),
@@ -1692,6 +1871,7 @@ class ReplayPolicyModel:
         self.tactical_feature_count = 0
         self.context_feature_count = 0
         self.local_feedback_weight = 0.0
+        self.value_probability_temperature = 1.0
         self.local_arrays = (np.empty((0, 0)), np.empty(0), np.empty(0))
         self._cached_image_id: int | None = None
         self._cached_battlefield: np.ndarray | None = None
@@ -1713,6 +1893,10 @@ class ReplayPolicyModel:
                 self.value_y = data["value_y"].copy()
                 if "local_feedback_weight" in data:
                     self.local_feedback_weight = float(data["local_feedback_weight"][0])
+                if "value_probability_temperature" in data:
+                    self.value_probability_temperature = float(
+                        data["value_probability_temperature"][0]
+                    )
                     self.local_arrays = (data["local_x"].copy(), data["local_y"].copy(), data["local_sample_weights"].copy())
                 self.value_sample_weights = (
                     data["value_sample_weights"].copy()
@@ -1815,7 +1999,10 @@ class ReplayPolicyModel:
             self.value_sample_weights,
         )
         effect = _local_predict(self.local_arrays, feature, self.neighbors) if self.local_feedback_weight else 0.0
-        return float(np.clip(value + self.local_feedback_weight * effect, 0.0, 1.0))
+        return _temperature_scale_probability(
+            value + self.local_feedback_weight * effect,
+            self.value_probability_temperature,
+        )
 
     def deploy_point(
         self,
