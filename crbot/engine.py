@@ -157,9 +157,15 @@ class BotEngine:
         self.response_timing = TimingStats(
             max_samples=int(automation_config.get("timing_max_samples", 512))
         )
+        self._write_runtime_status()
+
+    def _write_runtime_status(self) -> None:
         replay_model = self.policy.replay_model
+        hand = getattr(self.policy, "hand_recognizer", None)
+        hand_status = hand.compute_status() if hand is not None and hasattr(hand, "compute_status") else None
         ReplaySync(self.project_root).write_runtime_status({
             "rule_version": self.policy.policy.get("version", "unversioned"),
+            "hand_matching": hand_status,
             "replay_model": {
                 "version": ((replay_model.champion or {}).get("version") if replay_model else None),
                 "loaded": bool(replay_model is not None and replay_model.available),
@@ -187,6 +193,7 @@ class BotEngine:
             image,
             {"reason": str(reason), "summary": summary},
         )
+        self._write_runtime_status()
 
     def _sleep(self, seconds: float) -> bool:
         """Wait interruptibly and return True when a stop was requested."""
@@ -605,6 +612,7 @@ class BotEngine:
         decision_started = time.perf_counter()
         decision = self.policy.decide(image, self.previous_battle_frame, now=now)
         timing["decision_s"] = time.perf_counter() - decision_started
+        self._write_runtime_status()
         self.response_timing.record("perception", timing["perception_s"])
         self.response_timing.record("decision", timing["decision_s"])
         if decision is not None:

@@ -50,6 +50,52 @@ def compute_device() -> str:
     return resolve_device(os.environ.get("CRBOT_COMPUTE_DEVICE", "auto"))
 
 
+class HandDescriptorMatcher:
+    """Exact ORB Hamming ratio counts using batched CUDA matrix multiplication."""
+
+    def __init__(self, references, requested=None):
+        self.device = resolve_device(str(requested)) if requested is not None else compute_device()
+        self.calls = 0
+        self.references = references
+        self.bank = None
+        self.lengths = None
+
+    def counts(self, descriptors, ratio):
+        if self.device == "cpu":
+            return None
+        if not self.references:
+            return []
+        import torch
+        with torch.inference_mode():
+            if self.bank is None:
+                width = self.references[0].shape[1]
+                lengths = [len(r) for r in self.references]
+                if min(lengths) < 2 or any(r.dtype != np.uint8 or r.shape[1] != width for r in self.references):
+                    raise ValueError("ORB references must be uint8 arrays with at least two rows and equal width")
+                bank = np.zeros((len(lengths), max(lengths), width * 8), dtype=np.float16)
+                for i, reference in enumerate(self.references):
+                    bank[i, :len(reference)] = np.unpackbits(reference, axis=1).astype(np.float16) * 2 - 1
+                self.bank = torch.as_tensor(bank, device=self.device)
+                self.lengths = torch.as_tensor(lengths, device=self.device)
+            signs = np.unpackbits(descriptors, axis=1).astype(np.float16) * 2 - 1
+            query = torch.as_tensor(signs, device=self.device)
+            counts = []
+            columns = torch.arange(self.bank.shape[1], device=self.device)
+            # Eight templates per batch bounds the temporary distance matrix.
+            for start in range(0, len(self.references), 8):
+                bank = self.bank[start:start + 8]
+                distances = (query.shape[1] - torch.matmul(query, bank.transpose(1, 2))) * 0.5
+                padding = columns[None, :] >= self.lengths[start:start + 8, None]
+                distances.masked_fill_(padding[:, None, :], float("inf"))
+                nearest = distances.topk(2, dim=-1, largest=False).values.to(torch.float64)
+                counts.append((nearest[..., 0] < ratio * nearest[..., 1]).sum(dim=1))
+            result = torch.cat(counts).cpu().tolist()
+            self.calls += 1
+            if self.calls == 1:
+                print(f"[GPU] 手牌匹配已实际使用 {self.device}；模板={len(result)}")
+            return result
+
+
 def _tensor(array, device):
     """Cache only read-only snapshots; callers treat model arrays as immutable."""
     import torch

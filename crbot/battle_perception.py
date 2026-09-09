@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 
 from .cards import CardCatalog, CardDefinition
+from .gpu import HandDescriptorMatcher
 
 try:
     import cv2
@@ -58,6 +59,7 @@ class UniversalHandRecognizer:
         self.vision = vision_config
         self.available = cv2 is not None
         self.templates: dict[str, tuple[CardDefinition, Any]] = {}
+        self.gpu_matcher = None
         if not self.available:
             return
         self.orb = cv2.ORB_create(
@@ -81,6 +83,12 @@ class UniversalHandRecognizer:
                 if descriptors is not None and len(descriptors) >= 20:
                     template_id = f"{card.card_id}:{variant_index}"
                     self.templates[template_id] = (card, descriptors)
+
+    def compute_status(self) -> dict[str, Any]:
+        return {
+            "device": self.gpu_matcher.device if self.gpu_matcher is not None else "not_executed",
+            "gpu_match_calls": self.gpu_matcher.calls if self.gpu_matcher is not None else 0,
+        }
 
     def _slot_image(self, image: Image.Image, center: list[float]) -> np.ndarray:
         half_width = float(self.vision.get("card_roi_half_width", 0.09))
@@ -117,10 +125,19 @@ class UniversalHandRecognizer:
                 )
                 continue
 
+            if self.gpu_matcher is None:
+                self.gpu_matcher = HandDescriptorMatcher(
+                    [reference for _card, reference in self.templates.values()],
+                    self.vision.get("card_match_device"),
+                )
+            gpu_counts = self.gpu_matcher.counts(descriptors, ratio)
             best_by_card: dict[str, int] = {}
-            for _template_id, (card, reference) in self.templates.items():
-                pairs = self.matcher.knnMatch(descriptors, reference, k=2)
-                good = sum(1 for first, second in pairs if first.distance < ratio * second.distance)
+            for index, (_template_id, (card, reference)) in enumerate(self.templates.items()):
+                if gpu_counts is None:
+                    pairs = self.matcher.knnMatch(descriptors, reference, k=2)
+                    good = sum(1 for first, second in pairs if first.distance < ratio * second.distance)
+                else:
+                    good = gpu_counts[index]
                 best_by_card[card.card_id] = max(best_by_card.get(card.card_id, 0), good)
             ranked = [(good, card_id) for card_id, good in best_by_card.items()]
             ranked.sort(reverse=True)

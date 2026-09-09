@@ -59,6 +59,24 @@ class CudaParityTests(unittest.TestCase):
                         actual = f(*args)
                     self.assertAlmostEqual(actual, expected, places=6)
 
+    def test_orb_hamming_counts_match_opencv(self):
+        import cv2
+        rng = np.random.default_rng(57)
+        references = [rng.integers(0, 256, (n, 32), dtype=np.uint8) for n in (2, 25, 53, 100, 19, 80, 8, 7, 41)]
+        query = references[3][:30].copy()
+        query[:, :4] ^= 7
+        query = np.concatenate((query, references[0], references[4][:10]))
+        matcher = gpu.HandDescriptorMatcher(references, "cuda:0")
+        for ratio in (0.78, 1.0, 0.5):
+            expected = [sum(a.distance < ratio * b.distance for a, b in cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(query, r, k=2)) for r in references]
+            self.assertEqual(matcher.counts(query, ratio), expected)
+        self.assertEqual(matcher.calls, 3)
+
+    def test_hand_match_cpu_fallback_is_explicit(self):
+        matcher = gpu.HandDescriptorMatcher([], "cpu")
+        self.assertIsNone(matcher.counts(None, 0.78))
+        self.assertEqual(matcher.calls, 0)
+
     def test_ties_empty_phase_and_zero_weights(self):
         x = np.zeros((9, 32), dtype=np.float32)
         y = np.arange(9, dtype=np.float32) / 9
