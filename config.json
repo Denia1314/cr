@@ -277,7 +277,7 @@
     "epochs": 50,
     "image_size": 640,
     "batch": 8,
-    "device": "cpu",
+    "device": "auto",
     "include_pseudo_labels": true,
     "pseudo_confidence": 0.94,
     "runtime_confidence": 0.7,

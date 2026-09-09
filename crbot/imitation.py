@@ -15,6 +15,7 @@ from PIL import Image
 
 from .battle_perception import LaneThreat
 from .cards import CardCatalog, CardDefinition
+from .gpu import compute_device, predict as gpu_predict
 
 
 ROLE_FEATURES = (
@@ -382,6 +383,9 @@ def _knn_predict(
     sample: np.ndarray,
     neighbors: int,
 ) -> float:
+    result = gpu_predict(training_x, training_y, sample, neighbors, mode="distance")
+    if result is not None:
+        return result
     distances = np.sum((training_x - sample.reshape(1, -1)) ** 2, axis=1)
     count = min(max(1, neighbors), len(distances))
     indices = np.argpartition(distances, count - 1)[:count]
@@ -694,6 +698,7 @@ def train_imitation_policy(
     )
     manifest = {
         "human_train_actions": len(actions),
+        "compute_device": compute_device(),
         "human_validation_actions": int(metrics["validation_actions"]),
         "train_battles": sorted({action.group_id for action in actions}),
         "validation_battles": sorted({action.group_id for action in actions}),

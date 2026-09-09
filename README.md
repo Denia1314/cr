@@ -322,6 +322,10 @@ learning.bat cycle
 
 Python 依赖记录在 `requirements.txt`。`start_bot.bat`、`start_ui.bat` 和 `setup_sync.bat` 会先检查依赖，首次使用或 Python 环境更新后会自动安装缺少的包。
 
+### GPU 运算
+
+NVIDIA 电脑双击 `setup_gpu.bat` 安装并验证 CUDA 环境，然后重启 Royal Lab。视觉训练、验证、自动标注与模型识别默认自动选择 GPU；回放及模仿学习的近邻评估、实战评分也会自动使用 GPU。没有可用 CUDA 时会提示并回退 CPU。数据读取、图像特征提取与规则逻辑仍在 CPU 上运行，模型质量门槛不变。详细设置见 [GPU 使用说明](docs/gpu.md)。
+
 ## 已适配环境
 
 - MuMu：自动检查显式配置、环境变量、运行进程、注册表、各磁盘常见目录和 PATH

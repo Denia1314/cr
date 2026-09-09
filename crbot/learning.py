@@ -13,6 +13,7 @@ from typing import Any, Iterable
 from PIL import Image
 
 from .cards import CardCatalog
+from .gpu import vision_device
 from .dataset import DatasetStore, HUMAN_LABEL_SOURCES, SampleRecord, list_dataset_runs
 
 
@@ -521,7 +522,7 @@ def train_detector(
         epochs=int(training_config.get("epochs", 50)),
         imgsz=int(training_config.get("image_size", 640)),
         batch=int(training_config.get("batch", 8)),
-        device=str(training_config.get("device", "cpu")),
+        device=vision_device(training_config.get("device", "auto")),
         project=str((project_root / "models" / "battlefield" / "training_runs").resolve()),
         name=version,
         exist_ok=False,
@@ -534,9 +535,10 @@ def train_detector(
         data=manifest["data_yaml"],
         split="val",
         imgsz=int(training_config.get("image_size", 640)),
-        device=str(training_config.get("device", "cpu")),
+        device=vision_device(training_config.get("device", "auto")),
     )
     box = metrics_result.box
+    manifest["compute_device"] = vision_device(training_config.get("device", "auto"))
     metrics = {
         "precision": float(box.mp),
         "recall": float(box.mr),
@@ -595,7 +597,7 @@ def auto_label_with_champion(
                 source=str(store.frame_path(sample)),
                 conf=threshold,
                 imgsz=int(training_config.get("image_size", 640)),
-                device=str(training_config.get("device", "cpu")),
+                device=vision_device(training_config.get("device", "auto")),
                 verbose=False,
             )[0]
             objects: list[dict[str, Any]] = []

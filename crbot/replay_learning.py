@@ -14,6 +14,7 @@ from PIL import Image
 
 from .battle_perception import LaneThreat
 from .cards import CardCatalog, CardDefinition
+from .gpu import compute_device, predict as gpu_predict
 from .training_sync import ReplaySync, replay_source_prefix, shared_training
 from .imitation import (
     BATTLEFIELD_FEATURE_COUNT,
@@ -798,6 +799,11 @@ def _balanced_knn_predict(
 ) -> float:
     if len(training_x) == 0:
         return 0.5
+    result = gpu_predict(training_x, training_y, sample, neighbors, mode="balanced",
+                         sample_weights=sample_weights, positive_weight=positive_weight,
+                         negative_weight=negative_weight)
+    if result is not None:
+        return result
     distances = np.sum((training_x - sample.reshape(1, -1)) ** 2, axis=1)
     count = min(max(1, neighbors), len(distances))
     indices = np.argpartition(distances, count - 1)[:count]
@@ -819,6 +825,9 @@ def _plain_knn_predict(
 ) -> float:
     if len(training_x) == 0:
         return 0.5
+    result = gpu_predict(training_x, training_y, sample, neighbors)
+    if result is not None:
+        return result
     distances = np.sum((training_x - sample.reshape(1, -1)) ** 2, axis=1)
     count = min(max(1, neighbors), len(distances))
     indices = np.argpartition(distances, count - 1)[:count]
@@ -845,6 +854,10 @@ def _local_predict(
     x, y, weights = arrays
     if not len(y):
         return 0.0
+    result = gpu_predict(x, y, sample, neighbors, mode="local", sample_weights=weights,
+                         phase_index=-CONTEXT_FEATURE_COUNT if sample.size >= CONTEXT_FEATURE_COUNT else None)
+    if result is not None:
+        return result
     # A defense-only dataset cannot teach attack effects (or vice versa).
     if sample.size >= CONTEXT_FEATURE_COUNT:
         same_phase = (x[:, -CONTEXT_FEATURE_COUNT] >= 0.5) == (sample[-CONTEXT_FEATURE_COUNT] >= 0.5)
@@ -1432,6 +1445,7 @@ def train_replay_policy(
     )
     manifest = {
         "source": "verified_offline_ai_replay",
+        "compute_device": compute_device(),
         "policy_actions_are_ground_truth": False,
         "target_policy_version": audit.target_policy_version,
         "total_actions": len(actions),

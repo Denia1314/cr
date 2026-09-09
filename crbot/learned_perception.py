@@ -6,6 +6,7 @@ from PIL import Image
 
 from .battle_perception import LaneThreat
 from .cards import CardCatalog
+from .gpu import vision_device
 from .learning import ModelRegistry
 
 
@@ -58,7 +59,7 @@ class LearnedBattlefieldDetector:
                 source=image,
                 conf=float(self.training.get("runtime_confidence", 0.70)),
                 imgsz=int(self.training.get("image_size", 640)),
-                device=str(self.training.get("device", "cpu")),
+                device=vision_device(self.training.get("device", "auto")),
                 verbose=False,
             )[0]
         except Exception as exc:  # pragma: no cover - backend/runtime dependent
