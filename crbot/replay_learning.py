@@ -36,6 +36,14 @@ REPLAY_POLICY_SCHEMA_VERSION = 1
 CONTEXT_FEATURE_COUNT = 12
 TACTICAL_FEATURE_COUNT = 17
 ACTION_CONFIRMATION_REQUIRED_STATUS = "confirmed"
+VALUE_PROBABILITY_SHRINKAGE = 0.15
+
+
+def _calibrate_balanced_probability(value: float, shrinkage: float) -> float:
+    """Conservatively shrink a class-balanced probability toward neutral."""
+
+    strength = min(1.0, max(0.0, float(shrinkage)))
+    return float(np.clip(0.5 + (float(value) - 0.5) * (1.0 - strength), 0.0, 1.0))
 
 
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -998,7 +1006,10 @@ def _evaluate_candidate(
         value = _balanced_knn_predict(training_x, training_y, feature, neighbors,
                                       positive_weight, negative_weight, sample_weights)
         effect = _local_predict(local_arrays, feature, neighbors) if local_weight else 0.0
-        return float(np.clip(value + local_weight * effect, 0.0, 1.0))
+        return _calibrate_balanced_probability(
+            value + local_weight * effect,
+            VALUE_PROBABILITY_SHRINKAGE,
+        )
     action_predictions = np.asarray(
         [
             predict(catalog.by_id[action.card_id], action)
@@ -1549,6 +1560,9 @@ def train_replay_policy(
         local_y=local_y,
         local_sample_weights=local_sample_weights,
         local_feedback_weight=np.asarray([selected_local_weight], dtype=np.float32),
+        value_probability_shrinkage=np.asarray(
+            [VALUE_PROBABILITY_SHRINKAGE], dtype=np.float32
+        ),
         deploy_x=deploy_x,
         deploy_y=deploy_y,
         neighbors=np.asarray([neighbors], dtype=np.int32),
@@ -1594,6 +1608,8 @@ def train_replay_policy(
         "local_feedback_weight": selected_local_weight,
         "configured_local_feedback_weight": local_weight,
         "local_feedback_selection_reason": local_selection_reason,
+        "value_probability_shrinkage": VALUE_PROBABILITY_SHRINKAGE,
+        "value_probability_calibration": "fixed_shrink_to_class_balanced_neutral_v1",
         "local_feedback_schema": "short_horizon_visual_proxy_v1",
         "local_feedback_is_causal_ground_truth": False,
         "local_feedback_actions": sum(a.local_confidence > 0 for a in trainable_actions),
@@ -1692,6 +1708,7 @@ class ReplayPolicyModel:
         self.tactical_feature_count = 0
         self.context_feature_count = 0
         self.local_feedback_weight = 0.0
+        self.value_probability_shrinkage = 0.0
         self.local_arrays = (np.empty((0, 0)), np.empty(0), np.empty(0))
         self._cached_image_id: int | None = None
         self._cached_battlefield: np.ndarray | None = None
@@ -1713,6 +1730,10 @@ class ReplayPolicyModel:
                 self.value_y = data["value_y"].copy()
                 if "local_feedback_weight" in data:
                     self.local_feedback_weight = float(data["local_feedback_weight"][0])
+                if "value_probability_shrinkage" in data:
+                    self.value_probability_shrinkage = float(
+                        data["value_probability_shrinkage"][0]
+                    )
                     self.local_arrays = (data["local_x"].copy(), data["local_y"].copy(), data["local_sample_weights"].copy())
                 self.value_sample_weights = (
                     data["value_sample_weights"].copy()
@@ -1815,7 +1836,10 @@ class ReplayPolicyModel:
             self.value_sample_weights,
         )
         effect = _local_predict(self.local_arrays, feature, self.neighbors) if self.local_feedback_weight else 0.0
-        return float(np.clip(value + self.local_feedback_weight * effect, 0.0, 1.0))
+        return _calibrate_balanced_probability(
+            value + self.local_feedback_weight * effect,
+            self.value_probability_shrinkage,
+        )
 
     def deploy_point(
         self,
