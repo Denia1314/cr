@@ -12,6 +12,7 @@ from PIL import Image
 from crbot.action_feedback import action_feedback
 from crbot.replay import ExperienceReplayRecorder
 from crbot.replay_learning import (
+    CONTEXT_FEATURE_COUNT,
     _deployment_examples, _feature, _local_arrays, _local_predict,
     collect_replay_learning_actions, ReplayPolicyRegistry, ReplayPolicyModel, train_replay_policy,
 )
@@ -133,9 +134,9 @@ class ActionFeedbackTests(unittest.TestCase):
             self.assertAlmostEqual(float(y[0]), 0.4)
 
     def test_defense_only_feedback_does_not_score_attack(self):
-        sample = np.zeros(10)
+        sample = np.zeros(CONTEXT_FEATURE_COUNT + 4)
         defensive = sample.copy()
-        defensive[-6] = 1
+        defensive[-CONTEXT_FEATURE_COUNT] = 1
         arrays = (np.asarray([defensive]), np.asarray([0.4]), np.asarray([1.0]))
         self.assertEqual(_local_predict(arrays, sample, 1), 0)
         self.assertAlmostEqual(_local_predict(arrays, defensive, 1), 0.4)

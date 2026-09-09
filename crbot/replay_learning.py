@@ -33,7 +33,7 @@ from .replay_evaluation import (
 
 
 REPLAY_POLICY_SCHEMA_VERSION = 1
-CONTEXT_FEATURE_COUNT = 6
+CONTEXT_FEATURE_COUNT = 12
 TACTICAL_FEATURE_COUNT = 17
 ACTION_CONFIRMATION_REQUIRED_STATUS = "confirmed"
 
@@ -672,6 +672,7 @@ def _feature(
             action.formation_phase,
             action.desired_role,
             action.battle_elapsed_s,
+            action.threats(),
         )
     )
     return np.asarray(values, dtype=np.float32)
@@ -727,10 +728,11 @@ def _context_features(
     formation_phase: str,
     desired_role: str,
     battle_elapsed_s: float,
+    threats: dict[str, LaneThreat] | None = None,
 ) -> list[float]:
     phase = formation_phase.casefold()
     role = desired_role.casefold()
-    return [
+    values = [
         1.0 if "defense" in phase or phase.startswith("counter_") else 0.0,
         1.0 if role == "frontline" else 0.0,
         1.0 if role == "backline" else 0.0,
@@ -738,6 +740,24 @@ def _context_features(
         1.0 if "stage" in phase else 0.0,
         min(1.0, max(0.0, float(battle_elapsed_s) / 180.0)),
     ]
+    lanes = list((threats or {}).values())
+    scores = [min(1.0, max(0.0, threat.score)) for threat in lanes]
+    proximities = [min(1.0, max(0.0, threat.proximity)) for threat in lanes]
+    approaches = [max(0.0, threat.approach_rate) for threat in lanes]
+    unit_counts = [max(0, threat.unit_count) for threat in lanes]
+    left = scores[0] if scores else 0.0
+    right = scores[1] if len(scores) > 1 else 0.0
+    values.extend(
+        [
+            min(1.0, sum(scores) / 2.0),
+            abs(left - right),
+            max(proximities, default=0.0),
+            min(1.0, max(approaches, default=0.0) / 0.20),
+            min(1.0, sum(unit_counts) / 10.0),
+            1.0 if len(scores) > 1 and min(left, right) >= 0.17 else 0.0,
+        ]
+    )
+    return values
 
 
 def _stratified_group_split(
@@ -1717,6 +1737,7 @@ class ReplayPolicyModel:
                     formation_phase,
                     desired_role,
                     battle_elapsed_s,
+                    threats,
                 )[: self.context_feature_count]
             )
         return np.asarray(values, dtype=np.float32)

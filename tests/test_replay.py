@@ -13,10 +13,12 @@ from crbot.battle_perception import LaneThreat
 from crbot.cards import CardCatalog, CardDefinition
 from crbot.replay import ExperienceReplayRecorder, audit_replay
 from crbot.replay_learning import (
+    CONTEXT_FEATURE_COUNT,
     TACTICAL_FEATURE_COUNT,
     ReplayPolicyRegistry,
     ReplayPolicyModel,
     _tactical_features,
+    _context_features,
     _deduplicate_battles,
     _transfer_before,
     _transfer_actions,
@@ -397,6 +399,25 @@ class ReplayPolicyLearningTests(unittest.TestCase):
         self.assertGreater(attack[16], 0.0)
         self.assertEqual(defense[16], 0.0)
         self.assertGreater(defense[15], 0.0)
+
+    def test_replay_context_features_distinguish_global_lane_pressure(self) -> None:
+        single_lane = {
+            "left": LaneThreat("left", 0.8, 4, 0.9, "swarm", (), approach_rate=0.16),
+            "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
+        }
+        dual_lane = {
+            "left": LaneThreat("left", 0.5, 2, 0.7, "swarm", (), approach_rate=0.08),
+            "right": LaneThreat("right", 0.5, 2, 0.7, "heavy", (), approach_rate=0.08),
+        }
+
+        single = _context_features("counter_defense", "frontline", 90.0, single_lane)
+        dual = _context_features("counter_defense", "frontline", 90.0, dual_lane)
+
+        self.assertEqual(len(single), CONTEXT_FEATURE_COUNT)
+        self.assertEqual(single[:6], dual[:6])
+        self.assertNotEqual(single[6:], dual[6:])
+        self.assertEqual(single[-1], 0.0)
+        self.assertEqual(dual[-1], 1.0)
 
     def test_copied_device_battles_are_deduplicated_before_splitting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
