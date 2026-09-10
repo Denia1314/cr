@@ -35,8 +35,9 @@ class ControlledExperimentTests(unittest.TestCase):
             },
             None,
         )
-        unknown = {"reward_verified": False, "action_count": 2, "confirmed_action_count": 2}
-        verified = {"reward_verified": True, "action_count": 2, "confirmed_action_count": 2}
+        policy = {"experiment_arm": "candidate"}
+        unknown = {"reward_verified": False, "action_count": 2, "confirmed_action_count": 2, "policy": policy}
+        verified = {"reward_verified": True, "action_count": 2, "confirmed_action_count": 2, "policy": policy}
 
         self.assertEqual(experiment.observe(unknown), "")
         self.assertEqual(experiment.observe(verified), "unknown_result_rate=0.500")
@@ -52,9 +53,70 @@ class ControlledExperimentTests(unittest.TestCase):
             None,
         )
         reason = experiment.observe(
-            {"reward_verified": True, "action_count": 4, "confirmed_action_count": 3}
+            {"reward_verified": True, "action_count": 4, "confirmed_action_count": 3, "policy": {"experiment_arm": "candidate"}}
         )
         self.assertEqual(reason, "unconfirmed_action_rate=0.250")
+
+    def test_baseline_does_not_trigger_candidate_guardrail(self) -> None:
+        experiment = ControlledExperiment(
+            {
+                "enabled": True,
+                "minimum_battles_before_guardrail": 1,
+                "maximum_unknown_result_rate": 0.0,
+                "maximum_unconfirmed_action_rate": 0.0,
+            },
+            None,
+        )
+        reason = experiment.observe(
+            {
+                "reward_verified": False,
+                "action_count": 4,
+                "confirmed_action_count": 0,
+                "policy": {"experiment_arm": "baseline"},
+            }
+        )
+        self.assertEqual(reason, "")
+
+    def test_prior_episodes_resume_absolute_batch_position(self) -> None:
+        model = SimpleNamespace(
+            influence_scale=0.1,
+            available=True,
+            champion={"version": "candidate-1"},
+        )
+        prior = [
+            {"policy": {"experiment_arm": "baseline"}}
+            for _ in range(7)
+        ]
+        experiment = ControlledExperiment(
+            {"enabled": True, "batch_size": 10},
+            model,
+            prior_episodes=prior,
+        )
+
+        self.assertEqual(experiment.activate(1)["experiment_battle_index"], 8)
+        self.assertEqual(experiment.activate(1)["experiment_arm"], "baseline")
+        self.assertEqual(experiment.activate(4)["experiment_arm"], "candidate")
+
+    def test_restart_excess_baselines_still_get_full_candidate_batch(self) -> None:
+        model = SimpleNamespace(
+            influence_scale=0.1,
+            available=True,
+            champion={"version": "candidate-1"},
+        )
+        prior = [
+            {"policy": {"experiment_arm": "baseline"}}
+            for _ in range(18)
+        ]
+        experiment = ControlledExperiment(
+            {"enabled": True, "batch_size": 10},
+            model,
+            prior_episodes=prior,
+        )
+
+        self.assertEqual(experiment.battle_offset, 10)
+        self.assertEqual(experiment.activate(1)["experiment_arm"], "candidate")
+        self.assertEqual(experiment.activate(10)["experiment_arm"], "candidate")
+        self.assertEqual(experiment.activate(11)["experiment_arm"], "baseline")
 
     def test_rollback_zeros_candidate_weight_and_records_reason(self) -> None:
         model = SimpleNamespace(influence_scale=0.1)

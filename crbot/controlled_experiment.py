@@ -15,17 +15,55 @@ class ExperimentAssignment:
 
 
 class ControlledExperiment:
-    def __init__(self, config: dict[str, Any], replay_model: Any | None):
+    def __init__(
+        self,
+        config: dict[str, Any],
+        replay_model: Any | None,
+        *,
+        prior_episodes: list[dict[str, Any]] | None = None,
+    ):
         self.config = dict(config)
         self.enabled = bool(self.config.get("enabled", False))
         self.batch_size = max(1, int(self.config.get("batch_size", 10)))
         self.replay_model = replay_model
         self.candidate_scale = float(getattr(replay_model, "influence_scale", 0.0))
-        self.episodes: list[dict[str, Any]] = []
+        self.episodes = [dict(row) for row in (prior_episodes or [])]
+        self.battle_offset = self._restored_battle_offset()
         self.stop_reason = ""
 
+    def _restored_battle_offset(self) -> int:
+        recorded_indices = [
+            int(row.get("policy", {}).get("experiment_battle_index"))
+            for row in self.episodes
+            if isinstance(row.get("policy"), dict)
+            and row["policy"].get("experiment_battle_index") is not None
+        ]
+        if recorded_indices:
+            return max(recorded_indices)
+
+        # Older runs did not persist an absolute experiment index. Collapse
+        # excess repetitions caused by process restarts so each arm still gets
+        # a complete batch before alternation continues.
+        baseline = sum(
+            row.get("policy", {}).get("experiment_arm") == "baseline"
+            for row in self.episodes
+            if isinstance(row.get("policy"), dict)
+        )
+        candidate = sum(
+            row.get("policy", {}).get("experiment_arm") == "candidate"
+            for row in self.episodes
+            if isinstance(row.get("policy"), dict)
+        )
+        cycles = min(baseline // self.batch_size, candidate // self.batch_size)
+        baseline_remainder = max(0, baseline - cycles * self.batch_size)
+        candidate_remainder = max(0, candidate - cycles * self.batch_size)
+        offset = cycles * self.batch_size * 2
+        if baseline_remainder < self.batch_size:
+            return offset + baseline_remainder
+        return offset + self.batch_size + min(candidate_remainder, self.batch_size)
+
     def assignment(self, battle_index: int) -> ExperimentAssignment:
-        index = max(1, int(battle_index))
+        index = self.battle_offset + max(1, int(battle_index))
         batch = (index - 1) // self.batch_size
         arm = "baseline" if batch % 2 == 0 else "candidate"
         return ExperimentAssignment(arm=arm, batch_index=batch, battle_index=index)
@@ -42,6 +80,7 @@ class ControlledExperiment:
             "experiment_enabled": self.enabled,
             "experiment_arm": assigned.arm if self.enabled else "normal",
             "experiment_batch_index": assigned.batch_index if self.enabled else None,
+            "experiment_battle_index": assigned.battle_index if self.enabled else None,
             "runtime_replay_version": champion.get("version"),
             "runtime_replay_loaded": bool(self.replay_model is not None and getattr(self.replay_model, "available", False)),
             "runtime_replay_influence_scale": round(float(getattr(self.replay_model, "influence_scale", 0.0)), 6),
@@ -51,13 +90,19 @@ class ControlledExperiment:
         if not self.enabled:
             return ""
         self.episodes.append(dict(episode))
+        candidate_episodes = [
+            row
+            for row in self.episodes
+            if isinstance(row.get("policy"), dict)
+            and row["policy"].get("experiment_arm") == "candidate"
+        ]
         minimum = max(1, int(self.config.get("minimum_battles_before_guardrail", 10)))
-        if len(self.episodes) < minimum:
+        if len(candidate_episodes) < minimum:
             return ""
-        unknown = sum(not bool(row.get("reward_verified")) for row in self.episodes)
-        actions = sum(int(row.get("action_count", 0)) for row in self.episodes)
-        confirmed = sum(int(row.get("confirmed_action_count", 0)) for row in self.episodes)
-        unknown_rate = unknown / len(self.episodes)
+        unknown = sum(not bool(row.get("reward_verified")) for row in candidate_episodes)
+        actions = sum(int(row.get("action_count", 0)) for row in candidate_episodes)
+        confirmed = sum(int(row.get("confirmed_action_count", 0)) for row in candidate_episodes)
+        unknown_rate = unknown / len(candidate_episodes)
         unconfirmed_rate = (actions - confirmed) / actions if actions else 0.0
         if unknown_rate > float(self.config.get("maximum_unknown_result_rate", 0.10)):
             self.stop_reason = f"unknown_result_rate={unknown_rate:.3f}"
@@ -76,8 +121,10 @@ class ControlledExperiment:
         }
 
 
-def audit_controlled_experiment(project_root: Path) -> dict[str, Any]:
-    """Summarize completed experiment episodes and detect arm contamination."""
+def load_controlled_experiment_episodes(
+    project_root: Path, replay_version: str | None = None
+) -> list[dict[str, Any]]:
+    """Load completed experiment episodes, optionally for one replay champion."""
     rows: list[dict[str, Any]] = []
     for path in sorted((project_root.resolve() / "runs").glob("*/replay_episodes.jsonl")):
         try:
@@ -90,8 +137,21 @@ def audit_controlled_experiment(project_root: Path) -> dict[str, Any]:
             except json.JSONDecodeError:
                 continue
             policy = row.get("policy", {})
-            if isinstance(policy, dict) and policy.get("experiment_enabled"):
+            if (
+                isinstance(policy, dict)
+                and policy.get("experiment_enabled")
+                and (
+                    replay_version is None
+                    or policy.get("runtime_replay_version") == replay_version
+                )
+            ):
                 rows.append(row)
+    return rows
+
+
+def audit_controlled_experiment(project_root: Path) -> dict[str, Any]:
+    """Summarize completed experiment episodes and detect arm contamination."""
+    rows = load_controlled_experiment_episodes(project_root)
     arms: dict[str, dict[str, Any]] = {}
     contamination: list[str] = []
     for row in rows:

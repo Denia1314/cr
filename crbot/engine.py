@@ -14,7 +14,10 @@ from .action_confirmation import (
     ActionConfirmationTracker,
     assess_action_evidence,
 )
-from .controlled_experiment import ControlledExperiment
+from .controlled_experiment import (
+    ControlledExperiment,
+    load_controlled_experiment_episodes,
+)
 from .policy import BattlePolicy
 from .runtime_model import runtime_model_label
 from .recorder import TrainingRecorder
@@ -129,9 +132,22 @@ class BotEngine:
             replay_config,
             policy_metadata=policy_metadata,
         )
-        self.experiment = ControlledExperiment(
-            dict(config.get("controlled_experiment", {})), self.policy.replay_model
+        replay_version = None
+        if self.policy.replay_model is not None:
+            replay_version = (self.policy.replay_model.champion or {}).get("version")
+        prior_experiment_episodes = load_controlled_experiment_episodes(
+            self.project_root, replay_version
         )
+        self.experiment = ControlledExperiment(
+            dict(config.get("controlled_experiment", {})),
+            self.policy.replay_model,
+            prior_episodes=prior_experiment_episodes,
+        )
+        if self.experiment.enabled:
+            print(
+                f"[实验] 已恢复当前模型的有效批次进度："
+                f"{self.experiment.battle_offset} 局"
+            )
         automation_config = dict(config.get("automation", {}))
         self.action_confirmation = ActionConfirmationTracker(
             timeout_s=float(
