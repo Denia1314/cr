@@ -354,6 +354,11 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             )
             self.assertTrue(model.available)
             self.assertEqual(model.tactical_feature_count, TACTICAL_FEATURE_COUNT)
+            self.assertGreater(len(model.rank_y), len(model.value_y))
+            self.assertEqual(
+                result["candidate"]["manifest"]["ranking_training_target"],
+                "selected_high_in_wins_selected_low_in_losses_v1",
+            )
             np.testing.assert_array_equal(
                 model.value_sample_weights,
                 np.full(len(model.value_y), 0.5, dtype=np.float32),

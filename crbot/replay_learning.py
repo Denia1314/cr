@@ -446,6 +446,58 @@ def _training_arrays(
     return x, y, weights
 
 
+def _ranking_arrays(
+    train: list[ReplayLearningAction],
+    transfer: list[ReplayLearningAction],
+    catalog: CardCatalog,
+    visual_weight: float,
+    transfer_weight: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build a separate hand-ranking target without changing outcome labels."""
+
+    train_groups = {action.group_id for action in train}
+    transfer_groups = {action.group_id for action in transfer}
+    transfer_battle_weight = min(
+        transfer_weight,
+        0.5 * len(train_groups) / max(1, len(transfer_groups)),
+    )
+    examples: list[tuple[ReplayLearningAction, CardDefinition, float, float]] = []
+    counts: dict[tuple[str, str], int] = {}
+    for source, rows, battle_weight in (
+        ("current", train, 1.0),
+        ("transfer", transfer, transfer_battle_weight),
+    ):
+        pending: list[tuple[ReplayLearningAction, CardDefinition, float]] = []
+        for action in rows:
+            cards = [
+                catalog.get(card_id)
+                for card_id in dict.fromkeys(value for value in action.hand if value)
+            ]
+            cards = [card for card in cards if card is not None]
+            for card in cards:
+                selected = card.card_id == action.card_id
+                target = float(selected if action.outcome == "win" else not selected)
+                pending.append((action, card, target))
+                counts[(source, action.group_id)] = counts.get((source, action.group_id), 0) + 1
+        examples.extend(
+            (
+                action,
+                card,
+                target,
+                battle_weight / counts[(source, action.group_id)],
+            )
+            for action, card, target in pending
+        )
+    return (
+        np.asarray(
+            [_feature(action, card, visual_weight) for action, card, _, _ in examples],
+            dtype=np.float32,
+        ),
+        np.asarray([target for _, _, target, _ in examples], dtype=np.float32),
+        np.asarray([weight for _, _, _, weight in examples], dtype=np.float32),
+    )
+
+
 def audit_replay_learning(
     project_root: Path,
     catalog: CardCatalog,
@@ -1004,6 +1056,12 @@ def _evaluate_candidate(
         train, transfer or [], catalog, visual_weight, transfer_weight,
     )
     positive_weight, negative_weight = _class_weights(training_y, sample_weights)
+    rank_x, rank_y, rank_sample_weights = _ranking_arrays(
+        train, transfer or [], catalog, visual_weight, transfer_weight
+    )
+    rank_positive_weight, rank_negative_weight = _class_weights(
+        rank_y, rank_sample_weights
+    )
     local_arrays = _local_arrays(train, transfer or [], catalog, visual_weight, transfer_weight)
     def predict(card: CardDefinition, action: ReplayLearningAction) -> float:
         feature = _feature(action, card, visual_weight)
@@ -1012,6 +1070,16 @@ def _evaluate_candidate(
         effect = _local_predict(local_arrays, feature, neighbors) if local_weight else 0.0
         return _temperature_scale_probability(
             value + local_weight * effect, probability_temperature
+        )
+    def predict_rank(card: CardDefinition, action: ReplayLearningAction) -> float:
+        return _balanced_knn_predict(
+            rank_x,
+            rank_y,
+            _feature(action, card, visual_weight),
+            neighbors,
+            rank_positive_weight,
+            rank_negative_weight,
+            rank_sample_weights,
         )
     action_predictions = np.asarray(
         [
@@ -1066,7 +1134,7 @@ def _evaluate_candidate(
             continue
         ranked = sorted(
             cards,
-            key=lambda card: predict(card, action),
+            key=lambda card: predict_rank(card, action),
             reverse=True,
         )
         actual_rank = next(
@@ -1818,6 +1886,12 @@ def train_replay_policy(
         trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight,
     )
     positive_weight, negative_weight = _class_weights(value_y, value_sample_weights)
+    rank_x, rank_y, rank_sample_weights = _ranking_arrays(
+        trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight,
+    )
+    rank_positive_weight, rank_negative_weight = _class_weights(
+        rank_y, rank_sample_weights
+    )
     winning_actions = _deployment_examples(trainable_actions, selected_local_weight)
     local_x, local_y, local_sample_weights = _local_arrays(trainable_actions, selected_transfer, catalog, visual_weight, transfer_weight)
     deploy_x = np.asarray(
@@ -1838,6 +1912,11 @@ def train_replay_policy(
         value_x=value_x,
         value_y=value_y,
         value_sample_weights=value_sample_weights,
+        rank_x=rank_x,
+        rank_y=rank_y,
+        rank_sample_weights=rank_sample_weights,
+        rank_positive_weight=np.asarray([rank_positive_weight], dtype=np.float32),
+        rank_negative_weight=np.asarray([rank_negative_weight], dtype=np.float32),
         local_x=local_x,
         local_y=local_y,
         local_sample_weights=local_sample_weights,
@@ -1923,6 +2002,8 @@ def train_replay_policy(
         "recompute_command": "python -m crbot --config config.json replay train",
         "uncertainty_method": "deterministic_stratified_whole_battle_bootstrap_500",
         "training_weight_unit": "one_total_weight_per_current_battle",
+        "ranking_training_target": "selected_high_in_wins_selected_low_in_losses_v1",
+        "ranking_training_examples": len(rank_y),
         "segment_dimensions": ["formation_phase", "recognized_hand"],
         "training_config_fingerprint": hashlib.sha256(
             json.dumps(
@@ -1993,6 +2074,11 @@ class ReplayPolicyModel:
         self.local_feedback_weight = 0.0
         self.value_probability_temperature = 1.0
         self.local_arrays = (np.empty((0, 0)), np.empty(0), np.empty(0))
+        self.rank_x = np.empty((0, 0))
+        self.rank_y = np.empty(0)
+        self.rank_sample_weights = np.empty(0)
+        self.rank_positive_weight = 1.0
+        self.rank_negative_weight = 1.0
         self._cached_image_id: int | None = None
         self._cached_battlefield: np.ndarray | None = None
         compatibility = (self.champion or {}).get("sync_compatibility")
@@ -2017,6 +2103,7 @@ class ReplayPolicyModel:
                     self.value_probability_temperature = float(
                         data["value_probability_temperature"][0]
                     )
+                if "local_x" in data:
                     self.local_arrays = (data["local_x"].copy(), data["local_y"].copy(), data["local_sample_weights"].copy())
                 self.value_sample_weights = (
                     data["value_sample_weights"].copy()
@@ -2027,6 +2114,12 @@ class ReplayPolicyModel:
                 self.neighbors = int(data["neighbors"][0])
                 self.positive_weight = float(data["positive_weight"][0])
                 self.negative_weight = float(data["negative_weight"][0])
+                if "rank_x" in data:
+                    self.rank_x = data["rank_x"].copy()
+                    self.rank_y = data["rank_y"].copy()
+                    self.rank_sample_weights = data["rank_sample_weights"].copy()
+                    self.rank_positive_weight = float(data["rank_positive_weight"][0])
+                    self.rank_negative_weight = float(data["rank_negative_weight"][0])
                 self.visual_weight = float(data["visual_weight"][0])
                 self.visual_feature_count = int(data["visual_feature_count"][0])
                 if "tactical_feature_count" in data:
@@ -2119,10 +2212,22 @@ class ReplayPolicyModel:
             self.value_sample_weights,
         )
         effect = _local_predict(self.local_arrays, feature, self.neighbors) if self.local_feedback_weight else 0.0
-        return _temperature_scale_probability(
+        outcome_score = _temperature_scale_probability(
             value + self.local_feedback_weight * effect,
             self.value_probability_temperature,
         )
+        if not len(self.rank_y):
+            return outcome_score
+        rank_score = _balanced_knn_predict(
+            self.rank_x,
+            self.rank_y,
+            feature,
+            self.neighbors,
+            self.rank_positive_weight,
+            self.rank_negative_weight,
+            self.rank_sample_weights,
+        )
+        return float(np.clip(rank_score + self.local_feedback_weight * effect, 0.0, 1.0))
 
     def deploy_point(
         self,
