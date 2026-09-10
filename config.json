@@ -116,7 +116,7 @@
     "publish_unvalidated_models": true
   },
   "controlled_experiment": {
-    "enabled": false,
+    "enabled": true,
     "batch_size": 10,
     "minimum_battles_before_guardrail": 10,
     "maximum_unknown_result_rate": 0.1,
