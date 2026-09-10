@@ -1053,6 +1053,7 @@ def _evaluate_candidate(
     transfer_weight: float = 0.25,
     local_weight: float = 0.0,
     probability_temperature: float = 1.0,
+    use_rank_model: bool = True,
 ) -> dict[str, Any]:
     training_x, training_y, sample_weights = _training_arrays(
         train, transfer or [], catalog, visual_weight, transfer_weight,
@@ -1136,7 +1137,9 @@ def _evaluate_candidate(
             continue
         ranked = sorted(
             cards,
-            key=lambda card: predict_rank(card, action),
+            key=lambda card: (
+                predict_rank(card, action) if use_rank_model else predict(card, action)
+            ),
             reverse=True,
         )
         actual_rank = next(
@@ -1803,6 +1806,64 @@ def train_replay_policy(
             "combinations": diagnostics,
         }
 
+    pre_ranking_selection_metrics = dict(metrics)
+    ranking_source_metrics: dict[str, Any] = {}
+    ranking_candidates: dict[str, dict[str, Any]] = {}
+    for ranking_source, use_rank_model in (("outcome_value", False), ("successful_choice", True)):
+        candidate_metrics = _evaluate_candidate(
+            train, validation, catalog, neighbors, visual_weight,
+            selected_transfer, transfer_weight, selected_local_weight,
+            use_rank_model=use_rank_model,
+        )
+        if temporal_validation:
+            temporal_candidate = _evaluate_candidate(
+                temporal_train, temporal_validation, catalog, neighbors,
+                visual_weight, selected_temporal_transfer, transfer_weight,
+                selected_local_weight, use_rank_model=use_rank_model,
+            )
+            candidate_metrics.update(
+                {f"temporal_{key}": value for key, value in temporal_candidate.items()}
+            )
+        random_lift = float(candidate_metrics.get("rank_separation_lift", -math.inf))
+        temporal_lift = float(
+            candidate_metrics.get("temporal_rank_separation_lift", random_lift)
+        )
+        required_random = float(config.get("minimum_rank_separation_lift", 0.02))
+        required_temporal = float(
+            config.get("minimum_temporal_rank_separation_lift", 0.02)
+        )
+        gates = int(random_lift >= required_random)
+        if bool(config.get("require_temporal_validation", False)):
+            gates += int(temporal_lift >= required_temporal)
+        ranking_source_metrics[ranking_source] = {
+            "random_rank_separation_lift": round(random_lift, 6),
+            "temporal_rank_separation_lift": round(temporal_lift, 6),
+            "ranking_gates_passed": gates,
+        }
+        ranking_candidates[ranking_source] = {
+            "metrics": candidate_metrics,
+            "use_rank_model": use_rank_model,
+        }
+    selected_ranking_source = max(
+        ranking_candidates,
+        key=lambda name: (
+            ranking_source_metrics[name]["ranking_gates_passed"],
+            min(
+                ranking_source_metrics[name]["random_rank_separation_lift"],
+                ranking_source_metrics[name]["temporal_rank_separation_lift"],
+            ),
+            ranking_source_metrics[name]["random_rank_separation_lift"]
+            + ranking_source_metrics[name]["temporal_rank_separation_lift"],
+        ),
+    )
+    use_rank_model = bool(
+        ranking_candidates[selected_ranking_source]["use_rank_model"]
+    )
+    metrics = dict(ranking_candidates[selected_ranking_source]["metrics"])
+    for key, value in pre_ranking_selection_metrics.items():
+        if key.startswith("evaluated_"):
+            metrics[key] = value
+
     probability_temperature, probability_calibration = _fit_probability_temperature(
         train,
         selected_transfer,
@@ -1818,6 +1879,7 @@ def train_replay_policy(
         train, validation, catalog, neighbors, visual_weight,
         selected_transfer, transfer_weight, selected_local_weight,
         probability_temperature,
+        use_rank_model,
     )
     for key, value in selection_metrics.items():
         if key.startswith("evaluated_"):
@@ -1830,6 +1892,7 @@ def train_replay_policy(
             train, validation, catalog, neighbors, visual_weight,
             local_weight=selected_local_weight,
             probability_temperature=probability_temperature,
+            use_rank_model=use_rank_model,
         )
         metrics["transfer_score_gain"] = round(
             _evaluation_score(metrics) - _evaluation_score(calibrated_current), 6
@@ -1840,6 +1903,7 @@ def train_replay_policy(
             train, validation, catalog, neighbors, visual_weight,
             selected_transfer, transfer_weight,
             probability_temperature=probability_temperature,
+            use_rank_model=use_rank_model,
         )
         metrics["local_score_gain"] = round(
             _evaluation_score(metrics) - _evaluation_score(calibrated_without_local), 6
@@ -1850,6 +1914,7 @@ def train_replay_policy(
             temporal_train, temporal_validation, catalog, neighbors, visual_weight,
             selected_temporal_transfer, transfer_weight, selected_local_weight,
             probability_temperature,
+            use_rank_model,
         )
         metrics.update(
             {f"temporal_{key}": value for key, value in calibrated_temporal.items()}
@@ -1862,6 +1927,7 @@ def train_replay_policy(
                 temporal_train, temporal_validation, catalog, neighbors,
                 visual_weight, local_weight=selected_local_weight,
                 probability_temperature=probability_temperature,
+                use_rank_model=use_rank_model,
             )
             metrics["temporal_transfer_score_gain"] = round(
                 _evaluation_score(calibrated_temporal)
@@ -1875,6 +1941,7 @@ def train_replay_policy(
                 temporal_train, temporal_validation, catalog, neighbors,
                 visual_weight, selected_temporal_transfer, transfer_weight,
                 probability_temperature=probability_temperature,
+                use_rank_model=use_rank_model,
             )
             metrics["temporal_local_score_gain"] = round(
                 _evaluation_score(calibrated_temporal)
@@ -1919,6 +1986,7 @@ def train_replay_policy(
         rank_sample_weights=rank_sample_weights,
         rank_positive_weight=np.asarray([rank_positive_weight], dtype=np.float32),
         rank_negative_weight=np.asarray([rank_negative_weight], dtype=np.float32),
+        rank_model_enabled=np.asarray([int(use_rank_model)], dtype=np.int8),
         local_x=local_x,
         local_y=local_y,
         local_sample_weights=local_sample_weights,
@@ -1974,6 +2042,8 @@ def train_replay_policy(
         "value_probability_temperature": probability_temperature,
         "value_probability_calibration": probability_calibration,
         "joint_signal_selection": joint_selection,
+        "ranking_source": selected_ranking_source,
+        "ranking_source_evaluation": ranking_source_metrics,
         "local_feedback_schema": "short_horizon_visual_proxy_v1",
         "local_feedback_is_causal_ground_truth": False,
         "local_feedback_actions": sum(a.local_confidence > 0 for a in trainable_actions),
@@ -2081,6 +2151,7 @@ class ReplayPolicyModel:
         self.rank_sample_weights = np.empty(0)
         self.rank_positive_weight = 1.0
         self.rank_negative_weight = 1.0
+        self.rank_model_enabled = False
         self._cached_image_id: int | None = None
         self._cached_battlefield: np.ndarray | None = None
         compatibility = (self.champion or {}).get("sync_compatibility")
@@ -2122,6 +2193,9 @@ class ReplayPolicyModel:
                     self.rank_sample_weights = data["rank_sample_weights"].copy()
                     self.rank_positive_weight = float(data["rank_positive_weight"][0])
                     self.rank_negative_weight = float(data["rank_negative_weight"][0])
+                    self.rank_model_enabled = bool(
+                        int(data["rank_model_enabled"][0])
+                    ) if "rank_model_enabled" in data else False
                 self.visual_weight = float(data["visual_weight"][0])
                 self.visual_feature_count = int(data["visual_feature_count"][0])
                 if "tactical_feature_count" in data:
@@ -2218,7 +2292,7 @@ class ReplayPolicyModel:
             value + self.local_feedback_weight * effect,
             self.value_probability_temperature,
         )
-        if not len(self.rank_y):
+        if not self.rank_model_enabled or not len(self.rank_y):
             return outcome_score
         rank_score = _balanced_knn_predict(
             self.rank_x,
