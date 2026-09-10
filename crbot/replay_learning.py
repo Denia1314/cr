@@ -453,7 +453,7 @@ def _ranking_arrays(
     visual_weight: float,
     transfer_weight: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Build a separate hand-ranking target without changing outcome labels."""
+    """Learn card ranking from successful choices without inventing loss alternatives."""
 
     train_groups = {action.group_id for action in train}
     transfer_groups = {action.group_id for action in transfer}
@@ -469,6 +469,8 @@ def _ranking_arrays(
     ):
         pending: list[tuple[ReplayLearningAction, CardDefinition, float]] = []
         for action in rows:
+            if action.outcome != "win":
+                continue
             cards = [
                 catalog.get(card_id)
                 for card_id in dict.fromkeys(value for value in action.hand if value)
@@ -476,7 +478,7 @@ def _ranking_arrays(
             cards = [card for card in cards if card is not None]
             for card in cards:
                 selected = card.card_id == action.card_id
-                target = float(selected if action.outcome == "win" else not selected)
+                target = float(selected)
                 pending.append((action, card, target))
                 counts[(source, action.group_id)] = counts.get((source, action.group_id), 0) + 1
         examples.extend(
@@ -2002,7 +2004,7 @@ def train_replay_policy(
         "recompute_command": "python -m crbot --config config.json replay train",
         "uncertainty_method": "deterministic_stratified_whole_battle_bootstrap_500",
         "training_weight_unit": "one_total_weight_per_current_battle",
-        "ranking_training_target": "selected_high_in_wins_selected_low_in_losses_v1",
+        "ranking_training_target": "successful_choice_vs_same_hand_alternatives_v2",
         "ranking_training_examples": len(rank_y),
         "segment_dimensions": ["formation_phase", "recognized_hand"],
         "training_config_fingerprint": hashlib.sha256(
