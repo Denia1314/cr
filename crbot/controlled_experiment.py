@@ -93,11 +93,13 @@ class ControlledExperiment:
         policy = episode.get("policy", {})
         if not isinstance(policy, dict) or policy.get("experiment_arm") != "candidate":
             return ""
+        current_batch = policy.get("experiment_batch_index")
         candidate_episodes = [
             row
             for row in self.episodes
             if isinstance(row.get("policy"), dict)
             and row["policy"].get("experiment_arm") == "candidate"
+            and row["policy"].get("experiment_batch_index") == current_batch
         ]
         minimum = max(1, int(self.config.get("minimum_battles_before_guardrail", 10)))
         if len(candidate_episodes) < minimum:

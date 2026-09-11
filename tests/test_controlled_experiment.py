@@ -109,6 +109,42 @@ class ControlledExperimentTests(unittest.TestCase):
         self.assertEqual(reason, "")
         self.assertEqual(experiment.stop_reason, "")
 
+    def test_guardrail_counts_only_the_current_candidate_batch(self) -> None:
+        prior = [
+            {
+                "reward_verified": True,
+                "action_count": 4,
+                "confirmed_action_count": 0,
+                "policy": {
+                    "experiment_arm": "candidate",
+                    "experiment_batch_index": 1,
+                },
+            }
+            for _ in range(10)
+        ]
+        experiment = ControlledExperiment(
+            {
+                "enabled": True,
+                "minimum_battles_before_guardrail": 2,
+                "maximum_unknown_result_rate": 0.0,
+                "maximum_unconfirmed_action_rate": 0.0,
+            },
+            None,
+            prior_episodes=prior,
+        )
+        new_batch = {
+            "reward_verified": True,
+            "action_count": 4,
+            "confirmed_action_count": 4,
+            "policy": {
+                "experiment_arm": "candidate",
+                "experiment_batch_index": 3,
+            },
+        }
+
+        self.assertEqual(experiment.observe(new_batch), "")
+        self.assertEqual(experiment.observe(new_batch), "")
+
     def test_prior_episodes_resume_absolute_batch_position(self) -> None:
         model = SimpleNamespace(
             influence_scale=0.1,
