@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 from crbot.adb import DeviceError, MumuDevice
 
@@ -164,6 +167,46 @@ class MumuConnectionTests(unittest.TestCase):
         self.assertEqual(package, "com.tencent.tmgp.supercell.clashroyale")
         self.assertEqual(attempts, 2)
         self.assertEqual(reconnects, 1)
+
+    def test_screenshot_reconnects_after_transient_timeout(self) -> None:
+        device = MumuDevice.__new__(MumuDevice)
+        attempts = 0
+        reconnects = 0
+        buffer = io.BytesIO()
+        Image.new("RGB", (2, 3), "red").save(buffer, format="PNG")
+
+        def fake_adb(_arguments: list[str], **_kwargs: object) -> bytes:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise subprocess.TimeoutExpired("adb", 20)
+            return buffer.getvalue()
+
+        def fake_connect() -> str:
+            nonlocal reconnects
+            reconnects += 1
+            device.serial = "127.0.0.1:16384"
+            return device.serial
+
+        device.adb = fake_adb  # type: ignore[method-assign]
+        device.connect = fake_connect  # type: ignore[method-assign]
+
+        image = device.screenshot()
+
+        self.assertEqual(image.size, (2, 3))
+        self.assertEqual(attempts, 2)
+        self.assertEqual(reconnects, 1)
+
+    def test_screenshot_wraps_repeated_timeout_as_device_error(self) -> None:
+        device = MumuDevice.__new__(MumuDevice)
+        device.serial = "127.0.0.1:16384"
+        device.adb = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+            subprocess.TimeoutExpired("adb", 20)
+        )
+        device.connect = lambda: device.serial  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(DeviceError, "重连后仍然超时"):
+            device.screenshot()
 
 
 if __name__ == "__main__":

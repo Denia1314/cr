@@ -431,7 +431,18 @@ class MumuDevice:
         return result.stdout
 
     def screenshot(self) -> Image.Image:
-        raw = self.adb(["exec-out", "screencap", "-p"], timeout=20, binary=True)
+        arguments = ["exec-out", "screencap", "-p"]
+        try:
+            raw = self.adb(arguments, timeout=20, binary=True)
+        except (DeviceError, subprocess.TimeoutExpired):
+            # MuMu's local ADB transport can stall while the emulator and game
+            # remain healthy. Screenshots are read-only, so reconnect and retry
+            # once before ending a live experiment.
+            self.connect()
+            try:
+                raw = self.adb(arguments, timeout=20, binary=True)
+            except subprocess.TimeoutExpired as exc:
+                raise DeviceError("ADB 截图重连后仍然超时") from exc
         try:
             return Image.open(io.BytesIO(raw)).convert("RGB")
         except Exception as exc:
