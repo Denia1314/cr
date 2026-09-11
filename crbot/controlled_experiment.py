@@ -90,6 +90,9 @@ class ControlledExperiment:
         if not self.enabled:
             return ""
         self.episodes.append(dict(episode))
+        policy = episode.get("policy", {})
+        if not isinstance(policy, dict) or policy.get("experiment_arm") != "candidate":
+            return ""
         candidate_episodes = [
             row
             for row in self.episodes
