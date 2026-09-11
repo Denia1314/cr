@@ -177,10 +177,12 @@ class ReplaySyncTests(unittest.TestCase):
     def test_config_can_publish_and_receive_latest_rejected_model(self):
         for service in (self.a, self.b):
             config = read_json(service.root / "config.json")
-            config["training_sync"] = {"publish_unvalidated_models": True}
+            config["training_sync"] = {"publish_unvalidated_models": True, "publish_releases": True}
             atomic_write(service.root / "config.json", encode(config))
         self.make_model(passed=False)
-        self.assertEqual(self.a.sync()["published_models"], 1)
+        with patch.object(self.a, "_publish_model_release") as publish_release:
+            self.assertEqual(self.a.sync()["published_models"], 1)
+        publish_release.assert_called_once()
         self.assertEqual(self.b.sync()["received_models"], 1)
         registry = read_json(self.b.root / "models/replay_policy/registry.json")
         self.assertEqual(registry["candidates"][0]["status"], "rejected")

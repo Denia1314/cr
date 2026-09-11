@@ -487,7 +487,28 @@ class ReplaySync:
             return 0
         atomic_write(self.checkout / "models" / (digest + ".npz"), data)
         atomic_write(pointer_path, encode(pointer))
+        if bool(sync_config.get("publish_releases", False)):
+            self._publish_model_release(candidate, source)
         return 1
+
+    def _publish_model_release(self, candidate: dict[str, Any], source: Path) -> None:
+        """Publish each newly selected candidate as a GitHub Release asset."""
+        repository = str(self.config.get("repository") or DEFAULT_REPOSITORY)
+        version = str(candidate.get("version", ""))
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", version):
+            raise SyncError("模型版本号无效，无法创建 Release")
+        tag = f"model-{version}"
+        try:
+            command([gh_path(), "release", "view", tag, "--repo", repository])
+            return
+        except SyncError:
+            pass
+        notes = (f"自动发布模型 {version}\n"
+                 f"status: {candidate.get('status')}\n"
+                 f"quality_passed: {bool(candidate.get('quality_passed'))}\n"
+                 f"sha256: {candidate.get('model_sha256') or candidate.get('sync_sha256', '')}")
+        command([gh_path(), "release", "create", tag, str(source), "--repo", repository,
+                 "--title", f"Model {version}", "--notes", notes])
 
     def import_model(self) -> int:
         if self.config.get("trainer"):

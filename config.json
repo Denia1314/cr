@@ -113,7 +113,8 @@
     "policy_deploy_weight": 0.2
   },
   "training_sync": {
-    "publish_unvalidated_models": true
+    "publish_unvalidated_models": true,
+    "publish_releases": true
   },
   "controlled_experiment": {
     "enabled": true,
