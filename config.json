@@ -118,9 +118,10 @@
   "controlled_experiment": {
     "enabled": true,
     "batch_size": 10,
+    "guardrail_version": "relative_confirmation_v1",
     "minimum_battles_before_guardrail": 10,
     "maximum_unknown_result_rate": 0.1,
-    "maximum_unconfirmed_action_rate": 0.1
+    "maximum_confirmation_rate_drop_vs_baseline": 0.05
   },
   "vision": {
     "min_probe_score": 0.78,

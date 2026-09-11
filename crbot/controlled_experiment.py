@@ -81,6 +81,9 @@ class ControlledExperiment:
             "experiment_arm": assigned.arm if self.enabled else "normal",
             "experiment_batch_index": assigned.batch_index if self.enabled else None,
             "experiment_battle_index": assigned.battle_index if self.enabled else None,
+            "experiment_guardrail_version": (
+                self.config.get("guardrail_version") if self.enabled else None
+            ),
             "runtime_replay_version": champion.get("version"),
             "runtime_replay_loaded": bool(self.replay_model is not None and getattr(self.replay_model, "available", False)),
             "runtime_replay_influence_scale": round(float(getattr(self.replay_model, "influence_scale", 0.0)), 6),
@@ -94,13 +97,15 @@ class ControlledExperiment:
         if not isinstance(policy, dict) or policy.get("experiment_arm") != "candidate":
             return ""
         current_batch = policy.get("experiment_batch_index")
-        candidate_episodes = [
+        candidate_episodes = self._unique_batch_episodes(
+            [
             row
             for row in self.episodes
             if isinstance(row.get("policy"), dict)
             and row["policy"].get("experiment_arm") == "candidate"
             and row["policy"].get("experiment_batch_index") == current_batch
-        ]
+            ]
+        )
         minimum = max(1, int(self.config.get("minimum_battles_before_guardrail", 10)))
         if len(candidate_episodes) < minimum:
             return ""
@@ -111,9 +116,55 @@ class ControlledExperiment:
         unconfirmed_rate = (actions - confirmed) / actions if actions else 0.0
         if unknown_rate > float(self.config.get("maximum_unknown_result_rate", 0.10)):
             self.stop_reason = f"unknown_result_rate={unknown_rate:.3f}"
-        elif unconfirmed_rate > float(self.config.get("maximum_unconfirmed_action_rate", 0.10)):
-            self.stop_reason = f"unconfirmed_action_rate={unconfirmed_rate:.3f}"
+        else:
+            absolute_limit = self.config.get("maximum_unconfirmed_action_rate")
+            if absolute_limit is not None and unconfirmed_rate > float(absolute_limit):
+                self.stop_reason = f"unconfirmed_action_rate={unconfirmed_rate:.3f}"
+            relative_limit = self.config.get(
+                "maximum_confirmation_rate_drop_vs_baseline"
+            )
+            baseline_episodes = self._unique_batch_episodes(
+                [
+                    row
+                    for row in self.episodes
+                    if isinstance(row.get("policy"), dict)
+                    and row["policy"].get("experiment_arm") == "baseline"
+                    and row["policy"].get("experiment_batch_index")
+                    == int(current_batch) - 1
+                ]
+            ) if current_batch is not None else []
+            baseline_actions = sum(
+                int(row.get("action_count", 0)) for row in baseline_episodes
+            )
+            baseline_confirmed = sum(
+                int(row.get("confirmed_action_count", 0))
+                for row in baseline_episodes
+            )
+            if (
+                not self.stop_reason
+                and relative_limit is not None
+                and len(baseline_episodes) >= minimum
+                and baseline_actions > 0
+                and actions > 0
+            ):
+                baseline_rate = baseline_confirmed / baseline_actions
+                candidate_rate = confirmed / actions
+                rate_drop = baseline_rate - candidate_rate
+                if rate_drop > float(relative_limit):
+                    self.stop_reason = (
+                        f"confirmation_rate_drop_vs_baseline={rate_drop:.3f}"
+                    )
         return self.stop_reason
+
+    @staticmethod
+    def _unique_batch_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        unique: dict[object, dict[str, Any]] = {}
+        for row in sorted(rows, key=lambda item: float(item.get("timestamp_unix", 0.0))):
+            policy = row.get("policy", {})
+            index = policy.get("experiment_battle_index") if isinstance(policy, dict) else None
+            key: object = index if index is not None else row.get("episode_id", id(row))
+            unique.setdefault(key, row)
+        return list(unique.values())
 
     def rollback_to_baseline(self) -> dict[str, Any]:
         """Disable candidate influence without replacing or deleting its model."""
@@ -156,7 +207,23 @@ def load_controlled_experiment_episodes(
 
 def audit_controlled_experiment(project_root: Path) -> dict[str, Any]:
     """Summarize completed experiment episodes and detect arm contamination."""
-    rows = load_controlled_experiment_episodes(project_root)
+    raw_rows = load_controlled_experiment_episodes(project_root)
+    rows: list[dict[str, Any]] = []
+    seen: dict[tuple[str, int], str] = {}
+    duplicates: list[str] = []
+    for row in sorted(raw_rows, key=lambda item: float(item.get("timestamp_unix", 0.0))):
+        policy = row.get("policy", {})
+        index = policy.get("experiment_battle_index") if isinstance(policy, dict) else None
+        version = str(policy.get("runtime_replay_version", "")) if isinstance(policy, dict) else ""
+        if index is not None:
+            key = (version, int(index))
+            if key in seen:
+                duplicates.append(
+                    f"{version}:{index}:{seen[key]}:{row.get('episode_id', 'unknown')}"
+                )
+                continue
+            seen[key] = str(row.get("episode_id", "unknown"))
+        rows.append(row)
     arms: dict[str, dict[str, Any]] = {}
     contamination: list[str] = []
     for row in rows:
@@ -188,9 +255,11 @@ def audit_controlled_experiment(project_root: Path) -> dict[str, Any]:
         summary["win_rate"] = round(summary["wins"] / verified, 6) if verified else None
         summary["confirmation_rate"] = round(summary["confirmed_actions"] / actions, 6) if actions else None
     return {
-        "schema": "controlled_experiment_audit_v1",
+        "schema": "controlled_experiment_audit_v2",
+        "raw_episodes": len(raw_rows),
         "episodes": len(rows),
         "arms": arms,
         "contamination": contamination,
+        "duplicate_experiment_indices": duplicates,
         "ready_for_comparison": bool(arms.get("baseline", {}).get("verified") and arms.get("candidate", {}).get("verified") and not contamination),
     }

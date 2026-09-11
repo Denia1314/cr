@@ -145,6 +145,46 @@ class ControlledExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.observe(new_batch), "")
         self.assertEqual(experiment.observe(new_batch), "")
 
+    def test_relative_confirmation_guardrail_compares_previous_baseline(self) -> None:
+        baseline = [
+            {
+                "timestamp_unix": index,
+                "action_count": 10,
+                "confirmed_action_count": 6,
+                "policy": {
+                    "experiment_arm": "baseline",
+                    "experiment_batch_index": 2,
+                    "experiment_battle_index": 21 + index,
+                },
+            }
+            for index in range(2)
+        ]
+        experiment = ControlledExperiment(
+            {
+                "enabled": True,
+                "minimum_battles_before_guardrail": 2,
+                "maximum_unknown_result_rate": 1.0,
+                "maximum_confirmation_rate_drop_vs_baseline": 0.05,
+            },
+            None,
+            prior_episodes=baseline,
+        )
+        candidate = {
+            "reward_verified": True,
+            "action_count": 10,
+            "confirmed_action_count": 5,
+            "policy": {
+                "experiment_arm": "candidate",
+                "experiment_batch_index": 3,
+            },
+        }
+
+        self.assertEqual(experiment.observe(candidate), "")
+        self.assertEqual(
+            experiment.observe(candidate),
+            "confirmation_rate_drop_vs_baseline=0.100",
+        )
+
     def test_prior_episodes_resume_absolute_batch_position(self) -> None:
         model = SimpleNamespace(
             influence_scale=0.1,
@@ -231,6 +271,52 @@ class ControlledExperimentTests(unittest.TestCase):
             contaminated = audit_controlled_experiment(root)
             self.assertFalse(contaminated["ready_for_comparison"])
             self.assertIn("base-1:baseline_nonzero_scale", contaminated["contamination"])
+
+    def test_audit_deduplicates_repeated_experiment_indices(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = root / "runs" / "one"
+            run.mkdir(parents=True)
+            policy = {
+                "experiment_enabled": True,
+                "experiment_arm": "candidate",
+                "experiment_batch_index": 1,
+                "experiment_battle_index": 11,
+                "runtime_replay_version": "model-1",
+                "runtime_replay_loaded": True,
+                "runtime_replay_influence_scale": 0.1,
+            }
+            rows = [
+                {
+                    "episode_id": "first",
+                    "timestamp_unix": 1.0,
+                    "reward_verified": True,
+                    "outcome": "win",
+                    "action_count": 2,
+                    "confirmed_action_count": 2,
+                    "policy": policy,
+                },
+                {
+                    "episode_id": "duplicate",
+                    "timestamp_unix": 2.0,
+                    "reward_verified": True,
+                    "outcome": "win",
+                    "action_count": 2,
+                    "confirmed_action_count": 2,
+                    "policy": policy,
+                },
+            ]
+            (run / "replay_episodes.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            audit = audit_controlled_experiment(root)
+
+            self.assertEqual(audit["raw_episodes"], 2)
+            self.assertEqual(audit["episodes"], 1)
+            self.assertEqual(audit["arms"]["candidate"]["episodes"], 1)
+            self.assertEqual(len(audit["duplicate_experiment_indices"]), 1)
 
 
 if __name__ == "__main__":
