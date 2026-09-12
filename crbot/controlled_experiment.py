@@ -257,12 +257,100 @@ def audit_controlled_experiment(project_root: Path) -> dict[str, Any]:
         actions = int(summary["actions"])
         summary["win_rate"] = round(summary["wins"] / verified, 6) if verified else None
         summary["confirmation_rate"] = round(summary["confirmed_actions"] / actions, 6) if actions else None
+    comparison = _audit_comparison_groups(raw_rows)
     return {
-        "schema": "controlled_experiment_audit_v2",
+        "schema": "controlled_experiment_audit_v3",
         "raw_episodes": len(raw_rows),
         "episodes": len(rows),
         "arms": arms,
         "contamination": contamination,
         "duplicate_experiment_indices": duplicates,
-        "ready_for_comparison": bool(arms.get("baseline", {}).get("verified") and arms.get("candidate", {}).get("verified") and not contamination),
+        "comparison": comparison,
+        "ready_for_comparison": comparison["ready_for_comparison"],
     }
+
+
+def _audit_comparison_groups(raw_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep exploratory cohorts visible without claiming missing identity is controlled."""
+    required = (
+        "runtime_replay_version", "experiment_guardrail_version", "mode",
+        "runtime_model", "rule_version", "imitation_version", "code_commit",
+        "config_sha256", "replay_model_sha256", "deck_id", "battle_mode",
+        "environment_id",
+    )
+    by_index: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for row in raw_rows:
+        policy = row.get("policy", {})
+        if not isinstance(policy, dict):
+            continue
+        index = policy.get("experiment_battle_index")
+        if index is not None:
+            by_index.setdefault((str(policy.get("runtime_replay_version")), int(index)), []).append(row)
+
+    conflicts = {
+        key for key, items in by_index.items()
+        if len({json.dumps(item, sort_keys=True, ensure_ascii=False) for item in items}) > 1
+    }
+    exclusions: list[dict[str, Any]] = []
+    groups: dict[str, dict[str, Any]] = {}
+    seen: set[tuple[str, int]] = set()
+    for row in sorted(raw_rows, key=lambda item: float(item.get("timestamp_unix", 0.0))):
+        policy = row.get("policy", {})
+        if not isinstance(policy, dict):
+            continue
+        episode_id = str(row.get("episode_id", "unknown"))
+        index = policy.get("experiment_battle_index")
+        key = (str(policy.get("runtime_replay_version")), int(index)) if index is not None else None
+        if key in conflicts:
+            exclusions.append({"episode_id": episode_id, "reason": "conflicting_experiment_index"})
+            continue
+        if key is not None and key in seen:
+            exclusions.append({"episode_id": episode_id, "reason": "identical_duplicate"})
+            continue
+        if key is not None:
+            seen.add(key)
+        missing = [field for field in required if not policy.get(field)]
+        if index is None:
+            missing.append("experiment_battle_index")
+        if policy.get("experiment_batch_index") is None:
+            missing.append("experiment_batch_index")
+        arm = policy.get("experiment_arm")
+        scale = float(policy.get("runtime_replay_influence_scale", 0.0))
+        if arm not in {"baseline", "candidate"}:
+            exclusions.append({"episode_id": episode_id, "reason": "invalid_arm"})
+            continue
+        if arm == "baseline" and scale != 0.0 or arm == "candidate" and (
+            not policy.get("runtime_replay_loaded") or scale <= 0.0
+        ):
+            exclusions.append({"episode_id": episode_id, "reason": "arm_contamination"})
+            continue
+        identity = {field: policy.get(field) for field in required}
+        # Baseline and candidate must share a cohort. Candidate scale is reported
+        # separately because the baseline deliberately sets it to zero.
+        group_key = json.dumps(identity, sort_keys=True, ensure_ascii=False)
+        group = groups.setdefault(group_key, {"identity": identity, "arms": {}, "batches": {}, "missing_identity_fields": missing})
+        group["missing_identity_fields"] = sorted(set(group["missing_identity_fields"]) | set(missing))
+        for target in (group["arms"], group["batches"].setdefault(str(policy.get("experiment_batch_index")), {})):
+            summary = target.setdefault(arm, {"episodes": 0, "verified": 0, "wins": 0, "losses": 0, "draws": 0, "unknown": 0})
+            summary["episodes"] += 1
+            verified = bool(row.get("reward_verified"))
+            summary["verified"] += int(verified)
+            outcome = str(row.get("outcome", "unknown")) if verified else "unknown"
+            bucket = {"win": "wins", "loss": "losses", "draw": "draws"}.get(outcome, outcome)
+            summary[bucket if bucket in {"wins", "losses", "draws"} else "unknown"] += 1
+        if missing:
+            exclusions.append({"episode_id": episode_id, "reason": "missing_identity", "fields": missing})
+    result = list(groups.values())
+    for group in result:
+        batches = group["batches"]
+        complete_pairs = [
+            [batch, batch + 1] for batch in sorted(int(value) for value in batches if value != "None")
+            if batch % 2 == 0
+            and batches[str(batch)].get("baseline", {}).get("episodes", 0) >= 10
+            and batches.get(str(batch + 1), {}).get("candidate", {}).get("episodes", 0) >= 10
+        ]
+        group["complete_batch_pairs"] = complete_pairs
+        group["ready_for_comparison"] = not group["missing_identity_fields"] and bool(complete_pairs)
+    return {"groups": result, "exclusions": exclusions,
+            "conflicting_indices": [f"{version}:{index}" for version, index in sorted(conflicts)],
+            "ready_for_comparison": any(group["ready_for_comparison"] for group in result)}

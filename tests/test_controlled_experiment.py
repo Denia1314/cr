@@ -290,7 +290,9 @@ class ControlledExperimentTests(unittest.TestCase):
 
             audit = audit_controlled_experiment(root)
 
-            self.assertTrue(audit["ready_for_comparison"])
+            self.assertFalse(audit["ready_for_comparison"])
+            self.assertEqual(len(audit["comparison"]["groups"]), 1)
+            self.assertIn("code_commit", audit["comparison"]["groups"][0]["missing_identity_fields"])
             self.assertEqual(audit["arms"]["baseline"]["win_rate"], 1.0)
             self.assertEqual(audit["arms"]["candidate"]["confirmation_rate"], 0.75)
 
@@ -347,6 +349,46 @@ class ControlledExperimentTests(unittest.TestCase):
             self.assertEqual(audit["episodes"], 1)
             self.assertEqual(audit["arms"]["candidate"]["episodes"], 1)
             self.assertEqual(len(audit["duplicate_experiment_indices"]), 1)
+            self.assertEqual(audit["comparison"]["conflicting_indices"], ["model-1:11"])
+            self.assertEqual(
+                [item["reason"] for item in audit["comparison"]["exclusions"]],
+                ["conflicting_experiment_index", "conflicting_experiment_index"],
+            )
+
+    def test_comparison_separates_protocols_and_requires_complete_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = root / "runs" / "one"
+            run.mkdir(parents=True)
+            identity = {
+                "experiment_enabled": True, "runtime_replay_version": "model-1",
+                "mode": "reactive", "runtime_model": "m3", "rule_version": "rule-1",
+                "imitation_version": "imitation-1", "code_commit": "commit-1",
+                "config_sha256": "config-1", "replay_model_sha256": "hash-1",
+                "deck_id": "deck-1", "battle_mode": "ranked",
+                "environment_id": "environment-1", "runtime_replay_loaded": True,
+            }
+            rows = []
+            for guardrail, offset in (("old", 0), ("new", 20)):
+                for arm, index, batch, scale in (("baseline", 1, 0, 0.0), ("candidate", 11, 1, 0.1)):
+                    for number in range(10):
+                        rows.append({
+                            "episode_id": f"{guardrail}-{arm}-{number}", "reward_verified": True,
+                            "outcome": "win", "policy": {
+                                **identity, "experiment_guardrail_version": guardrail,
+                                "experiment_arm": arm, "experiment_battle_index": index + offset + number,
+                                "experiment_batch_index": batch + offset // 10,
+                                "runtime_replay_influence_scale": scale,
+                            },
+                        })
+            (run / "replay_episodes.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+            )
+            audit = audit_controlled_experiment(root)
+            self.assertTrue(audit["ready_for_comparison"])
+            self.assertEqual(len(audit["comparison"]["groups"]), 2)
+            self.assertTrue(all(group["ready_for_comparison"] for group in audit["comparison"]["groups"]))
+            self.assertEqual([group["complete_batch_pairs"] for group in audit["comparison"]["groups"]], [[[0, 1]], [[2, 3]]])
 
 
 if __name__ == "__main__":
