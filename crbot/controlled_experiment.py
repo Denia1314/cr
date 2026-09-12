@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ class ControlledExperiment:
         self.batch_size = max(1, int(self.config.get("batch_size", 10)))
         self.replay_model = replay_model
         self.candidate_scale = float(getattr(replay_model, "influence_scale", 0.0))
-        self.episodes = [dict(row) for row in (prior_episodes or [])]
+        self.episodes = [deepcopy(row) for row in (prior_episodes or [])]
         self.battle_offset = self._restored_battle_offset()
         self.stop_reason = ""
 
@@ -92,7 +93,9 @@ class ControlledExperiment:
     def observe(self, episode: dict[str, Any]) -> str:
         if not self.enabled:
             return ""
-        self.episodes.append(dict(episode))
+        # The recorder reuses policy_metadata across battles. Freeze each
+        # completed episode before the next assignment mutates that mapping.
+        self.episodes.append(deepcopy(episode))
         policy = episode.get("policy", {})
         if not isinstance(policy, dict) or policy.get("experiment_arm") != "candidate":
             return ""

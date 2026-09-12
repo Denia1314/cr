@@ -185,6 +185,36 @@ class ControlledExperimentTests(unittest.TestCase):
             "confirmation_rate_drop_vs_baseline=0.100",
         )
 
+    def test_guardrail_freezes_reused_recorder_policy_between_battles(self) -> None:
+        experiment = ControlledExperiment(
+            {
+                "enabled": True,
+                "minimum_battles_before_guardrail": 2,
+                "maximum_unknown_result_rate": 1.0,
+                "maximum_confirmation_rate_drop_vs_baseline": 0.05,
+            },
+            None,
+        )
+        shared_policy = {"experiment_arm": "baseline", "experiment_batch_index": 2}
+        for index in range(2):
+            shared_policy["experiment_battle_index"] = 21 + index
+            self.assertEqual(experiment.observe({
+                "reward_verified": True, "action_count": 10,
+                "confirmed_action_count": 6, "policy": shared_policy,
+            }), "")
+        shared_policy.update(experiment_arm="candidate", experiment_batch_index=3)
+        for index in range(2):
+            shared_policy["experiment_battle_index"] = 31 + index
+            reason = experiment.observe({
+                "reward_verified": True, "action_count": 10,
+                "confirmed_action_count": 5, "policy": shared_policy,
+            })
+        self.assertEqual(reason, "confirmation_rate_drop_vs_baseline=0.100")
+        self.assertEqual(
+            [row["policy"]["experiment_battle_index"] for row in experiment.episodes],
+            [21, 22, 31, 32],
+        )
+
     def test_prior_episodes_resume_absolute_batch_position(self) -> None:
         model = SimpleNamespace(
             influence_scale=0.1,
