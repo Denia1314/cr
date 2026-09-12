@@ -22,6 +22,7 @@ from .config import load_config, resolve_project_path, save_config
 from .demonstration import DemonstrationRecorder
 from .engine import BotEngine
 from .learning import ModelRegistry, audit_learning_data
+from .model_status import model_status
 from .imitation import (
     ImitationRegistry,
     audit_demonstrations,
@@ -145,6 +146,9 @@ class RoyalTrainerApp:
         self.preview_photo: ImageTk.PhotoImage | None = None
         self.last_frame_identity: int | None = None
         self.closing = False
+        self.model_details_window: tk.Toplevel | None = None
+        self.model_details_text: tk.Text | None = None
+        self.model_details = ""
         try:
             initial_config, _ = load_config(self.config_path)
             self.runtime_model = load_runtime_model(self.config_path, initial_config)
@@ -157,6 +161,7 @@ class RoyalTrainerApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_messages)
         self.root.after(700, self._passive_status_check)
+        self._refresh_model_status()
         self.sync_worker = SyncWorker(
             self.config_path.parent,
             notify=lambda message: self.messages.put(("log", message)),
@@ -369,8 +374,14 @@ class RoyalTrainerApp:
         self._draw_preview_placeholder()
 
     def _build_control_card(self, parent: tk.Frame) -> None:
-        bar = tk.Frame(parent, background=Palette.BG)
-        bar.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        controls = tk.Frame(parent, background=Palette.BG)
+        controls.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        bar = tk.Frame(controls, background=Palette.BG)
+        bar.pack(fill="x")
+        tk.Label(
+            bar, text="规则", font=(FONT, 9),
+            foreground=Palette.MUTED, background=Palette.BG,
+        ).pack(side="left", padx=(0, 8))
         self.model_key_by_label = {
             label: key for key, label in RUNTIME_MODEL_LABELS.items()
         }
@@ -397,6 +408,57 @@ class RoyalTrainerApp:
             hover=Palette.BLUE_HOVER, command=self.start_bot,
         )
         self.start_button.pack(side="right", padx=(0, 8))
+        self.model_status_button = HoverButton(
+            controls, text="正在读取模型…", font=(FONT, 8),
+            background=Palette.BG, hover=Palette.SURFACE,
+            foreground=Palette.MUTED, anchor="w", justify="left",
+            padx=0, pady=4, command=self.show_model_versions,
+        )
+        self.model_status_button.pack(fill="x", pady=(5, 0))
+        self.model_status_button.bind(
+            "<Configure>",
+            lambda event: self.model_status_button.configure(wraplength=max(100, event.width - 10)),
+        )
+
+    def _refresh_model_status(self) -> None:
+        if self.closing:
+            return
+        summary, details = model_status(
+            self.config_path.parent, policy=getattr(self.engine, "policy", None),
+            running=self._bot_is_running(), demonstration=self.run_mode == "demonstration",
+        )
+        self.model_status_button.configure(text=summary)
+        if details != self.model_details:
+            self.model_details = details
+            if self.model_details_text is not None and self.model_details_text.winfo_exists():
+                position = self.model_details_text.yview()[0]
+                self.model_details_text.configure(state="normal")
+                self.model_details_text.delete("1.0", "end")
+                self.model_details_text.insert("1.0", details)
+                self.model_details_text.configure(state="disabled")
+                self.model_details_text.yview_moveto(position)
+        self.root.after(3000, self._refresh_model_status)
+
+    def show_model_versions(self) -> None:
+        if self.model_details_window is not None and self.model_details_window.winfo_exists():
+            self.model_details_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self.model_details_window = window
+        window.title("模型版本 · 自动刷新")
+        window.geometry("850x500")
+        window.configure(background=Palette.BG)
+        text = tk.Text(
+            window, font=(FONT, 9), wrap="word", background=Palette.BG,
+            foreground=Palette.TEXT, relief="flat", padx=14, pady=14,
+        )
+        self.model_details_text = text
+        scroll = tk.Scrollbar(window, command=text.yview)
+        scroll.pack(side="right", fill="y")
+        text.configure(yscrollcommand=scroll.set)
+        text.pack(fill="both", expand=True)
+        text.insert("1.0", self.model_details)
+        text.configure(state="disabled")
 
     def _build_log_card(self, parent: tk.Frame) -> None:
         card = tk.Frame(
@@ -549,7 +611,7 @@ class RoyalTrainerApp:
             self.model_var.set(runtime_model_label(self.runtime_model))
             messagebox.showerror("无法保存模型选择", str(exc), parent=self.root)
             return
-        self._append_log(f"运行模型已切换为：{runtime_model_label(key)}", "success")
+        self._append_log(f"规则版本已切换为：{runtime_model_label(key)}", "success")
 
     def _refresh_connection_button(self, config: dict[str, Any] | None = None) -> None:
         try:
@@ -1172,7 +1234,7 @@ class RoyalTrainerApp:
             f"{replay_learning.get('deduplicated_actions', 0)} 条\n"
         )
         if replay_champion:
-            detail += f"已启用低权重回放策略：{replay_champion.get('version')}"
+            detail += f"回放冠军模型：{replay_champion.get('version')}（实际加载见主界面）"
         else:
             detail += "当前为影子模式；未通过验证的经验不会改写策略。"
         replay_reasons = list(replay.get("blocking_reasons", []))
@@ -1202,7 +1264,7 @@ class RoyalTrainerApp:
         exact = dict(payload.get("exact_detector", {}))
         exact_champion = ModelRegistry(self.config_path.parent).champion()
         exact_status = (
-            f"已启用：{exact_champion.get('version')}"
+            f"识别冠军：{exact_champion.get('version')}（实际加载见主界面）"
             if exact_champion
             else "未启用（不影响自动战斗和上方自学模型）"
         )

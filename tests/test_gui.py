@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import json
 import tempfile
 import tkinter as tk
 import unittest
@@ -47,7 +48,9 @@ class ConsoleTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         config_path = Path(directory.name) / "config.json"
-        config_path.write_text("{}", encoding="utf-8")
+        config_path.write_text(
+            json.dumps({"game": {"allowed_mode": "offline_ai_only"}}), encoding="utf-8"
+        )
         with patch("crbot.gui.SyncWorker"), patch.object(self.root, "after"):
             self.app = RoyalTrainerApp(self.root, config_path)
 
@@ -60,6 +63,21 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(str(self.app.model_combo["state"]), "readonly")
         self.assertEqual(str(self.app.start_button["state"]), "normal")
         self.assertEqual(str(self.app.stop_button["state"]), "disabled")
+
+    def test_model_updates_refresh_console_and_open_details_without_restart(self) -> None:
+        registry = self.app.config_path.parent / "models/replay_policy/registry.json"
+        registry.parent.mkdir(parents=True)
+        self.app.show_model_versions()
+        for version in ("first", "updated"):
+            registry.write_text(json.dumps({"candidates": [{
+                "version": version, "created_at_unix": 2, "quality_passed": False,
+            }]}), encoding="utf-8")
+            with patch.object(self.root, "after") as schedule:
+                self.app._refresh_model_status()
+            schedule.assert_called_once_with(3000, self.app._refresh_model_status)
+            self.assertIn(version, self.app.model_status_button["text"])
+            self.assertIn(version, self.app.model_details_text.get("1.0", "end"))
+        self.assertNotIn("first", self.app.model_details_text.get("1.0", "end"))
 
     def test_tools_menu_routes_all_auxiliary_actions(self) -> None:
         methods = (
@@ -89,6 +107,7 @@ class ConsoleTests(unittest.TestCase):
                 start()
                 self.app.bot_thread.join(timeout=5)
                 self.assertFalse(self.app.bot_thread.is_alive())
+                device.return_value.connect.assert_called_once_with()
                 factory.assert_not_called()
                 self.assertIsNone(self.app.engine)
 
