@@ -5,25 +5,11 @@ chcp 65001 >nul
 cd /d "%~dp0"
 title Royal Lab - GitHub Sync Setup
 
-rem Prefer the project's own environment. The Codex runtime path is only a fallback.
-set "BOT_PY=%CD%\.venv\Scripts\python.exe"
-if exist "%BOT_PY%" goto python_ready
-set "BOT_PY=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-if exist "%BOT_PY%" goto python_ready
-where python >nul 2>nul
-if errorlevel 1 goto missing_python
-set "BOT_PY=python"
-:python_ready
-"%BOT_PY%" -c "import crbot" >nul 2>nul
-if errorlevel 1 goto broken_python
-"%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
-if not errorlevel 1 goto github_cli
-echo Required Python packages are missing. Installing them now...
-"%BOT_PY%" -m pip install --disable-pip-version-check -r "%~dp0requirements.txt"
-if errorlevel 1 goto dependency_failed
-"%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
-if errorlevel 1 goto dependency_failed
-:github_cli
+call "%~dp0tools\python_env.bat" console deps
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 set "SYNC_GH=%LOCALAPPDATA%\CodexTools\github-cli\bin\gh.exe"
 if exist "%SYNC_GH%" goto auth
 set "SYNC_GH=%ProgramFiles%\GitHub CLI\gh.exe"
@@ -57,14 +43,6 @@ if errorlevel 1 goto failed
 echo Setup complete. Restart the Royal Lab console to enable background sync.
 pause
 exit /b 0
-:missing_python
-echo Python was not found. Run install.bat first, then reopen this script.
-pause
-exit /b 1
-:broken_python
-echo The project Python environment is incomplete. Run install.bat first.
-pause
-exit /b 1
 :auth_failed
 echo GitHub login was not completed. Reopen this script and try again.
 pause
@@ -74,10 +52,5 @@ echo.
 echo Setup or sync failed.
 echo Check that the signed-in GitHub account has Write access to:
 echo Denia1314/cr-training-data
-pause
-exit /b 1
-:dependency_failed
-echo Python dependency installation failed. This is not a GitHub login error.
-echo Check the network connection, then run setup_sync.bat again.
 pause
 exit /b 1

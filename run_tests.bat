@@ -1,10 +1,11 @@
 @echo off
 setlocal
-set "PYTHONUTF8=1"
-set "BOT_ROOT=%~dp0"
-set "BOT_PY=%BOT_ROOT%.venv\Scripts\python.exe"
-if not exist "%BOT_PY%" set "BOT_PY=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-if not exist "%BOT_PY%" set "BOT_PY=python"
-cd /d "%BOT_ROOT%"
+call "%~dp0tools\python_env.bat" console
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 "%BOT_PY%" -m unittest discover -s tests -v
+set "BOT_EXIT=%errorlevel%"
 pause
+exit /b %BOT_EXIT%

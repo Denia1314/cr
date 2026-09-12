@@ -14,7 +14,6 @@ from typing import Any, Callable
 
 from PIL import Image, ImageTk
 
-from . import __version__
 from .adb import MumuDevice
 from .annotate import AnnotationWindow
 from .calibrate import CalibrationWindow
@@ -139,7 +138,7 @@ class RoyalTrainerApp:
         self.messages: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.stop_event = threading.Event()
         self.bot_thread: threading.Thread | None = None
-        self.engine: BotEngine | None = None
+        self.engine: BotEngine | DemonstrationRecorder | None = None
         self.run_mode = "automation"
         self.background_busy = False
         self.current_image: Image.Image | None = None
@@ -197,213 +196,62 @@ class RoyalTrainerApp:
         )
 
     def _build_interface(self) -> None:
-        header = tk.Frame(self.root, background=Palette.SURFACE, height=76)
+        header = tk.Frame(self.root, background=Palette.SURFACE)
         header.pack(fill="x")
-        header.pack_propagate(False)
-
-        brand = tk.Frame(header, background=Palette.SURFACE)
-        brand.pack(side="left", padx=(24, 0), pady=12)
-        logo = tk.Canvas(brand, width=48, height=48, background=Palette.SURFACE, highlightthickness=0)
-        logo.pack(side="left")
-        logo.create_polygon(8, 7, 40, 7, 43, 30, 24, 44, 5, 30, fill=Palette.BLUE, outline=Palette.PURPLE, width=2)
-        logo.create_polygon(14, 20, 17, 11, 23, 18, 30, 10, 34, 20, fill="#FFD76A", outline="")
-        logo.create_rectangle(14, 20, 34, 25, fill="#FFD76A", outline="")
-
-        brand_text = tk.Frame(brand, background=Palette.SURFACE)
-        brand_text.pack(side="left", padx=(11, 0))
         tk.Label(
-            brand_text,
-            text="ROYAL LAB",
-            font=("Segoe UI", 16, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.SURFACE,
-        ).pack(anchor="w")
-        tk.Label(
-            brand_text,
-            text="OFFLINE AI TRAINING CONSOLE",
-            font=("Segoe UI", 8, "bold"),
-            foreground=Palette.PURPLE,
-            background=Palette.SURFACE,
-        ).pack(anchor="w")
+            header, text="Royal Lab", font=(FONT, 16, "bold"),
+            foreground=Palette.TEXT, background=Palette.SURFACE,
+        ).pack(side="left", padx=24, pady=16)
 
-        self.header_badge = tk.Label(
-            header,
-            text="●  尚未连接",
-            font=(FONT, 9, "bold"),
-            foreground=Palette.MUTED,
-            background=Palette.CARD_ALT,
-            padx=15,
-            pady=8,
+        tools_button = tk.Menubutton(
+            header, text="工具 ▾", font=(FONT, 10),
+            background=Palette.CARD_ALT, foreground=Palette.TEXT,
+            activebackground=Palette.BORDER, activeforeground=Palette.TEXT,
+            relief="flat", borderwidth=0, padx=14, pady=9, cursor="hand2",
         )
-        self.header_badge.pack(side="right", padx=24)
-
-        body = tk.Frame(self.root, background=Palette.BG)
-        body.pack(fill="both", expand=True, padx=24, pady=20)
-        body.grid_columnconfigure(1, weight=1)
-        body.grid_rowconfigure(0, weight=1)
-
-        self._build_sidebar(body)
-        self._build_dashboard(body)
-
-    def _build_sidebar(self, parent: tk.Frame) -> None:
-        sidebar = tk.Frame(
-            parent,
-            background=Palette.SURFACE,
-            width=208,
-            highlightbackground=Palette.BORDER,
-            highlightthickness=1,
+        tools_button.pack(side="right", padx=(8, 24))
+        self.tools_menu = tk.Menu(
+            tools_button, tearoff=False, font=(FONT, 10),
+            background=Palette.SURFACE, foreground=Palette.TEXT,
+            activebackground=Palette.CARD_ALT, activeforeground=Palette.TEXT,
         )
-        sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 18))
-        sidebar.grid_propagate(False)
-
-        tk.Label(
-            sidebar,
-            text="控制中心",
-            font=(FONT, 10, "bold"),
-            foreground=Palette.FAINT,
-            background=Palette.SURFACE,
-        ).pack(anchor="w", padx=18, pady=(22, 10))
-
-        self.dashboard_button = HoverButton(
-            sidebar,
-            text="  ◈   训练总览",
-            anchor="w",
-            background="#243152",
-            hover="#2B3B62",
-            command=lambda: None,
-        )
-        self.dashboard_button.pack(fill="x", padx=10, pady=4)
-
-        HoverButton(
-            sidebar,
-            text="  ◫   画面标定",
-            anchor="w",
-            background=Palette.SURFACE,
-            hover=Palette.CARD_ALT,
-            foreground=Palette.MUTED,
-            command=self.open_calibration,
-        ).pack(fill="x", padx=10, pady=4)
-
-        HoverButton(
-            sidebar,
-            text="  ◧   训练数据",
-            anchor="w",
-            background=Palette.SURFACE,
-            hover=Palette.CARD_ALT,
-            foreground=Palette.MUTED,
-            command=self.open_runs_folder,
-        ).pack(fill="x", padx=10, pady=4)
-
-        HoverButton(
-            sidebar,
-            text="  ✎   精确标注（可选）",
-            anchor="w",
-            background=Palette.SURFACE,
-            hover=Palette.CARD_ALT,
-            foreground=Palette.MUTED,
-            command=self.open_annotation,
-        ).pack(fill="x", padx=10, pady=4)
-
-        HoverButton(
-            sidebar,
-            text="  ◉   无标注自学",
-            anchor="w",
-            background=Palette.SURFACE,
-            hover=Palette.CARD_ALT,
-            foreground=Palette.MUTED,
-            command=self.check_learning_status,
-        ).pack(fill="x", padx=10, pady=4)
-
-        HoverButton(
-            sidebar,
-            text="  ●   示范学习",
-            anchor="w",
-            background=Palette.SURFACE,
-            hover=Palette.CARD_ALT,
-            foreground=Palette.MUTED,
-            command=self.start_demonstration,
-        ).pack(fill="x", padx=10, pady=4)
-
-        HoverButton(
-            sidebar, text="  ⇄   双机数据同步", anchor="w",
-            background=Palette.SURFACE, hover=Palette.CARD_ALT,
-            foreground=Palette.MUTED, command=self.sync_training_data,
-        ).pack(fill="x", padx=10, pady=4)
-
-        about = tk.Frame(sidebar, background=Palette.CARD, highlightbackground=Palette.BORDER, highlightthickness=1)
-        about.pack(side="bottom", fill="x", padx=12, pady=14)
-        tk.Label(
-            about,
-            text="受限安全模式",
-            font=(FONT, 10, "bold"),
-            foreground=Palette.GREEN,
-            background=Palette.CARD,
-        ).pack(anchor="w", padx=13, pady=(12, 3))
-        tk.Label(
-            about,
-            text="仅允许离线人机\n全局处理确定与奖励宝箱",
-            justify="left",
-            font=(FONT, 8),
-            foreground=Palette.MUTED,
-            background=Palette.CARD,
-        ).pack(anchor="w", padx=13, pady=(0, 11))
-        tk.Label(
-            sidebar,
-            text=f"Royal Trainer  v{__version__}",
-            font=("Segoe UI", 8),
-            foreground=Palette.FAINT,
-            background=Palette.SURFACE,
-        ).pack(side="bottom", pady=(0, 5))
-
-    def _build_dashboard(self, parent: tk.Frame) -> None:
-        content = tk.Frame(parent, background=Palette.BG)
-        content.grid(row=0, column=1, sticky="nsew")
-        content.grid_columnconfigure(0, weight=1)
-        content.grid_rowconfigure(3, weight=1)
-
-        heading = tk.Frame(content, background=Palette.BG)
-        heading.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        title_box = tk.Frame(heading, background=Palette.BG)
-        title_box.pack(side="left")
-        tk.Label(
-            title_box,
-            text="训练总览",
-            font=(FONT, 22, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.BG,
-        ).pack(anchor="w")
-        tk.Label(
-            title_box,
-            text="自动检测 MuMu，或按 ADB 端口连接其他模拟器。",
-            font=(FONT, 9),
-            foreground=Palette.MUTED,
-            background=Palette.BG,
-        ).pack(anchor="w", pady=(3, 0))
+        for label, command in (
+            ("画面标定", self.open_calibration),
+            ("训练数据", self.open_runs_folder),
+            ("精确标注（可选）", self.open_annotation),
+            ("无标注自学", self.check_learning_status),
+            ("示范学习", self.start_demonstration),
+            ("双机数据同步", self.sync_training_data),
+        ):
+            self.tools_menu.add_command(label=label, command=command)
+        tools_button.configure(menu=self.tools_menu)
 
         self.check_button = HoverButton(
-            heading,
-            text="连接并检测",
-            background=Palette.CARD_ALT,
-            hover="#25304A",
-            foreground=Palette.TEXT,
-            command=self.run_doctor,
+            header, text="连接并检测", background=Palette.CARD_ALT,
+            hover=Palette.BORDER, command=self.run_doctor,
         )
-        self.check_button.pack(side="right", pady=4)
-
+        self.check_button.pack(side="right")
         self.connection_button = HoverButton(
-            heading,
-            text="自定义 ADB",
-            background=Palette.CARD_ALT,
-            hover="#25304A",
-            foreground=Palette.MUTED,
-            command=self.open_adb_connection_settings,
-            padx=12,
+            header, text="自定义 ADB", background=Palette.SURFACE,
+            hover=Palette.CARD_ALT, foreground=Palette.MUTED,
+            command=self.open_adb_connection_settings, padx=12,
         )
-        self.connection_button.pack(side="right", padx=(0, 8), pady=4)
+        self.connection_button.pack(side="right", padx=8)
         self._refresh_connection_button()
+        self.header_badge = tk.Label(
+            header, text="尚未连接", font=(FONT, 9),
+            foreground=Palette.MUTED, background=Palette.SURFACE,
+        )
+        self.header_badge.pack(side="left")
+
+        content = tk.Frame(self.root, background=Palette.BG)
+        content.pack(fill="both", expand=True, padx=24, pady=18)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(2, weight=3)
+        content.grid_rowconfigure(3, weight=1)
 
         stats = tk.Frame(content, background=Palette.BG)
-        stats.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        stats.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         for column in range(3):
             stats.grid_columnconfigure(column, weight=1, uniform="stats")
 
@@ -417,14 +265,8 @@ class RoyalTrainerApp:
             stats, 2, "已完成", "0 局", "本次运行统计", Palette.GREEN
         )
 
-        workspace = tk.Frame(content, background=Palette.BG)
-        workspace.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
-        workspace.grid_columnconfigure(0, weight=3)
-        workspace.grid_columnconfigure(1, weight=2)
-        workspace.grid_rowconfigure(0, weight=1)
-        self._build_preview_card(workspace)
-        self._build_control_card(workspace)
-
+        self._build_control_card(content)
+        self._build_preview_card(content)
         self._build_log_card(content)
 
     def _stat_card(
@@ -479,7 +321,7 @@ class RoyalTrainerApp:
             highlightbackground=Palette.BORDER,
             highlightthickness=1,
         )
-        card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        card.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
         card.grid_rowconfigure(1, weight=1)
         card.grid_columnconfigure(0, weight=1)
 
@@ -518,7 +360,7 @@ class RoyalTrainerApp:
         self.preview_canvas = tk.Canvas(
             preview_frame,
             width=590,
-            height=265,
+            height=180,
             background="#070A12",
             highlightthickness=0,
         )
@@ -527,119 +369,34 @@ class RoyalTrainerApp:
         self._draw_preview_placeholder()
 
     def _build_control_card(self, parent: tk.Frame) -> None:
-        card = tk.Frame(
-            parent,
-            background=Palette.CARD,
-            highlightbackground=Palette.BORDER,
-            highlightthickness=1,
-        )
-        card.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
-
-        control_header = tk.Frame(card, background=Palette.CARD)
-        control_header.pack(fill="x", padx=18, pady=(13, 9))
-        tk.Label(
-            control_header,
-            text="运行控制",
-            font=(FONT, 11, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.CARD,
-        ).pack(side="left")
-        self.run_state_label = tk.Label(
-            control_header,
-            text="当前状态：待机",
-            font=(FONT, 8),
-            foreground=Palette.MUTED,
-            background=Palette.CARD,
-        )
-        self.run_state_label.pack(side="right")
-
-        options = tk.Frame(card, background=Palette.CARD_ALT, highlightbackground=Palette.BORDER, highlightthickness=1)
-        options.pack(fill="x", padx=18, pady=(0, 9))
-
-        model_row = tk.Frame(options, background=Palette.CARD_ALT)
-        model_row.pack(fill="x", padx=13, pady=(10, 9))
-        model_labels = tk.Frame(model_row, background=Palette.CARD_ALT)
-        model_labels.pack(side="left", fill="x", expand=True)
-        tk.Label(
-            model_labels,
-            text="运行模型",
-            font=(FONT, 9, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.CARD_ALT,
-        ).pack(anchor="w")
-        self.model_note = tk.Label(
-            model_labels,
-            text="切换后从下一次启动生效",
-            font=(FONT, 7),
-            foreground=Palette.FAINT,
-            background=Palette.CARD_ALT,
-        )
-        self.model_note.pack(anchor="w")
+        bar = tk.Frame(parent, background=Palette.BG)
+        bar.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         self.model_key_by_label = {
             label: key for key, label in RUNTIME_MODEL_LABELS.items()
         }
         self.model_var = tk.StringVar(value=runtime_model_label(self.runtime_model))
         self.model_combo = ttk.Combobox(
-            model_row,
-            textvariable=self.model_var,
-            values=list(RUNTIME_MODEL_LABELS.values()),
-            state="readonly",
-            width=24,
-            style="Model.TCombobox",
-            font=(FONT, 9),
+            bar, textvariable=self.model_var,
+            values=list(RUNTIME_MODEL_LABELS.values()), state="readonly",
+            width=24, style="Model.TCombobox", font=(FONT, 9),
         )
-        self.model_combo.pack(side="right", padx=(12, 0))
+        self.model_combo.pack(side="left")
         self.model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
-
-        mode_row = tk.Frame(options, background=Palette.CARD_ALT)
-        mode_row.pack(fill="x", padx=13, pady=(0, 9))
-        tk.Label(
-            mode_row,
-            text="运行方式",
-            font=(FONT, 9, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.CARD_ALT,
-        ).pack(side="left")
-        tk.Label(
-            mode_row,
-            text="无限循环，直到安全停止",
-            font=(FONT, 8, "bold"),
-            foreground=Palette.GREEN,
-            background=Palette.CARD_ALT,
-        ).pack(side="right")
-
-        action_row = tk.Frame(card, background=Palette.CARD)
-        action_row.pack(fill="x", padx=18, pady=(1, 8))
-        action_row.grid_columnconfigure(0, weight=1, uniform="run-actions")
-        self.start_button = HoverButton(
-            action_row,
-            text="▶  离线训练",
-            background=Palette.BLUE,
-            hover=Palette.BLUE_HOVER,
-            command=self.start_bot,
-            padx=8,
+        self.run_state_label = tk.Label(
+            bar, text="当前状态：待机", font=(FONT, 8),
+            foreground=Palette.MUTED, background=Palette.BG,
         )
-        self.start_button.grid(row=0, column=0, sticky="ew")
+        self.run_state_label.pack(side="left", padx=12)
         self.stop_button = HoverButton(
-            card,
-            text="■  安全停止",
-            background="#352033",
-            hover="#47263B",
-            foreground=Palette.RED,
-            command=self.stop_bot,
-            state="disabled",
+            bar, text="■  安全停止", background="#352033", hover="#47263B",
+            foreground=Palette.RED, command=self.stop_bot, state="disabled",
         )
-        self.stop_button.pack(fill="x", padx=18)
-
-        tk.Label(
-            card,
-            text="启动后会持续进行离线人机对局；需要结束时点击“安全停止”。",
-            wraplength=300,
-            justify="left",
-            font=(FONT, 8),
-            foreground=Palette.FAINT,
-            background=Palette.CARD,
-        ).pack(anchor="w", padx=18, pady=(10, 12))
+        self.stop_button.pack(side="right")
+        self.start_button = HoverButton(
+            bar, text="▶  离线训练", background=Palette.BLUE,
+            hover=Palette.BLUE_HOVER, command=self.start_bot,
+        )
+        self.start_button.pack(side="right", padx=(0, 8))
 
     def _build_log_card(self, parent: tk.Frame) -> None:
         card = tk.Frame(
@@ -1067,40 +824,22 @@ class RoyalTrainerApp:
         self._set_run_state("正在连接设备", Palette.BLUE)
         self._set_running_controls(True)
 
-        def worker() -> None:
-            writer = QueueWriter(self.messages)
-            error: str | None = None
-            try:
-                with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-                    config, config_path = load_config(self.config_path)
-                    config = apply_runtime_model(config, selected_model)
-                    device = MumuDevice(config)
-                    serial = device.connect()
-                    print(f"[设备] 已连接模拟器：{serial}")
-                    if self.stop_event.is_set():
-                        print("[停止] 启动已取消，未打开游戏。")
-                        return
-                    engine = BotEngine(
-                        device,
-                        config,
-                        config_path,
-                        dry_run=False,
-                        max_battles=0,
-                        stop_event=self.stop_event,
-                    )
-                    self.engine = engine
-                    engine.run()
-            except Exception as exc:
-                error = str(exc)
-                writer.write(f"错误：{exc}\n")
-                if os.environ.get("CRBOT_DEBUG") == "1":
-                    writer.write(traceback.format_exc())
-            finally:
-                writer.flush()
-                self.messages.put(("bot_done", error))
+        def run() -> None:
+            config, config_path = load_config(self.config_path)
+            config = apply_runtime_model(config, selected_model)
+            device = MumuDevice(config)
+            serial = device.connect()
+            print(f"[设备] 已连接模拟器：{serial}")
+            if self.stop_event.is_set():
+                print("[停止] 启动已取消，未打开游戏。")
+                return
+            self.engine = BotEngine(
+                device, config, config_path, dry_run=False,
+                max_battles=0, stop_event=self.stop_event,
+            )
+            self.engine.run()
 
-        self.bot_thread = threading.Thread(target=worker, name="royal-trainer", daemon=True)
-        self.bot_thread.start()
+        self._start_run_worker(run, "royal-trainer")
 
     def start_demonstration(self) -> None:
         if self._bot_is_running():
@@ -1129,23 +868,28 @@ class RoyalTrainerApp:
         self._set_run_state("正在连接触摸监控", Palette.BLUE)
         self._set_running_controls(True)
 
+        def run() -> None:
+            config, config_path = load_config(self.config_path)
+            device = MumuDevice(config)
+            serial = device.connect()
+            print(f"[设备] 已连接模拟器：{serial}")
+            if self.stop_event.is_set():
+                print("[停止] 启动已取消。")
+                return
+            self.engine = DemonstrationRecorder(
+                device, config, config_path, stop_event=self.stop_event,
+            )
+            self.engine.run()
+
+        self._start_run_worker(run, "human-demonstration")
+
+    def _start_run_worker(self, target: Callable[[], None], name: str) -> None:
         def worker() -> None:
             writer = QueueWriter(self.messages)
             error: str | None = None
             try:
                 with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-                    config, config_path = load_config(self.config_path)
-                    device = MumuDevice(config)
-                    serial = device.connect()
-                    print(f"[设备] 已连接模拟器：{serial}")
-                    recorder = DemonstrationRecorder(
-                        device,
-                        config,
-                        config_path,
-                        stop_event=self.stop_event,
-                    )
-                    self.engine = recorder  # type: ignore[assignment]
-                    recorder.run()
+                    target()
             except Exception as exc:
                 error = str(exc)
                 writer.write(f"错误：{exc}\n")
@@ -1155,11 +899,7 @@ class RoyalTrainerApp:
                 writer.flush()
                 self.messages.put(("bot_done", error))
 
-        self.bot_thread = threading.Thread(
-            target=worker,
-            name="human-demonstration",
-            daemon=True,
-        )
+        self.bot_thread = threading.Thread(target=worker, name=name, daemon=True)
         self.bot_thread.start()
 
     def stop_bot(self) -> None:
@@ -1508,7 +1248,7 @@ class RoyalTrainerApp:
             self.safety_note.configure(text="运行时连续 3 帧校验")
         else:
             self.safety_value.configure(text="需标定", foreground=Palette.AMBER)
-            self.safety_note.configure(text="请先打开画面标定")
+            self.safety_note.configure(text="工具 → 画面标定")
 
         image = payload.get("image")
         if isinstance(image, Image.Image):
@@ -1529,14 +1269,12 @@ class RoyalTrainerApp:
 
     def _draw_preview_placeholder(self) -> None:
         self.preview_canvas.delete("all")
-        width = max(400, self.preview_canvas.winfo_width())
-        height = max(220, self.preview_canvas.winfo_height())
+        width = self.preview_canvas.winfo_width()
+        height = self.preview_canvas.winfo_height()
         cx, cy = width / 2, height / 2
-        self.preview_canvas.create_rectangle(cx - 36, cy - 31, cx + 36, cy + 21, outline=Palette.BORDER, width=2)
-        self.preview_canvas.create_line(cx - 20, cy + 31, cx + 20, cy + 31, fill=Palette.BORDER, width=2)
         self.preview_canvas.create_text(
             cx,
-            cy + 57,
+            cy,
             text="连接 MuMu 后显示实时画面",
             fill=Palette.FAINT,
             font=(FONT, 9),
