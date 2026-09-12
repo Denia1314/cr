@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from PIL import Image, ImageTk
 
+from . import implemented_stages_label, release_label
 from .adb import MumuDevice
 from .annotate import AnnotationWindow
 from .calibrate import CalibrationWindow
@@ -168,7 +169,7 @@ class RoyalTrainerApp:
         ).start()
 
     def _configure_window(self) -> None:
-        self.root.title("Royal Lab · 离线人机训练控制台")
+        self.root.title(release_label())
         self.root.configure(background=Palette.BG)
         width, height = 1260, 860
         screen_w = self.root.winfo_screenwidth()
@@ -203,10 +204,17 @@ class RoyalTrainerApp:
     def _build_interface(self) -> None:
         header = tk.Frame(self.root, background=Palette.SURFACE)
         header.pack(fill="x")
-        tk.Label(
-            header, text="Royal Lab", font=(FONT, 16, "bold"),
+        brand = tk.Frame(header, background=Palette.SURFACE)
+        brand.pack(side="left", padx=24, pady=12)
+        self.release_heading = tk.Label(
+            brand, text=release_label(), font=(FONT, 12, "bold"),
             foreground=Palette.TEXT, background=Palette.SURFACE,
-        ).pack(side="left", padx=24, pady=16)
+        )
+        self.release_heading.pack(anchor="w")
+        tk.Label(
+            brand, text=implemented_stages_label(), font=(FONT, 8),
+            foreground=Palette.MUTED, background=Palette.SURFACE,
+        ).pack(anchor="w", pady=(3, 0))
 
         tools_button = tk.Menubutton(
             header, text="工具 ▾", font=(FONT, 10),
@@ -426,6 +434,10 @@ class RoyalTrainerApp:
         summary, details = model_status(
             self.config_path.parent, policy=getattr(self.engine, "policy", None),
             running=self._bot_is_running(), demonstration=self.run_mode == "demonstration",
+        )
+        details = (
+            f"{release_label()}\n{implemented_stages_label()}\n"
+            "阶段表示功能已接入，实战收益仍需单独验收。\n\n" + details
         )
         self.model_status_button.configure(text=summary)
         if details != self.model_details:
@@ -880,7 +892,7 @@ class RoyalTrainerApp:
         self.run_mode = "automation"
         self.battle_value.configure(text="0 局", foreground=Palette.TEXT)
         self._append_log(
-            f"准备无限运行 · 模型：{runtime_model_label(selected_model)}",
+            f"准备无限运行 · 规则：{runtime_model_label(selected_model)}",
             "action",
         )
         self._set_run_state("正在连接设备", Palette.BLUE)

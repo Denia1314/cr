@@ -19,6 +19,7 @@ from .controlled_experiment import (
     load_controlled_experiment_episodes,
 )
 from .policy import BattlePolicy
+from . import implemented_stages_label, release_label
 from .runtime_model import runtime_model_label
 from .recorder import TrainingRecorder
 from .replay import ExperienceReplayRecorder
@@ -55,7 +56,8 @@ class BotEngine:
         self.stop_event = stop_event or Event()
         self.recognizer = WorkflowRecognizer(config, config_path)
         self.policy = BattlePolicy(config, config_path)
-        print(f"[模型] 当前运行：{runtime_model_label(self.policy.runtime_model)}")
+        print(f"[版本] {release_label()} · {implemented_stages_label()}")
+        print(f"[规则] 当前运行：{runtime_model_label(self.policy.runtime_model)}")
         if self.policy.mode == "reactive_catalog":
             if self.policy.reactive_ready:
                 print(

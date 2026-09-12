@@ -13,7 +13,7 @@ RUNTIME_MODEL_LABELS: dict[str, str] = {
     "m2_1": "M2.1 · 稳定修复",
     "m3_c1": "M3-C1 · 双路留费",
     "m3_c2": "M3-C2 · 职责落点",
-    "m3_c3": "M3-C3 · 反打门控（最新）",
+    "m3_c3": "M3-C3 · 反打门控",
 }
 DEFAULT_RUNTIME_MODEL = "m3_c3"
 LOCAL_SETTINGS_NAME = ".royal-lab.json"

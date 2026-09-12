@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__
+from . import release_label
 from .adb import DeviceError, MumuDevice
 from .action_review import audit_action_review, export_action_review
 from .annotate import run_annotation
@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="皇室战争 MuMu 离线人机训练控制器",
     )
     parser.add_argument("--config", default="config.json", help="配置文件路径")
-    parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument("--version", action="version", version=release_label())
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("doctor", help="检查 MuMu、ADB、游戏与标定")
     subcommands.add_parser("calibrate", help="打开画面标定工具")
