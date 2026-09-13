@@ -78,6 +78,16 @@ class KnowledgeBase:
         return cls(json.loads(path.read_text(encoding="utf-8")))
 
     def value(self, raw: dict, key: str, level: int) -> float:
+        if raw.get('_detail_levels'):
+            row = raw['_detail_levels'].get(str(level))
+            if row is None:
+                raise ValueError(f"详情数值等级超出来源范围: {raw.get('name')} level={level}")
+            field = {'hitpoints': 'hitpoints', 'damage': 'damage', 'shield_hitpoints': 'shieldHitpoints',
+                     'death_damage': 'deathDamage'}.get(key)
+            if field in row:
+                return float(row[field])
+            if key == 'damage' and 'areaDamage' in row:
+                return float(row['areaDamage'])
         values = raw.get(key + "_per_level")
         offset = int(self.relative_levels.get(str(raw.get("rarity", "Common")), 0))
         index = level - 1 - offset
@@ -131,8 +141,8 @@ class KnowledgeBase:
             projectile_speed=float(projectile.get("speed") or 0) / 60,
             deploy=float(raw.get("deploy_time") or 0) / 1000,
             lifetime=float(raw.get("life_time") or 0) / 1000,
-            shield=float(raw.get("shield_hitpoints") or 0) * scale,
-            death_damage=float(raw.get("death_damage") or 0) * scale,
+            shield=self.value(raw, 'shield_hitpoints', level) if 'shieldHitpoints' in raw.get('_detail_levels', {}).get(str(level), {}) else float(raw.get("shield_hitpoints") or 0) * scale,
+            death_damage=self.value(raw, 'death_damage', level) if 'deathDamage' in raw.get('_detail_levels', {}).get(str(level), {}) else float(raw.get("death_damage") or 0) * scale,
             death_radius=float(raw.get("death_damage_radius") or 0) / 1000,
             death_spawn=raw.get("death_spawn_character"), death_count=int(raw.get("death_spawn_count") or 0),
             spawn=raw.get("spawn_character"), spawn_count=int(raw.get("spawn_number") or 0),
@@ -166,7 +176,7 @@ class KnowledgeBase:
         raw = self.cards.get(card_id, {}).get("spell")
         if not raw or not raw.get("damage_per_level"):
             return None
-        return {"damage": self.value(raw, "damage", level),
+        result = {"damage": self.value(raw, "damage", level),
                 "radius": float(raw.get("radius") or 0) / 1000,
                 "tower_multiplier": max(0, 1 + float(raw.get("crown_tower_damage_percent") or 0) / 100),
                 "air": bool(raw.get("aoe_to_air", raw.get("hits_air", True))),
@@ -175,6 +185,10 @@ class KnowledgeBase:
                 "period": max(.1, float(raw.get("hit_speed") or 1000) / 1000),
                 "pushback": float(raw.get("pushback") or 0) / 1000,
                 "stun": float(raw.get("buff_time") or 0) / 1000 if (raw.get("buff_data") or {}).get("hit_speed_multiplier") == -100 else 0}
+        detail = raw.get('_detail_levels', {}).get(str(level), {})
+        if 'crownTowerDamage' in detail and result['damage'] > 0:
+            result['tower_multiplier'] = detail['crownTowerDamage'] / result['damage']
+        return result
 
     def audit(self, level: int = 11) -> dict:
         supported, missing, partial, numeric = [], [], [], []
@@ -182,7 +196,8 @@ class KnowledgeBase:
             try:
                 roster = self.roster(cid, level)
                 spell = self.spell(cid, level)
-                if roster or (card.get("spell") or {}).get("damage_per_level"):
+                if roster or (card.get("spell") or {}).get("damage_per_level") or any(
+                        len(row) > 1 for row in card.get('detail_stats', {}).get('levelStats', [])):
                     numeric.append(cid)
                 if roster or spell:
                     supported.append(cid)
@@ -193,12 +208,15 @@ class KnowledgeBase:
             except ValueError:
                 missing.append(cid)
         return {"knowledge_version": self.version, "source": self.source,
+                "directory_source": self.payload.get('directory_source'),
+                "detail_cards": sum('detail_stats' in c for c in self.cards.values()),
+                "detail_level_rows": sum(len(c.get('detail_stats', {}).get('levelStats', [])) for c in self.cards.values()),
                 "catalog_cards": len(self.cards), "numeric_cards": len(numeric), "simulatable_cards": len(supported),
                 "missing_numeric_cards": [cid for cid in self.cards if cid not in numeric],
                 "unsupported_simulation_cards": missing, "partial_mechanism_cards": partial,
                 "variant_count": sum(len(c.get("variants", [])) for c in self.cards.values()),
                 "validated_current_balance": False, "battle_acceptance": False,
-                "limitations": ["公开历史快照，非当前平衡核验", "空间/速度近似，血量与等级为观测或配置假设",
+                "limitations": ["公开详情数值与历史机制混合来源，非当前平衡核验", "空间/速度近似，血量与等级为观测或配置假设",
                                 "特殊机制与变体未核验时降低可信度，不视为完整模拟"]}
 
 

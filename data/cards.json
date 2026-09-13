@@ -47,7 +47,23 @@
         "card_variants/knight-ev1.png",
         "card_variants/knight-hero-ev1.png",
         "card_variants/knight-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "knight",
+        "id": "knight",
+        "name_en": "Knight",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/jAj1Q5rclXxU9kVImGqSJxa4wEMfEhvwNQ_4jiGUuqg.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "archers",
@@ -78,7 +94,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/archers-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "archers",
+        "id": "archers",
+        "name_en": "Archers",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/W4Hmp8MTSdXANN8KdblbtHwtsbt0o749BbxNqmJYfA8.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "goblins",
@@ -107,7 +140,24 @@
       "icon_variants": [
         "card_variants/goblins-hero-ev1.png",
         "card_variants/goblins-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblins",
+        "id": "goblins",
+        "name_en": "Goblins",
+        "elixir": 2,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/X_DQUye_OaS3QN6VC9CPw05Fit7wvSm3XegXIXKP--0.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "giant",
@@ -139,7 +189,24 @@
       "icon_variants": [
         "card_variants/giant-hero-ev1.png",
         "card_variants/giant-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "giant",
+        "id": "giant",
+        "name_en": "Giant",
+        "elixir": 5,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Axr4ox5_b7edmLsoHxBX3vmgijAIibuF6RImTbqLlXE.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "pekka",
@@ -167,7 +234,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/pekka-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "p_e_k_k_a",
+        "id": "pekka",
+        "name_en": "P.E.K.K.A",
+        "elixir": 7,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/MlArURKhn_zWAZY-Xj1qIRKLVKquarG25BXDjUQajNs.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "minions",
@@ -193,7 +276,24 @@
       "description": "Three fast, unarmored flying attackers. Roses are red, minions are blue, they can fly, and will crush you!",
       "sc_key": "Minions",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "minions",
+        "id": "minions",
+        "name_en": "Minions",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/yHGpoEnmUWPGV_hBbhn-Kk-Bs838OjGzWzJJlQpQKQA.png",
+        "tags": [
+          "air",
+          "swarm"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "balloon",
@@ -219,7 +319,24 @@
       "description": "As pretty as they are, you won't want a parade of THESE balloons showing up on the horizon. Drops powerful bombs and when shot down, crashes dealing area damage.",
       "sc_key": "Balloon",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "balloon",
+        "id": "balloon",
+        "name_en": "Balloon",
+        "elixir": 5,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/qBipxLo-3hhCnPrApp2Nn3b2NgrSrvwzWytvREev0CY.png",
+        "tags": [
+          "air",
+          "win-condition"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "witch",
@@ -248,7 +365,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/witch-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "witch",
+        "id": "witch",
+        "name_en": "Witch",
+        "elixir": 5,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/cfwk1vzehVyHC-uloEIH6NOI0hOdofCutR5PyhIgO6w.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "barbarians",
@@ -275,7 +408,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/barbarians-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "barbarians",
+        "id": "barbarians",
+        "name_en": "Barbarians",
+        "elixir": 5,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/TvJsuu2S4yhyk1jVYUAQwdKOnW4U77KuWWOTPOWnwfI.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "golem",
@@ -305,7 +454,24 @@
       "description": "Slow but durable, only attacks buildings. When destroyed, explosively splits into two Golemites and deals area damage!",
       "sc_key": "Golem",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "golem",
+        "id": "golem",
+        "name_en": "Golem",
+        "elixir": 8,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/npdmCnET7jmVjJvjJQkFnNSNnDxYHDBigbvIAloFMds.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "skeletons",
@@ -333,7 +499,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/skeletons-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "skeletons",
+        "id": "skeletons",
+        "name_en": "Skeletons",
+        "elixir": 1,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/oO7iKMU5m0cdxhYPZA3nWQiAUh2yoGgdThLWB1rVSec.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "valkyrie",
@@ -362,7 +545,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/valkyrie-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "valkyrie",
+        "id": "valkyrie",
+        "name_en": "Valkyrie",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/0lIoYf3Y_plFTzo95zZL93JVxpfb3MMgFDDhgSDGU9A.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "skeleton_army",
@@ -389,7 +588,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/skeleton-army-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "skeleton_army",
+        "id": "skeleton_army",
+        "name_en": "Skeleton Army",
+        "elixir": 3,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/fAOToOi1pRy7svN2xQS6mDkhQw2pj9m_17FauaNqyl4.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "bomber",
@@ -419,7 +635,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/bomber-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "bomber",
+        "id": "bomber",
+        "name_en": "Bomber",
+        "elixir": 2,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/12n1CesxKIcqVYntjxcF36EFA-ONw7Z-DoL0_rQrbdo.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "musketeer",
@@ -447,7 +679,24 @@
         "card_variants/musketeer-ev1.png",
         "card_variants/musketeer-hero-ev1.png",
         "card_variants/musketeer-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "musketeer",
+        "id": "musketeer",
+        "name_en": "Musketeer",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Tex1C48UTq9FKtAX-3tzG0FJmc9jzncUZG3bb5Vf-Ds.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "baby_dragon",
@@ -476,7 +725,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/baby-dragon-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "baby_dragon",
+        "id": "baby_dragon",
+        "name_en": "Baby Dragon",
+        "elixir": 4,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 0,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/cjC9n4AvEZJ3urkVh-rwBkJ-aRSsydIMqSAV48hAih0.png",
+        "tags": [
+          "air"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "prince",
@@ -501,7 +766,23 @@
       "description": "Don't let the little pony fool you. Once the Prince gets a running start, you WILL be trampled. Deals double damage once he gets charging.",
       "sc_key": "Prince",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "prince",
+        "id": "prince",
+        "name_en": "Prince",
+        "elixir": 5,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/3JntJV62aY0G1Qh6LIs-ek-0ayeYFY3VItpG7cb9I60.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "wizard",
@@ -529,7 +810,24 @@
         "card_variants/wizard-ev1.png",
         "card_variants/wizard-hero-ev1.png",
         "card_variants/wizard-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "wizard",
+        "id": "wizard",
+        "name_en": "Wizard",
+        "elixir": 5,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Mej7vnv4H_3p_8qPs_N6_GKahy6HDr7pU7i9eTHS84U.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "mini_pekka",
@@ -557,7 +855,23 @@
       "icon_variants": [
         "card_variants/mini-pekka-hero-ev1.png",
         "card_variants/mini-pekka-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "mini_p_e_k_k_a",
+        "id": "mini_pekka",
+        "name_en": "Mini P.E.K.K.A",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Fmltc4j3Ve9vO_xhHHPEO3PRP3SmU2oKp2zkZQHRZT4.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "spear_goblins",
@@ -585,7 +899,24 @@
       "description": "Three unarmored ranged attackers. Who the heck taught these guys to throw spears!? Who thought that was a good idea?!",
       "sc_key": "SpearGoblins",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "spear_goblins",
+        "id": "spear_goblins",
+        "name_en": "Spear Goblins",
+        "elixir": 2,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/FSDFotjaXidI4ku_WFpVCTWS1hKGnFh1sxX0lxM43_E.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "giant_skeleton",
@@ -610,7 +941,25 @@
       "description": "The bigger the skeleton, the bigger the bomb. Carries a bomb that blows up when the Giant Skeleton dies.",
       "sc_key": "GiantSkeleton",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "giant_skeleton",
+        "id": "giant_skeleton",
+        "name_en": "Giant Skeleton",
+        "elixir": 6,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/0p0gd0XaVRu1Hb1iSG1hTYbz2AN6aEiZnhaAib5O8Z8.png",
+        "tags": [
+          "swarm",
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "hog_rider",
@@ -638,7 +987,24 @@
       "description": "Fast melee troop that targets buildings and can jump over the river. He followed the echoing call of \"Hog Riderrrrr\" all the way through the Arena doors.",
       "sc_key": "HogRider",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "hog_rider",
+        "id": "hog_rider",
+        "name_en": "Hog Rider",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Ubu0oUl8tZkusnkZf8Xv9Vno5IO29Y-jbZ4fhoNJ5oc.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "minion_horde",
@@ -664,7 +1030,24 @@
       "description": "Six fast, unarmored flying attackers. Three's a crowd, six is a horde!",
       "sc_key": "MinionHorde",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "minion_horde",
+        "id": "minion_horde",
+        "name_en": "Minion Horde",
+        "elixir": 5,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Wyjq5l0IXHTkX9Rmpap6HaH08MvjbxFp1xBO9a47YSI.png",
+        "tags": [
+          "air",
+          "swarm"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "ice_wizard",
@@ -690,7 +1073,24 @@
       "description": "This chill caster throws ice shards that slow down enemies' movement and attack speed. Despite being freezing cold, he has a handlebar mustache that's too hot for TV.",
       "sc_key": "IceWizard",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "ice_wizard",
+        "id": "ice_wizard",
+        "name_en": "Ice Wizard",
+        "elixir": 3,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/W3dkw0HTw9n1jB-zbknY2w3wHuyuLxSRIAV5fUT1SEY.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "royal_giant",
@@ -717,7 +1117,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/royal-giant-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "royal_giant",
+        "id": "royal_giant",
+        "name_en": "Royal Giant",
+        "elixir": 6,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/mnlRaNtmfpQx2e6mp70sLd0ND-pKPF70Cf87_agEKg4.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "guards",
@@ -742,7 +1159,23 @@
       "description": "Three ruthless bone brothers with shields. Knock off their shields and all that's left are three ruthless bone brothers.",
       "sc_key": "SkeletonWarriors",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "guards",
+        "id": "guards",
+        "name_en": "Guards",
+        "elixir": 3,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 1,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/1ArKfLJxYo6_NU_S9cAeIrfbXqWH0oULVJXedxBXQlU.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "princess",
@@ -768,7 +1201,23 @@
       "description": "This stunning Princess shoots flaming arrows from long range. If you're feeling warm feelings towards her, it's probably because you're on fire.",
       "sc_key": "Princess",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "princess",
+        "id": "princess",
+        "name_en": "Princess",
+        "elixir": 3,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/bAwMcqp9EKVIKH3ZLm_m0MqZFSG72zG-vKxpx8aKoVs.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "dark_prince",
@@ -794,7 +1243,23 @@
       "description": "The Dark Prince deals area damage and lets his spiked club do the talking for him - because when he does talk, it sounds like he has a bucket on his head.",
       "sc_key": "DarkPrince",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "dark_prince",
+        "id": "dark_prince",
+        "name_en": "Dark Prince",
+        "elixir": 4,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/M7fXlrKXHu2IvpSGpk36kXVstslbR08Bbxcy0jQcln8.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "three_musketeers",
@@ -818,7 +1283,24 @@
       "description": "Trio of powerful, independent markswomen, fighting for justice and honor. Disrespecting them would not be just a mistake, it would be a cardinal sin!",
       "sc_key": "ThreeMusketeers",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "three_musketeers",
+        "id": "three_musketeers",
+        "name_en": "Three Musketeers",
+        "elixir": 9,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/_J2GhbkX3vswaFk1wG-dopwiHyNc_YiPhwroiKF3Mek.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "lava_hound",
@@ -844,7 +1326,23 @@
       "description": "The Lava Hound is a majestic flying beast that attacks buildings. The Lava Pups are less majestic angry babies that attack anything.",
       "sc_key": "LavaHound",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "lava_hound",
+        "id": "lava_hound",
+        "name_en": "Lava Hound",
+        "elixir": 7,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/unicRQ975sBY2oLtfgZbAI56ZvaWz7azj-vXTLxc0r8.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "ice_spirit",
@@ -871,7 +1369,25 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/ice-spirit-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "ice_spirit",
+        "id": "ice_spirit",
+        "name_en": "Ice Spirit",
+        "elixir": 1,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/lv1budiafU9XmSdrDkk0NYyqASAFYyZ06CPysXKZXlA.png",
+        "tags": [
+          "swarm",
+          "support",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "fire_spirit",
@@ -896,7 +1412,25 @@
       "description": "The Fire Spirit is on a kamikaze mission to give you a warm hug. It'd be adorable if it wasn't on fire.",
       "sc_key": "FireSpirits",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "fire_spirit",
+        "id": "fire_spirit",
+        "name_en": "Fire Spirit",
+        "elixir": 1,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/16-BqusVvynIgYI8_Jci3LDC-r8AI_xaIYLgXqtlmS8.png",
+        "tags": [
+          "swarm",
+          "support",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "miner",
@@ -921,7 +1455,24 @@
       "description": "The Miner can burrow his way underground and appear anywhere in the Arena. It's not magic, it's a shovel. A shovel that deals reduced damage to Crown Towers.",
       "sc_key": "Miner",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "miner",
+        "id": "miner",
+        "name_en": "Miner",
+        "elixir": 3,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Y4yWvdwBCg2FpAZgs8T09Gy34WOwpLZW-ttL52Ae8NE.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "sparky",
@@ -948,7 +1499,23 @@
       "description": "Sparky slowly charges up, then unloads MASSIVE area damage. Overkill isn't in her vocabulary.",
       "sc_key": "ZapMachine",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "sparky",
+        "id": "sparky",
+        "name_en": "Sparky",
+        "elixir": 6,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/2GKMkBrArZXgQxf2ygFjDs4VvGYPbx8F6Lj_68iVhIM.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "bowler",
@@ -972,7 +1539,23 @@
       "description": "This big blue dude digs the simple things in life - Dark Elixir drinks and throwing rocks. His massive boulders roll through their target, hitting everything behind for a strike!",
       "sc_key": "Bowler",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "bowler",
+        "id": "bowler",
+        "name_en": "Bowler",
+        "elixir": 5,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/SU4qFXmbQXWjvASxVI6z9IJuTYolx4A0MKK90sTIE88.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "lumberjack",
@@ -999,7 +1582,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/lumberjack-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "lumberjack",
+        "id": "lumberjack",
+        "name_en": "Lumberjack",
+        "elixir": 4,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 2,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/E6RWrnCuk13xMX5OE1EQtLEKTZQV6B78d00y8PlXt6Q.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "battle_ram",
@@ -1026,7 +1625,25 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/battle-ram-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "battle_ram",
+        "id": "battle_ram",
+        "name_en": "Battle Ram",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/dyc50V2cplKi4H7pq1B3I36pl_sEH5DQrNHboS_dbbM.png",
+        "tags": [
+          "air",
+          "swarm",
+          "win-condition"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "inferno_dragon",
@@ -1056,7 +1673,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/inferno-dragon-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "inferno_dragon",
+        "id": "inferno_dragon",
+        "name_en": "Inferno Dragon",
+        "elixir": 4,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/y5HDbKtTbWG6En6TGWU0xoVIGs1-iQpIP4HC-VM7u8A.png",
+        "tags": [
+          "air",
+          "air-defense"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "ice_golem",
@@ -1090,7 +1724,24 @@
       "icon_variants": [
         "card_variants/ice-golem-hero-ev1.png",
         "card_variants/ice-golem-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "ice_golem",
+        "id": "ice_golem",
+        "name_en": "Ice Golem",
+        "elixir": 2,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/r05cmpwV1o7i7FHodtZwW3fmjbXCW34IJCsDEV5cZC4.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "mega_minion",
@@ -1118,7 +1769,24 @@
       "icon_variants": [
         "card_variants/mega-minion-hero-ev1.png",
         "card_variants/mega-minion-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "mega_minion",
+        "id": "mega_minion",
+        "name_en": "Mega Minion",
+        "elixir": 3,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/-T_e4YLbuhPBKbYnBwQfXgynNpp5eOIN_0RracYwL9c.png",
+        "tags": [
+          "air",
+          "swarm"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "dart_goblin",
@@ -1146,7 +1814,25 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/dart-goblin-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "dart_goblin",
+        "id": "dart_goblin",
+        "name_en": "Dart Goblin",
+        "elixir": 3,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/BmpK3bqEAviflqHCdxxnfm-_l3pRPJw3qxHkwS55nCY.png",
+        "tags": [
+          "swarm",
+          "melee",
+          "ranged"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "goblin_gang",
@@ -1171,7 +1857,24 @@
       "description": "Spawns six Goblins - three with knives, three with spears - at a discounted Elixir cost. It's like a Goblin Value Pack!",
       "sc_key": "GoblinGang",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_gang",
+        "id": "goblin_gang",
+        "name_en": "Goblin Gang",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/NHflxzVAQT4oAz7eDfdueqpictb5vrWezn1nuqFhE4w.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "electro_wizard",
@@ -1197,7 +1900,24 @@
       "description": "He lands with a \"POW!\", stuns nearby enemies and shoots lightning with both hands! What a show off.",
       "sc_key": "ElectroWizard",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "electro_wizard",
+        "id": "electro_wizard",
+        "name_en": "Electro Wizard",
+        "elixir": 4,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/RsFaHgB3w6vXsTjXdPr3x8l_GbV9TbOUCvIx07prbrQ.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "elite_barbarians",
@@ -1222,7 +1942,23 @@
       "description": "Spawns a pair of leveled up Barbarians. They're like regular Barbarians, only harder, better, faster and stronger.",
       "sc_key": "AngryBarbarians",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "elite_barbarians",
+        "id": "elite_barbarians",
+        "name_en": "Elite Barbarians",
+        "elixir": 6,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/C88C5JH_F3lLZj6K-tLcMo5DPjrFmvzIb1R2M6xCfTE.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "hunter",
@@ -1249,7 +1985,25 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/hunter-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "hunter",
+        "id": "hunter",
+        "name_en": "Hunter",
+        "elixir": 4,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/VNabB1WKnYtYRSG7X_FZfnZjQDHTBs9A96OGMFmecrA.png",
+        "tags": [
+          "air-defense",
+          "melee",
+          "ranged"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "executioner",
@@ -1278,7 +2032,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/executioner-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "executioner",
+        "id": "executioner",
+        "name_en": "Executioner",
+        "elixir": 5,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 3,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/9XL5BP2mqzV8kza6KF8rOxrpCZTyuGLp2l413DTjEoM.png",
+        "tags": [
+          "air-defense",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "bandit",
@@ -1302,7 +2073,23 @@
       "description": "The Bandit dashes to her target and delivers an extra big hit! While dashing, she can't be touched. The mask keeps her identity safe, and gives her bonus cool points!",
       "sc_key": "Assassin",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "bandit",
+        "id": "bandit",
+        "name_en": "Bandit",
+        "elixir": 3,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/QWDdXMKJNpv0go-HYaWQWP6p8uIOHjqn-zX7G0p3DyM.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "royal_recruits",
@@ -1328,7 +2115,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/royal-recruits-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "royal_recruits",
+        "id": "royal_recruits",
+        "name_en": "Royal Recruits",
+        "elixir": 7,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/jcNyYGUiXXNz3kuz8NBkHNKNREQKraXlb_Ts7rhCIdM.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "night_witch",
@@ -1354,7 +2157,23 @@
       "description": "Summons Bats to do her bidding! If you get too close, she's not afraid of pitching in with her mean-looking battle staff.",
       "sc_key": "DarkWitch",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "night_witch",
+        "id": "night_witch",
+        "name_en": "Night Witch",
+        "elixir": 4,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/NpCrXDEDBBJgNv9QrBAcJmmMFbS7pe3KCY8xJ5VB18A.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "bats",
@@ -1382,7 +2201,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/bats-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "bats",
+        "id": "bats",
+        "name_en": "Bats",
+        "elixir": 2,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/EnIcvO21hxiNpoI-zO6MDjLmzwPbq8Z4JPo2OKoVUjU.png",
+        "tags": [
+          "air",
+          "swarm"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "royal_ghost",
@@ -1408,7 +2244,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/royal-ghost-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "royal_ghost",
+        "id": "royal_ghost",
+        "name_en": "Royal Ghost",
+        "elixir": 3,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/3En2cz0ISQAaMTHY3hj3rTveFN2kJYq-H4VxvdJNvCM.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "ram_rider",
@@ -1433,7 +2285,24 @@
       "description": "Together they charge through the Arena; snaring enemies, knocking down towers ... and chewing grass!?",
       "sc_key": "RamRider",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "ram_rider",
+        "id": "ram_rider",
+        "name_en": "Ram Rider",
+        "elixir": 5,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/QaJyerT7f7oMyZ3Fv1glKymtLSvx7YUXisAulxl7zRI.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "zappies",
@@ -1457,7 +2326,23 @@
       "description": "Spawns a pack of miniature Zap machines. Who controls them...? Only the Master Builder knows.",
       "sc_key": "MiniSparkys",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "zappies",
+        "id": "zappies",
+        "name_en": "Zappies",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/QZfHRpLRmutZbCr5fpLnTpIp89vLI6NrAwzGZ8tHEc4.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "rascals",
@@ -1481,7 +2366,23 @@
       "description": "Spawns a mischievous trio of Rascals! The boy takes the lead, while the girls pelt enemies from behind... with slingshots full of Double Trouble Gum!",
       "sc_key": "Rascals",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "rascals",
+        "id": "rascals",
+        "name_en": "Rascals",
+        "elixir": 5,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/KV48DfwVHKx9XCjzBdk3daT_Eb52Me4VgjVO7WctRc4.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "cannon_cart",
@@ -1505,7 +2406,23 @@
       "description": "A Cannon on wheels?! Bet they won't see that coming! Once you break its shield, it becomes a Cannon not on wheels.",
       "sc_key": "MovingCannon",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "cannon_cart",
+        "id": "cannon_cart",
+        "name_en": "Cannon Cart",
+        "elixir": 5,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/aqwxRz8HXzqlMCO4WMXNA1txynjXTsLinknqsgZLbok.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "mega_knight",
@@ -1533,7 +2450,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/mega-knight-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "mega_knight",
+        "id": "mega_knight",
+        "name_en": "Mega Knight",
+        "elixir": 7,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 4,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/O2NycChSNhn_UK9nqBXUhhC_lILkiANzPuJjtjoz0CE.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "skeleton_barrel",
@@ -1560,7 +2493,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/skeleton-barrel-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "skeleton_barrel",
+        "id": "skeleton_barrel",
+        "name_en": "Skeleton Barrel",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/vCB4DWCcrGbTkarjcOiVz4aNDx6GWLm0yUepg9E1MGo.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "flying_machine",
@@ -1585,7 +2535,23 @@
       "description": "The Master Builder has sent his first contraption to the Arena! It's a fast and fun flying machine, but fragile!",
       "sc_key": "DartBarrell",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "flying_machine",
+        "id": "flying_machine",
+        "name_en": "Flying Machine",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/hzKNE3QwFcrSrDDRuVW3QY_OnrDPijSiIp-PsWgFevE.png",
+        "tags": [
+          "air"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "wall_breakers",
@@ -1612,7 +2578,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/wall-breakers-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "wall_breakers",
+        "id": "wall_breakers",
+        "name_en": "Wall Breakers",
+        "elixir": 2,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/_xPphEfC8eEwFNrfU3cMQG9-f5JaLQ31ARCA7l3XtW4.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "royal_hogs",
@@ -1639,7 +2621,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/royal-hogs-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "royal_hogs",
+        "id": "royal_hogs",
+        "name_en": "Royal Hogs",
+        "elixir": 5,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/ASSQJG_MoVq9e81HZzo4bynMnyLNpNJMfSLb3hqydOw.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "goblin_giant",
@@ -1666,7 +2665,25 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/goblin-giant-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_giant",
+        "id": "goblin_giant",
+        "name_en": "Goblin Giant",
+        "elixir": 6,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/SoW16cY3jXBwaTDvb39DkqiVsoFVaDWbzf5QBYphJrY.png",
+        "tags": [
+          "swarm",
+          "win-condition",
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "fisherman",
@@ -1692,7 +2709,23 @@
       "description": "His Ranged Attack can pull enemies towards him, and pull himself to enemy buildings. He's also mastered the ancient art of 'Fish Slapping'.",
       "sc_key": "Fisherman",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "fisherman",
+        "id": "fisherman",
+        "name_en": "Fisherman",
+        "elixir": 3,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/U2KZ3g0wyufcuA5P2Xrn3Z3lr1WiJmc5S0IWOZHgizQ.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "magic_archer",
@@ -1722,7 +2755,24 @@
       "icon_variants": [
         "card_variants/magic-archer-hero-ev1.png",
         "card_variants/magic-archer-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "magic_archer",
+        "id": "magic_archer",
+        "name_en": "Magic Archer",
+        "elixir": 4,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Avli3W7BxU9HQ2SoLiXnBgGx25FoNXUSFm7OcAk68ek.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "electro_dragon",
@@ -1749,7 +2799,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/electro-dragon-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "electro_dragon",
+        "id": "electro_dragon",
+        "name_en": "Electro Dragon",
+        "elixir": 5,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/tN9h6lnMNPCNsx0LMFmvpHgznbDZ1fBRkx-C7UfNmfY.png",
+        "tags": [
+          "air"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "firecracker",
@@ -1778,7 +2844,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/firecracker-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "firecracker",
+        "id": "firecracker",
+        "name_en": "Firecracker",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/c1rL3LO1U2D9-TkeFfAC18gP3AO8ztSwrcHMZplwL2Q.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "mighty_miner",
@@ -1803,7 +2885,24 @@
       "description": "Walk softly ... and carry a big drill!\n\nThis Champion deals increasing Damage to his target and can switch lanes to escape combat or change attack plans.\n\nThis makes him not only the mightiest, but also the sneakiest Miner in the Arena.",
       "sc_key": "MightyMiner",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "mighty_miner",
+        "id": "mighty_miner",
+        "name_en": "Mighty Miner",
+        "elixir": 4,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 5,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Cd9R56yraxTvJiD8xJ2qT2OdsHyh94FqOAarXpbyelo.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": true
+      }
     },
     {
       "id": "super_witch",
@@ -1830,7 +2929,8 @@
       "description": "Summons Skeletons, shoots destructo beams, has glowing pink eyes that unfortunately don't shoot lasers.",
       "sc_key": "SuperWitch",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "elixir_golem",
@@ -1855,7 +2955,24 @@
       "description": "Splits into two Elixir Golemites when destroyed, which split into two sentient Blobs when defeated. Each part of the Elixir Golem gives your opponent some Elixir when destroyed!",
       "sc_key": "ElixirGolem",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "elixir_golem",
+        "id": "elixir_golem",
+        "name_en": "Elixir Golem",
+        "elixir": 3,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 6,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/puhMsZjCIqy21HW3hYxjrk_xt8NIPyFqjRy-BeLKZwo.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "battle_healer",
@@ -1879,7 +2996,25 @@
       "description": "With each attack, she unleashes a powerful healing aura that restores Hitpoints to herself and friendly Troops. When she isn't attacking, she passively heals herself!",
       "sc_key": "BattleHealer",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "battle_healer",
+        "id": "battle_healer",
+        "name_en": "Battle Healer",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 6,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/KdwXcoigS2Kg-cgA7BJJIANbUJG6SNgjetRQ-MegZ08.png",
+        "tags": [
+          "air",
+          "swarm",
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "skeleton_king",
@@ -1904,7 +3039,24 @@
       "description": "The King of the undead himself. He sometimes feels lonely (could be due to his non flattering features) and will summon friends to join him in the battle even after death. Tough guys have feelings too!",
       "sc_key": "SkeletonKing",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "skeleton_king",
+        "id": "skeleton_king",
+        "name_en": "Skeleton King",
+        "elixir": 4,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 6,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/dCd69_wN9f8DxwuqOGtR4QgWhHIPIaTNxZ1e23RzAAc.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": true
+      }
     },
     {
       "id": "super_lava_hound",
@@ -1929,7 +3081,8 @@
       "description": "The Lava Hound is a majestic flying beast that attacks buildings. The Lava Pups are less majestic angry babies that attack anything.",
       "sc_key": "SuperLavaHound",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "super_magic_archer",
@@ -1956,7 +3109,8 @@
       "description": "Not quite a Wizard, nor an Archer - he shoots a magic arrow that passes through and damages all enemies in its path. It's not a trick, it's magic!",
       "sc_key": "SuperEliteArcher",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "archer_queen",
@@ -1980,7 +3134,24 @@
       "description": "She is fast, deadly and hard to catch. Beware of her crossbow bolts and try not to blink - you might miss her!",
       "sc_key": "ArcherQueen",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "archer_queen",
+        "id": "archer_queen",
+        "name_en": "Archer Queen",
+        "elixir": 5,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 7,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/p7OQmOAFTery7zCzlpDdm-LOD1kINTm42AwIHchZfWk.png",
+        "tags": [
+          "air-defense",
+          "ranged"
+        ],
+        "evolution": false,
+        "champion": true
+      }
     },
     {
       "id": "santa_hog_rider",
@@ -2008,7 +3179,8 @@
       "description": "Fast melee troop that targets buildings and can jump over the river. He followed the echoing call of \"Hog Riderrrrr\" all the way through the Arena doors.",
       "sc_key": "SuperHogRider",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "golden_knight",
@@ -2032,7 +3204,23 @@
       "description": "A warrior with luxurious hair and outstanding flexibility. Demonstrates his aerobics skills on demand.",
       "sc_key": "GoldenKnight",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "golden_knight",
+        "id": "golden_knight",
+        "name_en": "Golden Knight",
+        "elixir": 4,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 7,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/WJd207D0O1sN-l1FTb8P9KhYL2oF5jY26vRUfTUW3FQ.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": true
+      }
     },
     {
       "id": "super_ice_golem",
@@ -2062,7 +3250,8 @@
       "description": "He's tough, targets buildings and explodes when destroyed, slowing nearby enemies. Made entirely out of ice... or is he?! Yes.",
       "sc_key": "SuperIceGolemite",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "monk",
@@ -2086,7 +3275,23 @@
       "description": "Monk has spent many isolated years perfecting a new style of combat.\n\nHe fires off a 3-hit combo, with the last blow dealing extra Damage and pushing enemies back!",
       "sc_key": "Monk",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "monk",
+        "id": "monk",
+        "name_en": "Monk",
+        "elixir": 5,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 7,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/2onG4t4-CxqwFVZAn6zpWxFz3_mG2ksSj4Q7zldo1SM.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": true
+      }
     },
     {
       "id": "super_archers",
@@ -2115,7 +3320,8 @@
       "description": "A pair of lightly armored ranged attackers. They'll help you take down ground and air units, but you're on your own with hair coloring advice.",
       "sc_key": "SuperArcher",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "skeleton_dragons",
@@ -2141,7 +3347,24 @@
       "description": "This pair of skeletal scorchers deal Area Damage and fly above the Arena. They also play a mean rib cage xylophone duet.",
       "sc_key": "SkeletonDragons",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "skeleton_dragons",
+        "id": "skeleton_dragons",
+        "name_en": "Skeleton Dragons",
+        "elixir": 4,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 8,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/qPOtg9uONh47_NLxGhhFc_ww9PlZ6z3Ry507q1NZUXs.png",
+        "tags": [
+          "air",
+          "swarm"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "terry",
@@ -2165,7 +3388,8 @@
       "description": "Terry and his trusty companion Pim Pim bring their unconventional Hog Riding skills to the Arena!",
       "sc_key": "SuperHogRiderTerry",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "super_mini_pekka",
@@ -2189,7 +3413,8 @@
       "description": "The Arena is a certified butterfly-free zone. No distractions for P.E.K.K.A, only destruction.",
       "sc_key": "SuperMiniPekka",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "mother_witch",
@@ -2213,7 +3438,23 @@
       "description": "Places a curse on enemy Troops with each attack. When a cursed Troop is destroyed, it turns into a building-targeting Hog that fights alongside the Mother Witch!\n\nShe also bakes great cookies.",
       "sc_key": "WitchMother",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "mother_witch",
+        "id": "mother_witch",
+        "name_en": "Mother Witch",
+        "elixir": 4,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 8,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/fO-Xah8XZkYKaSK9SCp3wnzwxtvIhun9NVY-zzte1Ng.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "electro_spirit",
@@ -2240,7 +3481,25 @@
       "description": "Jumps on enemies, dealing Area Damage and stunning up to 9 enemy Troops. Locked in an eternal battle with Knight for the best mustache.",
       "sc_key": "ElectroSpirit",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "electro_spirit",
+        "id": "electro_spirit",
+        "name_en": "Electro Spirit",
+        "elixir": 1,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 8,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/WKd4-IAFsgPpMo7dDi9sujmYjRhOMEWiE07OUJpvD9g.png",
+        "tags": [
+          "swarm",
+          "support",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "electro_giant",
@@ -2265,7 +3524,24 @@
       "description": "He channels electricity through his Zap Pack, a unique device that stuns and damages any Troop attacking him within its range.\n\nDon't tell him that his finger guns aren't real! He'll zap you.",
       "sc_key": "ElectroGiant",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "electro_giant",
+        "id": "electro_giant",
+        "name_en": "Electro Giant",
+        "elixir": 7,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 8,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/_uChZkNHAMq6tPb3v6A49xinOe3CnhjstOhG6OZbPYc.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "raging_prince",
@@ -2289,7 +3565,8 @@
       "description": "Don't let the little pony fool you. Once the Prince gets a running start, you WILL be trampled. Deals double damage once he gets charging.",
       "sc_key": "PrinceBuff",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "phoenix",
@@ -2313,7 +3590,23 @@
       "description": "This mystical creature will be reborn as an egg when destroyed. If it hatches, it returns to the fight! What an egg-cellent ability.\n\nBeing born again is tiring, so a hatched Phoenix will have slightly less Hitpoints and Damage (80% of its total).",
       "sc_key": "Phoenix",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "phoenix",
+        "id": "phoenix",
+        "name_en": "Phoenix",
+        "elixir": 4,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 8,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/i0RoY1fs6ay7VAxyFEfZGIPnD002nAKcne9FtJsWBHM.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "cannon",
@@ -2341,14 +3634,28 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/cannon-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "cannon",
+        "id": "cannon",
+        "name_en": "Cannon",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/nZK1y-beLxO5vnlyUhK6-2zH2NzXJwqykcosqQ1cmZ8.png",
+        "tags": [],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "goblin_hut",
       "official_id": 27000001,
       "name_en": "Goblin Hut",
       "name_zh": "",
-      "elixir": 5,
+      "elixir": 4,
       "rarity": "rare",
       "max_level": null,
       "icon_url": "https://raw.githubusercontent.com/RoyaleAPI/cr-api-assets/master/cards/goblin-hut.png",
@@ -2365,7 +3672,23 @@
       "description": "Building that spawns Spear Goblins. Don't look inside... you don't want to see how they're made.",
       "sc_key": "GoblinHut",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_hut",
+        "id": "goblin_hut",
+        "name_en": "Goblin Hut",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/l8ZdzzNLcwB4u7ihGgxNFQOjCT_njFuAhZr7D6PRF7E.png",
+        "tags": [
+          "swarm"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "mortar",
@@ -2394,7 +3717,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/mortar-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "mortar",
+        "id": "mortar",
+        "name_en": "Mortar",
+        "elixir": 4,
+        "rarity": "common",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/lPOSw6H7YOHq2miSCrf7ZDL3ANjhJdPPDYOTujdNrVE.png",
+        "tags": [
+          "win-condition"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "inferno_tower",
@@ -2419,7 +3758,23 @@
       "description": "Defensive building, roasts targets for damage that increases over time. Burns through even the biggest and toughest enemies!",
       "sc_key": "InfernoTower",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "inferno_tower",
+        "id": "inferno_tower",
+        "name_en": "Inferno Tower",
+        "elixir": 5,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/GSHY_wrooMMLET6bG_WJB8redtwx66c4i80ipi4gYOM.png",
+        "tags": [
+          "air-defense"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "bomb_tower",
@@ -2444,7 +3799,21 @@
       "description": "Defensive building that houses a Bomber. Deals area damage to anything dumb enough to stand near it.",
       "sc_key": "BombTower",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "bomb_tower",
+        "id": "bomb_tower",
+        "name_en": "Bomb Tower",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/rirYRyHPc97emRjoH-c1O8uZCBzPVnToaGuNGusF3TQ.png",
+        "tags": [],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "barbarian_hut",
@@ -2469,7 +3838,21 @@
       "description": "Building that periodically spawns Barbarians to fight the enemy. Time to make the Barbarians!",
       "sc_key": "BarbarianHut",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "barbarian_hut",
+        "id": "barbarian_hut",
+        "name_en": "Barbarian Hut",
+        "elixir": 6,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/ho0nOG2y3Ch86elHHcocQs8Fv_QNe0cFJ2CijsxABZA.png",
+        "tags": [],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "tesla",
@@ -2495,7 +3878,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/tesla-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "tesla",
+        "id": "tesla",
+        "name_en": "Tesla",
+        "elixir": 4,
+        "rarity": "common",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/OiwnGrxFMNiHetYEerE-UZt0L_uYNzFY7qV_CA_OxR4.png",
+        "tags": [
+          "air-defense"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "elixir_collector",
@@ -2519,7 +3918,21 @@
       "description": "You gotta spend Elixir to make Elixir! This building makes 8 Elixir over its Lifetime. Does not appear in your starting hand.",
       "sc_key": "Elixir Collector",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "elixir_collector",
+        "id": "elixir_collector",
+        "name_en": "Elixir Collector",
+        "elixir": 6,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/BGLo3Grsp81c72EpxLLk-Sofk3VY56zahnUNOv3JcT0.png",
+        "tags": [],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "x_bow",
@@ -2544,7 +3957,23 @@
       "description": "Nice tower you got there. Would be a shame if this X-Bow whittled it down from this side of the Arena...",
       "sc_key": "Xbow",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "x_bow",
+        "id": "x_bow",
+        "name_en": "X-Bow",
+        "elixir": 6,
+        "rarity": "epic",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/zVQ9Hme1hlj9Dc6e1ORl9xWwglcSrP7ejow5mAhLUJc.png",
+        "tags": [
+          "win-condition"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "tombstone",
@@ -2569,7 +3998,21 @@
       "description": "Building that periodically spawns Skeletons to fight the enemy... and when destroyed, spawns 4 more Skeletons! Creepy!",
       "sc_key": "Tombstone",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "tombstone",
+        "id": "tombstone",
+        "name_en": "Tombstone",
+        "elixir": 3,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/LjSfSbwQfkZuRJY4pVxKspZ-a0iM5KAhU8w-a_N5Z7Y.png",
+        "tags": [],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "furnace",
@@ -2595,7 +4038,21 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/furnace-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "furnace",
+        "id": "furnace",
+        "name_en": "Furnace",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/iqbDiG7yYRIzvCPXdt9zPb3IvMt7F7Gi4wIPnh2x4aI.png",
+        "tags": [],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "goblin_cage",
@@ -2621,7 +4078,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/goblin-cage-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_cage",
+        "id": "goblin_cage",
+        "name_en": "Goblin Cage",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/vD24bBgK4rSq7wx5QEbuqChtPMRFviL_ep76GwQw1yA.png",
+        "tags": [
+          "swarm"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "goblin_drill",
@@ -2648,7 +4121,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/goblin-drill-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_drill",
+        "id": "goblin_drill",
+        "name_en": "Goblin Drill",
+        "elixir": 4,
+        "rarity": "epic",
+        "kind": "building",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/eN2TKUYbih-26yBi0xy5LVFOA0zDftgDqxxnVfdIg1o.png",
+        "tags": [
+          "swarm"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "party_hut",
@@ -2672,7 +4161,8 @@
       "description": "Building that spawns Spear Goblins. Don't look inside... you don't want to see how they're made.",
       "sc_key": "GoblinPartyHut",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
     },
     {
       "id": "fireball",
@@ -2696,7 +4186,23 @@
       "description": "Annnnnd... Fireball. Incinerates a small area, dealing high damage. Reduced damage to Crown Towers.",
       "sc_key": "Fireball",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "fireball",
+        "id": "fireball",
+        "name_en": "Fireball",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/lZD9MILQv7O-P3XBr_xOLS5idwuz3_7Ws9G60U36yhc.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "arrows",
@@ -2721,7 +4227,23 @@
       "description": "Arrows pepper a large area, damaging all enemies hit. Reduced damage to Crown Towers.",
       "sc_key": "Arrows",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "arrows",
+        "id": "arrows",
+        "name_en": "Arrows",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Flsoci-Y6y8ZFVi5uRFTmgkPnCmMyMVrU7YmmuPvSBo.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "rage",
@@ -2746,7 +4268,23 @@
       "description": "Increases troop movement and attack speed. Buildings attack faster and summon troops quicker, too. Chaaaarge!",
       "sc_key": "Rage",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "rage",
+        "id": "rage",
+        "name_en": "Rage",
+        "elixir": 2,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/bGP21OOmcpHMJ5ZA79bHVV2D-NzPtDkvBskCNJb7pg0.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "rocket",
@@ -2770,7 +4308,23 @@
       "description": "Deals high damage to a small area. Looks really awesome doing it. Reduced damage to Crown Towers.",
       "sc_key": "Rocket",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "rocket",
+        "id": "rocket",
+        "name_en": "Rocket",
+        "elixir": 6,
+        "rarity": "rare",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Ie07nQNK9CjhKOa4-arFAewi4EroqaA-86Xo7r5tx94.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "goblin_barrel",
@@ -2798,7 +4352,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/goblin-barrel-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_barrel",
+        "id": "goblin_barrel",
+        "name_en": "Goblin Barrel",
+        "elixir": 3,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/CoZdp5PpsTH858l212lAMeJxVJ0zxv9V-f5xC8Bvj5g.png",
+        "tags": [
+          "swarm",
+          "support"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "freeze",
@@ -2822,14 +4393,30 @@
       "description": "Freezes and damages enemy troops and buildings, making them unable to move or attack. Everybody chill. Reduced damage to Crown Towers.",
       "sc_key": "Freeze",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "freeze",
+        "id": "freeze",
+        "name_en": "Freeze",
+        "elixir": 4,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/I1M20_Zs_p_BS1NaNIVQjuMJkYI_1-ePtwYZahn0JXQ.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "mirror",
       "official_id": 28000006,
       "name_en": "Mirror",
       "name_zh": "",
-      "elixir": 1,
+      "elixir": null,
       "rarity": "epic",
       "max_level": null,
       "icon_url": "https://raw.githubusercontent.com/RoyaleAPI/cr-api-assets/master/cards/mirror.png",
@@ -2847,7 +4434,23 @@
       "description": "Mirrors your last card played for +1 Elixir. Does not appear in your starting hand.",
       "sc_key": "Mirror",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "mirror",
+        "id": "mirror",
+        "name_en": "Mirror",
+        "elixir": 0,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/wC6Cm9rKLEOk72zTsukVwxewKIoO4ZcMJun54zCPWvA.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "lightning",
@@ -2872,7 +4475,23 @@
       "description": "Bolts of lightning damage and stun up to three enemy troops or buildings with the most hitpoints in the target area. Reduced damage to Crown Towers.",
       "sc_key": "Lightning",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "lightning",
+        "id": "lightning",
+        "name_en": "Lightning",
+        "elixir": 6,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/fpnESbYqe5GyZmaVVYe-SEu7tE0Kxh_HZyVigzvLjks.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "zap",
@@ -2899,7 +4518,23 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/zap-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "zap",
+        "id": "zap",
+        "name_en": "Zap",
+        "elixir": 2,
+        "rarity": "common",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/7dxh2-yCBy1x44GrBaL29vjqnEEeJXHEAlsi5g6D1eY.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "poison",
@@ -2923,7 +4558,23 @@
       "description": "Covers the area in a deadly toxin, damaging enemy troops and buildings over time. Yet somehow leaves the grass green and healthy. Go figure! Reduced damage to Crown Towers.",
       "sc_key": "Poison",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "poison",
+        "id": "poison",
+        "name_en": "Poison",
+        "elixir": 4,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/98HDkG2189yOULcVG9jz2QbJKtfuhH21DIrIjkOjxI8.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "graveyard",
@@ -2948,7 +4599,24 @@
       "description": "Surprise! It's a party. A Skeleton party, anywhere in the Arena. Yay!",
       "sc_key": "Graveyard",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "graveyard",
+        "id": "graveyard",
+        "name_en": "Graveyard",
+        "elixir": 5,
+        "rarity": "legendary",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Icp8BIyyfBTj1ncCJS7mb82SY7TPV-MAE-J2L2R48DI.png",
+        "tags": [
+          "win-condition",
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "the_log",
@@ -2974,7 +4642,23 @@
       "description": "A spilt bottle of Rage turned an innocent tree trunk into \"The Log\". Now, it seeks revenge by crushing anything in its path! Reduced damage to Crown Towers.",
       "sc_key": "Log",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "the_log",
+        "id": "the_log",
+        "name_en": "The Log",
+        "elixir": 2,
+        "rarity": "legendary",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/_iDwuDLexHPFZ_x4_a0eP-rxCS6vwWgTs6DLauwwoaY.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "tornado",
@@ -2998,7 +4682,23 @@
       "description": "Drags enemy troops to its center while dealing damage over time, just like a magnet. A big, swirling, Tornado-y magnet.",
       "sc_key": "Tornado",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "tornado",
+        "id": "tornado",
+        "name_en": "Tornado",
+        "elixir": 3,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/QJB-QK1QJHdw4hjpAwVSyZBozc2ZWAR9pQ-SMUyKaT0.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "clone",
@@ -3022,7 +4722,23 @@
       "description": "Duplicates all friendly troops in the target area. Cloned troops are fragile, but pack the same punch as the original! Doesn't affect buildings.",
       "sc_key": "Clone",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "clone",
+        "id": "clone",
+        "name_en": "Clone",
+        "elixir": 3,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/mHVCet-1TkwWq-pxVIU2ZWY9_2z7Z7wtP25ArEUsP_g.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "earthquake",
@@ -3047,7 +4763,23 @@
       "description": "Deals Damage per second to Troops and Crown Towers. Deals huge Building Damage! Does not affect flying units (it is an EARTHquake, after all).",
       "sc_key": "Earthquake",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "earthquake",
+        "id": "earthquake",
+        "name_en": "Earthquake",
+        "elixir": 3,
+        "rarity": "rare",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/XeQXcrUu59C52DslyZVwCnbi4yamID-WxfVZLShgZmE.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "barbarian_barrel",
@@ -3076,7 +4808,23 @@
       "icon_variants": [
         "card_variants/barbarian-barrel-hero-ev1.png",
         "card_variants/barbarian-barrel-hero.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "barbarian_barrel",
+        "id": "barbarian_barrel",
+        "name_en": "Barbarian Barrel",
+        "elixir": 2,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/Gb0G1yNy0i5cIGUHin8uoFWxqntNtRPhY_jeMXg7HnA.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "heal_spirit",
@@ -3101,7 +4849,24 @@
       "description": "A mischievous Spirit that leaps at enemies, dealing Damage and leaving behind a powerful healing effect that restores Hitpoints to friendly Troops!\n\nR.I.P. Heal\n2017 - 2020\nAlas, we hardly used ye.",
       "sc_key": "Heal",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "heal_spirit",
+        "id": "heal_spirit",
+        "name_en": "Heal Spirit",
+        "elixir": 1,
+        "rarity": "rare",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/GITl06sa2nGRLPvboyXbGEv5E3I-wAwn1Eqa5esggbc.png",
+        "tags": [
+          "swarm",
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "giant_snowball",
@@ -3128,7 +4893,24 @@
       "strategy_verified": false,
       "icon_variants": [
         "card_variants/giant-snowball-ev1.png"
-      ]
+      ],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "giant_snowball",
+        "id": "giant_snowball",
+        "name_en": "Giant Snowball",
+        "elixir": 2,
+        "rarity": "common",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/7MaJLa6hK9WN2_VIshuh5DIDfGwm0wEv98gXtAxLDPs.png",
+        "tags": [
+          "win-condition",
+          "support"
+        ],
+        "evolution": true,
+        "champion": false
+      }
     },
     {
       "id": "royal_delivery",
@@ -3154,7 +4936,23 @@
       "description": "No need to sign for this package!\n\nDropped from the sky, it deals Area Damage to enemy Troops before delivering a Royal Recruit.\n\nThe empty box is also handy for espionage.",
       "sc_key": "RoyalDelivery",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "royal_delivery",
+        "id": "royal_delivery",
+        "name_en": "Royal Delivery",
+        "elixir": 3,
+        "rarity": "common",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/LPg7AGjGI3_xmi7gLLgGC50yKM1jJ2teWkZfoHJcIZo.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     },
     {
       "id": "party_rocket",
@@ -3178,7 +4976,432 @@
       "description": "Deals high damage to a small area. Looks really awesome doing it. Reduced damage to Crown Towers.",
       "sc_key": "GoblinPartyRocket",
       "strategy_verified": false,
-      "icon_variants": []
+      "icon_variants": [],
+      "deckbuilder_current": false
+    },
+    {
+      "id": "little_prince",
+      "official_id": null,
+      "name_en": "Little Prince",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/dY-gSseki6KBpkIG17safHH5YlB8SErFZO9OXbJxf9w.png",
+      "icon_path": "card_icons/little_prince.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 3,
+      "rarity": "champion",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "little_prince",
+        "id": "little_prince",
+        "name_en": "Little Prince",
+        "elixir": 3,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 9,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/dY-gSseki6KBpkIG17safHH5YlB8SErFZO9OXbJxf9w.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": true
+      }
+    },
+    {
+      "id": "goblin_demolisher",
+      "official_id": null,
+      "name_en": "Goblin Demolisher",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/KVVOgdn40xasFLYuQv8Go_U_LCV7wSG9q9eE1H7f3Qk.png",
+      "icon_path": "card_icons/goblin_demolisher.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 4,
+      "rarity": "rare",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_demolisher",
+        "id": "goblin_demolisher",
+        "name_en": "Goblin Demolisher",
+        "elixir": 4,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 9,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/KVVOgdn40xasFLYuQv8Go_U_LCV7wSG9q9eE1H7f3Qk.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "goblin_machine",
+      "official_id": null,
+      "name_en": "Goblin Machine",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/-iLlotr6GCFndL_1BSBqWBb6DnsHBhLerd5EblZDNfU.png",
+      "icon_path": "card_icons/goblin_machine.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 5,
+      "rarity": "legendary",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_machine",
+        "id": "goblin_machine",
+        "name_en": "Goblin Machine",
+        "elixir": 5,
+        "rarity": "legendary",
+        "kind": "troop",
+        "arena": 9,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/-iLlotr6GCFndL_1BSBqWBb6DnsHBhLerd5EblZDNfU.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "suspicious_bush",
+      "official_id": null,
+      "name_en": "Suspicious Bush",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/vqTzGAjseQv9F5rf4tsFWeocvg0dyPw1j_nB1cmDZfI.png",
+      "icon_path": "card_icons/suspicious_bush.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 2,
+      "rarity": "rare",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "suspicious_bush",
+        "id": "suspicious_bush",
+        "name_en": "Suspicious Bush",
+        "elixir": 2,
+        "rarity": "rare",
+        "kind": "troop",
+        "arena": 9,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/vqTzGAjseQv9F5rf4tsFWeocvg0dyPw1j_nB1cmDZfI.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "goblinstein",
+      "official_id": null,
+      "name_en": "Goblinstein",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/mQ20B49dXdk7Nv0lMdLw175M3YvkSpN6KNnho8UKBd8.png",
+      "icon_path": "card_icons/goblinstein.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 5,
+      "rarity": "champion",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblinstein",
+        "id": "goblinstein",
+        "name_en": "Goblinstein",
+        "elixir": 5,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 9,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/mQ20B49dXdk7Nv0lMdLw175M3YvkSpN6KNnho8UKBd8.png",
+        "tags": [
+          "swarm",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": true
+      }
+    },
+    {
+      "id": "rune_giant",
+      "official_id": null,
+      "name_en": "Rune Giant",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/UogMnGHQXT-TOVXRxslKdAKXUPhqUvrD_hV9x8lbzdE.png",
+      "icon_path": "card_icons/rune_giant.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 4,
+      "rarity": "epic",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "rune_giant",
+        "id": "rune_giant",
+        "name_en": "Rune Giant",
+        "elixir": 4,
+        "rarity": "epic",
+        "kind": "troop",
+        "arena": 10,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/UogMnGHQXT-TOVXRxslKdAKXUPhqUvrD_hV9x8lbzdE.png",
+        "tags": [
+          "win-condition",
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "berserker",
+      "official_id": null,
+      "name_en": "Berserker",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/NA6W8S1JBYBlOPwD3dNvJLFvVDKq-UuBs_J3i3ewLFI.png",
+      "icon_path": "card_icons/berserker.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 2,
+      "rarity": "common",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "berserker",
+        "id": "berserker",
+        "name_en": "Berserker",
+        "elixir": 2,
+        "rarity": "common",
+        "kind": "troop",
+        "arena": 10,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/NA6W8S1JBYBlOPwD3dNvJLFvVDKq-UuBs_J3i3ewLFI.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "boss_bandit",
+      "official_id": null,
+      "name_en": "Boss Bandit",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/nuceG9o7rAyvyc7D3sp2QSiRYtSOEgraq0NJkDf729s.png",
+      "icon_path": "card_icons/boss_bandit.png",
+      "icon_variants": [],
+      "kind": "troop",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 6,
+      "rarity": "champion",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "boss_bandit",
+        "id": "boss_bandit",
+        "name_en": "Boss Bandit",
+        "elixir": 6,
+        "rarity": "champion",
+        "kind": "troop",
+        "arena": 10,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/nuceG9o7rAyvyc7D3sp2QSiRYtSOEgraq0NJkDf729s.png",
+        "tags": [
+          "melee"
+        ],
+        "evolution": false,
+        "champion": true
+      }
+    },
+    {
+      "id": "void",
+      "official_id": null,
+      "name_en": "Void",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/BykyeWDqzn4PlHSszu3NbrXT1mHxW2EA8vHbQGR5LDE.png",
+      "icon_path": "card_icons/void.png",
+      "icon_variants": [],
+      "kind": "spell",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 3,
+      "rarity": "epic",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "void",
+        "id": "void",
+        "name_en": "Void",
+        "elixir": 3,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/BykyeWDqzn4PlHSszu3NbrXT1mHxW2EA8vHbQGR5LDE.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "goblin_curse",
+      "official_id": null,
+      "name_en": "Goblin Curse",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/OQPfGgT5mHEUvPuKKt0plZT0PNtIjCqUgQ3Rm86dQ2k.png",
+      "icon_path": "card_icons/goblin_curse.png",
+      "icon_variants": [],
+      "kind": "spell",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 2,
+      "rarity": "epic",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "goblin_curse",
+        "id": "goblin_curse",
+        "name_en": "Goblin Curse",
+        "elixir": 2,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/OQPfGgT5mHEUvPuKKt0plZT0PNtIjCqUgQ3Rm86dQ2k.png",
+        "tags": [
+          "swarm",
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "spirit_empress",
+      "official_id": null,
+      "name_en": "Spirit Empress",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/MWWBZqiQeRBXSqEITVMj46nO_uCIUsqBidvUw9K2twY.png",
+      "icon_path": "card_icons/spirit_empress.png",
+      "icon_variants": [],
+      "kind": "spell",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 6,
+      "rarity": "legendary",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "spirit_empress",
+        "id": "spirit_empress",
+        "name_en": "Spirit Empress",
+        "elixir": 6,
+        "rarity": "legendary",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/MWWBZqiQeRBXSqEITVMj46nO_uCIUsqBidvUw9K2twY.png",
+        "tags": [
+          "swarm",
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
+    },
+    {
+      "id": "vines",
+      "official_id": null,
+      "name_en": "Vines",
+      "name_zh": "",
+      "icon_url": "https://api-assets.clashroyale.com/cards/300/V5sJlPuo2WBRtirJ1lGEPJA4NvQ0KPwFeMrpxLX5z_8.png",
+      "icon_path": "card_icons/vines.png",
+      "icon_variants": [],
+      "kind": "spell",
+      "targets": [],
+      "roles": [],
+      "counters": [],
+      "synergies": [],
+      "strategy_verified": false,
+      "notes": "Public detail statistics imported; combat mechanics unverified.",
+      "elixir": 3,
+      "rarity": "epic",
+      "deckbuilder_current": true,
+      "directory_metadata": {
+        "source_id": "vines",
+        "id": "vines",
+        "name_en": "Vines",
+        "elixir": 3,
+        "rarity": "epic",
+        "kind": "spell",
+        "arena": 15,
+        "icon_url": "https://api-assets.clashroyale.com/cards/300/V5sJlPuo2WBRtirJ1lGEPJA4NvQ0KPwFeMrpxLX5z_8.png",
+        "tags": [
+          "support"
+        ],
+        "evolution": false,
+        "champion": false
+      }
     }
-  ]
+  ],
+  "directory_source": {
+    "url": "https://www.clashroyaledeckbuilder.net/zh/clash-royale-cards",
+    "asset_url": "https://www.clashroyaledeckbuilder.net/_next/static/chunks/51314-08b94dca2436e4d0.js?dpl=dpl_EtDfczE67CSwbLwvcxy7jSYswZdZ",
+    "detail_asset_url": "https://www.clashroyaledeckbuilder.net/_next/static/chunks/app/%5Blocale%5D/(marketing)/clash-royale-cards/%5Bid%5D/page-f16095d504131033.js?dpl=dpl_EtDfczE67CSwbLwvcxy7jSYswZdZ",
+    "retrieved_at": "2026-09-13T08:26:51.307970+00:00",
+    "page_sha256": "28fc9dd671d4dfce223d314184c9145b9804081d9924b794b8715616da826d03",
+    "asset_sha256": "389dc74bc7c1b0cef5b46ea599eb3616d05007f9381e57a793f7abec4072acaf",
+    "detail_asset_sha256": "884ce295e7efa7e093f88cfdf4747dbf5d1a173c747ed7c9b0942a1495795409",
+    "status": "public_detail_stats_unvalidated_balance"
+  }
 }
