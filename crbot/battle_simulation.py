@@ -52,12 +52,14 @@ class SimState:
     uncertainties: set[str] = field(default_factory=set)
     next_uid: int = 1
     seconds_per_elixir: float = 2.8
+    tower_shots: dict[int, int] = field(default_factory=lambda: {1: 0, -1: 0})
 
     def clone(self):
         # Specs are immutable and can be shared across all branches.
         return SimState(self.time, [copy.copy(e) for e in self.entities], dict(self.elixir),
                         {k: list(v) for k, v in self.hands.items()}, dict(self.damage),
-                        list(self.impacts), set(self.uncertainties), self.next_uid, self.seconds_per_elixir)
+                        list(self.impacts), set(self.uncertainties), self.next_uid, self.seconds_per_elixir,
+                        dict(self.tower_shots))
 
 
 class Simulator:
@@ -67,6 +69,24 @@ class Simulator:
     @staticmethod
     def xy(x, y):
         return (x - .05) / .9 * 18, (y - .18) / .64 * 32
+
+    def legal_placement(self, s, card_id, side, x, y):
+        if not (.05 <= x <= .95 and .18 <= y <= .82):
+            return False
+        card = self.kb.cards.get(card_id, {})
+        if card.get('kind') == 'spell':
+            return True
+        if (side == 1 and y < .51) or (side == -1 and y > .49):
+            return False
+        px, py = self.xy(x, y)
+        # King-tower footprint remains excluded even though king activation is not modeled.
+        if abs(px-9) < 2 and abs(py-(30 if side == 1 else 2)) < 2:
+            return False
+        for e in s.entities:
+            if e.hp > 0 and (e.tower or e.spec.building):
+                if math.hypot(px-e.x, py-e.y) < e.spec.radius + .6:
+                    return False
+        return True
 
     def add(self, s: SimState, spec: UnitSpec, side: int, x: float, y: float, *, hp_fraction=1.,
             value=0., tower=False, deployed=False):
@@ -88,9 +108,7 @@ class Simulator:
             return False
         if a.card_id not in [cid for _, cid in s.hands[side]]:
             return False
-        if not (.05 <= a.x <= .95 and .18 <= a.y <= .82):
-            return False
-        if card["kind"] != "spell" and ((side == 1 and a.y < .51) or (side == -1 and a.y > .49)):
+        if not self.legal_placement(s, a.card_id, side, a.x, a.y):
             return False
         roster, spell = self.kb.roster(a.card_id, self.level), self.kb.spell(a.card_id, self.level)
         if not roster and not spell:
@@ -174,9 +192,12 @@ class Simulator:
                 enemies = [t for t in s.entities if t.side != e.side and t.hp > 0
                            and ("air" if t.spec.air else "ground") in e.spec.targets
                            and (not e.spec.building_only or t.spec.building or t.tower)]
-                target = next((t for t in enemies if t.uid == e.target and self.distance(e, t) <= e.spec.sight), None)
+                if e.tower:
+                    enemies = [t for t in enemies if self.distance(e, t) <= e.spec.reach]
+                sight = max(e.spec.sight, e.spec.reach) if e.tower else e.spec.sight
+                target = next((t for t in enemies if t.uid == e.target and self.distance(e, t) <= sight), None)
                 if target is None:
-                    nearby = [t for t in enemies if self.distance(e, t) <= e.spec.sight]
+                    nearby = [t for t in enemies if self.distance(e, t) <= sight]
                     towers = [t for t in enemies if t.tower]
                     target = min(nearby or towers, key=lambda t: self.distance(e, t), default=None)
                     if target and target.uid != e.target:
@@ -202,7 +223,9 @@ class Simulator:
                     s.impacts.append((s.time + delay, e.side, target.uid, target.x, target.y,
                                       damage, e.spec.splash, "air" in e.spec.targets, 1., e.spec.stun, e.spec.pushback))
                     e.ready_at = s.time + e.spec.period
-                elif e.spec.speed > 0:
+                    if e.tower:
+                        s.tower_shots[e.side] += 1
+                elif e.spec.speed > 0 and not e.tower:
                     tx, ty = target.x, target.y
                     if not e.spec.air and (e.y - 16) * (ty - 16) < 0:
                         # Ground units cross on a bridge before heading for the target.
@@ -237,7 +260,23 @@ class Simulator:
         enemy_towers = sum(e.tower and e.side == -1 for e in s.entities)
         score = (enemy_loss - 1.5 * own_loss) / 150 + .65 * material + .35 * reserve
         score += 18 * (own_towers - enemy_towers)
+        # Penalize imminent damage beyond the horizon, especially at a nearly fallen tower.
+        exposure = 0.
+        for enemy in s.entities:
+            if enemy.side != -1 or enemy.tower or enemy.spec.damage <= 0:
+                continue
+            tower = min((t for t in s.entities if t.side == 1 and t.tower),
+                        key=lambda t: Simulator.distance(enemy, t), default=None)
+            if tower is None:
+                continue
+            if enemy.target is not None and enemy.target != tower.uid:
+                continue
+            eta = max(0, Simulator.distance(enemy, tower) - enemy.spec.reach) / max(.1, enemy.spec.speed)
+            exposure += enemy.spec.damage / max(.1, enemy.spec.period) * max(0, 3-eta) * (2-tower.hp/tower.spec.hp)
+        score -= exposure / 150
         score -= .08 * len(s.uncertainties)
         return score, {"own_tower_damage": round(own_loss, 1), "enemy_tower_damage": round(enemy_loss, 1),
+                       "own_tower_shots": s.tower_shots[1], "enemy_tower_shots": s.tower_shots[-1],
+                       "imminent_tower_exposure": round(exposure, 1),
                        "material": round(material, 2), "elixir_advantage": round(reserve, 2),
                        "uncertainties": sorted(s.uncertainties)}

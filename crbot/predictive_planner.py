@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from .battle_simulation import SimAction, Simulator, SimState
 from .battle_world import WorldSnapshot
 from .knowledge import KnowledgeBase
+from .placement_search import placement_points
 
 
 @dataclass
@@ -20,10 +21,11 @@ class PlanResult:
     reason: str = ""
     elapsed_ms: float = 0
     knowledge_version: str = ""
-    simulation_version: str = "spatial_v1"
+    simulation_version: str = "spatial_v2_placement"
     nodes: int = 0
     completed_depth: int = 0
     budget_exhausted: bool = False
+    placement_mode: str = "scene_grid_and_intercepts"
 
     def to_dict(self):
         return asdict(self)
@@ -44,20 +46,7 @@ class PredictivePlanner:
                 continue
             if not self.kb.roster(cid, self.sim.level) and not self.kb.spell(cid, self.sim.level):
                 continue
-            kind = card.get("kind")
-            if kind == "spell":
-                enemies = [e for e in s.entities if e.side != side and not e.tower]
-                points = [(.05 + e.x / 18 * .9, .18 + e.y / 32 * .64) for e in enemies[:4]]
-                if not points:
-                    continue  # no speculative blind spell
-            elif kind == "building":
-                points = [(.43, .59), (.57, .59)]
-            else:
-                points = [(.28, .67), (.72, .67), (.28, .55), (.72, .55)]
-                if side == -1:
-                    points = [(x, 1-y) for x, y in points]
-            if kind == "building" and side == -1:
-                points = [(x, 1-y) for x, y in points]
+            points = placement_points(self.sim, s, cid, side)
             for x, y in points:
                 result.append(SimAction(cid, slot, x, y))
         # Round-robin by card avoids exhausting the budget on the first hand slot.
