@@ -36,6 +36,10 @@ from .replay_learning import (
     train_replay_policy,
 )
 from .runtime_model import (
+    DECISION_ENGINE_LABELS,
+    apply_decision_engine,
+    load_decision_engine,
+    save_decision_engine,
     DEFAULT_RUNTIME_MODEL,
     RUNTIME_MODEL_LABELS,
     apply_runtime_model,
@@ -153,8 +157,10 @@ class RoyalTrainerApp:
         try:
             initial_config, _ = load_config(self.config_path)
             self.runtime_model = load_runtime_model(self.config_path, initial_config)
+            self.decision_engine = load_decision_engine(self.config_path, initial_config)
         except (OSError, ValueError):
             self.runtime_model = DEFAULT_RUNTIME_MODEL
+            self.decision_engine = "legacy"
 
         self._configure_window()
         self._build_interface()
@@ -384,10 +390,22 @@ class RoyalTrainerApp:
     def _build_control_card(self, parent: tk.Frame) -> None:
         controls = tk.Frame(parent, background=Palette.BG)
         controls.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        strategy_bar = tk.Frame(controls, background=Palette.BG)
+        strategy_bar.pack(fill="x", pady=(0, 6))
+        tk.Label(strategy_bar, text="版本", font=(FONT, 9), foreground=Palette.MUTED,
+                 background=Palette.BG).pack(side="left", padx=(0, 8))
+        self.engine_var = tk.StringVar(value=DECISION_ENGINE_LABELS[self.decision_engine])
+        self.engine_combo = ttk.Combobox(strategy_bar, textvariable=self.engine_var,
+                                       values=list(DECISION_ENGINE_LABELS.values()), state="readonly",
+                                       width=28, style="Model.TCombobox", font=(FONT, 9))
+        self.engine_combo.pack(side="left")
+        self.engine_combo.bind("<<ComboboxSelected>>", self._on_engine_selected)
+        tk.Label(strategy_bar, text="停止后切换；预测与实测结果分开记录", font=(FONT, 8),
+                 foreground=Palette.MUTED, background=Palette.BG).pack(side="left", padx=10)
         bar = tk.Frame(controls, background=Palette.BG)
         bar.pack(fill="x")
         tk.Label(
-            bar, text="规则", font=(FONT, 9),
+            bar, text="旧规则", font=(FONT, 9),
             foreground=Palette.MUTED, background=Palette.BG,
         ).pack(side="left", padx=(0, 8))
         self.model_key_by_label = {
@@ -607,6 +625,7 @@ class RoyalTrainerApp:
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
         self.model_combo.configure(state="disabled" if running else "readonly")
+        self.engine_combo.configure(state="disabled" if running else "readonly")
         self.check_button.configure(state="disabled" if running else "normal")
         self.connection_button.configure(state="disabled" if running else "normal")
         if running:
@@ -619,11 +638,22 @@ class RoyalTrainerApp:
         key = self.model_key_by_label.get(label, DEFAULT_RUNTIME_MODEL)
         try:
             self.runtime_model = save_runtime_model(self.config_path, key)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             self.model_var.set(runtime_model_label(self.runtime_model))
             messagebox.showerror("无法保存模型选择", str(exc), parent=self.root)
             return
-        self._append_log(f"规则版本已切换为：{runtime_model_label(key)}", "success")
+        self._append_log(f"运行版本已切换为：{runtime_model_label(key)}", "success")
+
+    def _on_engine_selected(self, _event=None):
+        selected = next((key for key, label in DECISION_ENGINE_LABELS.items()
+                         if label == self.engine_var.get()), "legacy")
+        try:
+            self.decision_engine = save_decision_engine(self.config_path, selected)
+        except (OSError, ValueError) as exc:
+            self.engine_var.set(DECISION_ENGINE_LABELS[self.decision_engine])
+            messagebox.showerror("无法保存决策模式", str(exc), parent=self.root)
+            return
+        self._append_log(f"决策模式：{DECISION_ENGINE_LABELS[selected]}，下次启动生效", "success")
 
     def _refresh_connection_button(self, config: dict[str, Any] | None = None) -> None:
         try:
@@ -887,12 +917,13 @@ class RoyalTrainerApp:
         selected_model = self.model_key_by_label.get(
             selected_label, DEFAULT_RUNTIME_MODEL
         )
+        selected_engine = self.decision_engine
         self.stop_event = threading.Event()
         self.engine = None
         self.run_mode = "automation"
         self.battle_value.configure(text="0 局", foreground=Palette.TEXT)
         self._append_log(
-            f"准备无限运行 · 规则：{runtime_model_label(selected_model)}",
+            f"准备无限运行 · 版本：{runtime_model_label(selected_model)}",
             "action",
         )
         self._set_run_state("正在连接设备", Palette.BLUE)
@@ -901,6 +932,7 @@ class RoyalTrainerApp:
         def run() -> None:
             config, config_path = load_config(self.config_path)
             config = apply_runtime_model(config, selected_model)
+            config = apply_decision_engine(config, selected_engine)
             device = MumuDevice(config)
             serial = device.connect()
             print(f"[设备] 已连接模拟器：{serial}")

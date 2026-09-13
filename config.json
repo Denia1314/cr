@@ -172,6 +172,7 @@
     "card_empty_max_keypoints": 150
   },
   "policy": {
+    "decision_engine": "predictive",
     "mode": "reactive_catalog",
     "runtime_model": "m3_c3",
     "version": "adaptive_counterpush_v5_m3_c3",
@@ -270,6 +271,17 @@
     ],
     "seed": 20260831,
     "unknown_action_retry_guard_s": 1.2
+  },
+  "prediction": {
+    "knowledge_path": "data/battle_knowledge.json",
+    "assumed_level": 11,
+    "budget_ms": 350,
+    "candidate_limit": 9,
+    "horizon_s": 8,
+    "max_plan_age_s": 1.2,
+    "action_cooldown_s": 0.65,
+    "downside_weight": 0.65,
+    "unknown_response_cards": ["knight", "musketeer", "fireball"]
   },
   "training": {
     "minimum_human_frames": 200,

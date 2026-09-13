@@ -38,6 +38,27 @@ class RunWorkerTests(unittest.TestCase):
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_predictive_selector_fits_minimum_window_and_locks_while_running(self):
+        self.root.geometry("1040x700+0+0")
+        self.root.deiconify()
+        self.root.update_idletasks()
+        self.root.update()
+        self.assertIn("P1", self.app.engine_combo["values"][-1])
+        for widget in (self.app.engine_combo, self.app.model_combo, self.app.start_button,
+                       self.app.stop_button, self.app.release_heading):
+            left = widget.winfo_rootx() - self.root.winfo_rootx()
+            top = widget.winfo_rooty() - self.root.winfo_rooty()
+            self.assertGreaterEqual(left, 0)
+            self.assertGreaterEqual(top, 0)
+            self.assertLessEqual(left + widget.winfo_width(), 1040)
+            self.assertLessEqual(top + widget.winfo_height(), 700)
+            self.assertGreater(widget.winfo_width(), 20)
+        self.assertGreaterEqual(self.app.engine_combo.winfo_width(), self.app.engine_combo.winfo_reqwidth())
+        self.app._set_running_controls(True)
+        self.assertEqual(str(self.app.engine_combo["state"]), "disabled")
+        self.app._set_running_controls(False)
+        self.assertEqual(str(self.app.engine_combo["state"]), "readonly")
+
     def setUp(self) -> None:
         try:
             self.root = tk.Tk()

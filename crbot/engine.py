@@ -18,9 +18,9 @@ from .controlled_experiment import (
     ControlledExperiment,
     load_controlled_experiment_episodes,
 )
-from .policy import BattlePolicy
+from .decision_router import create_policy
 from . import implemented_stages_label, release_label
-from .runtime_model import runtime_model_label
+from .runtime_model import runtime_model_label, apply_decision_engine
 from .recorder import TrainingRecorder
 from .replay import ExperienceReplayRecorder
 from .temporal import TimingStats
@@ -47,6 +47,7 @@ class BotEngine:
         max_battles: int = 0,
         stop_event: Event | None = None,
     ):
+        config = apply_decision_engine(config, config.get("policy", {}).get("decision_engine", "legacy"))
         self.device = device
         self.config = config
         self.config_path = config_path
@@ -55,9 +56,10 @@ class BotEngine:
         self.max_battles = max(0, int(max_battles))
         self.stop_event = stop_event or Event()
         self.recognizer = WorkflowRecognizer(config, config_path)
-        self.policy = BattlePolicy(config, config_path)
+        self.policy = create_policy(config, config_path)
+        print(f"[决策引擎] {config.get('policy', {}).get('decision_engine', 'legacy')}")
         print(f"[版本] {release_label()} · {implemented_stages_label()}")
-        print(f"[规则] 当前运行：{runtime_model_label(self.policy.runtime_model)}")
+        print(f"[运行版本] 当前运行：{runtime_model_label(self.policy.runtime_model)}")
         if self.policy.mode == "reactive_catalog":
             if self.policy.reactive_ready:
                 print(
@@ -104,6 +106,7 @@ class BotEngine:
         if self.dry_run:
             replay_config["enabled"] = False
         policy_metadata: dict[str, Any] = {
+            "decision_engine": config.get("policy", {}).get("decision_engine", "legacy"),
             "mode": self.policy.mode,
             "runtime_model": self.policy.runtime_model,
             "rule_version": self.policy.policy.get("version", "unversioned"),
@@ -182,6 +185,7 @@ class BotEngine:
         hand = getattr(self.policy, "hand_recognizer", None)
         hand_status = hand.compute_status() if hand is not None and hasattr(hand, "compute_status") else None
         ReplaySync(self.project_root).write_runtime_status({
+            "prediction": self.policy.prediction_status() if hasattr(self.policy, "prediction_status") else {"selected_engine": "legacy", "actual_engine": "legacy"},
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "hand_matching": hand_status,
             "replay_model": {
@@ -630,6 +634,16 @@ class BotEngine:
         decision_started = time.perf_counter()
         decision = self.policy.decide(image, self.previous_battle_frame, now=now)
         timing["decision_s"] = time.perf_counter() - decision_started
+        if hasattr(self.policy, "prediction_status"):
+            prediction = self.policy.prediction_status()
+            plan = prediction.get("plan") or {}
+            key = (self.completed_battles, prediction["world"]["revision"], prediction["fallback_count"])
+            if key != getattr(self, "_last_prediction_log_key", None):
+                self._last_prediction_log_key = key
+                self.recorder.record("battle_prediction", None, prediction)
+                print(f"[推演] 执行={prediction['actual_engine']} "
+                      f"感知={plan.get('perception_mode', 'unavailable')} "
+                      f"{plan.get('fallback_reason') or plan.get('reason') or '等待观察'}")
         self._write_runtime_status()
         self.response_timing.record("perception", timing["perception_s"])
         self.response_timing.record("decision", timing["decision_s"])
@@ -750,6 +764,11 @@ class BotEngine:
         card_pixel: list[int] | None = None
         deploy_pixel: list[int] | None = None
         send_error: str | None = None
+        if getattr(decision, "decision_engine", "legacy") == "predictive" and time.monotonic() > decision.plan_valid_until:
+            confirmation = ActionConfirmation(action_id, "rejected", 1.0,
+                "推演快照已过期，未发送点击", {"plan_expired": True}, 0.0, 0)
+            self.policy.resolve_action(action_id, "rejected", now=time.monotonic())
+            return replace(decision, action_status="rejected"), None, None, confirmation, None, "plan_expired"
         if self.dry_run:
             dry_run_elapsed = 0.0
             if timing is not None:

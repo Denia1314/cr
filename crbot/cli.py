@@ -8,6 +8,9 @@ from datetime import datetime
 from pathlib import Path
 
 from . import release_label
+from .knowledge import KnowledgeBase
+from .prediction_audit import audit_predictions
+from .runtime_model import apply_decision_engine, apply_runtime_model, load_decision_engine, load_runtime_model
 from .adb import DeviceError, MumuDevice
 from .action_review import audit_action_review, export_action_review
 from .annotate import run_annotation
@@ -46,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=release_label())
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("doctor", help="检查 MuMu、ADB、游戏与标定")
+    knowledge = subcommands.add_parser("knowledge", help="战斗知识库与推演运行审计")
+    knowledge.add_argument("action", choices=("audit", "runtime-audit"), nargs="?", default="audit")
     subcommands.add_parser("calibrate", help="打开画面标定工具")
     subcommands.add_parser("annotate", help="打开对局数据人工标注工具")
     subcommands.add_parser("demonstrate", help="监控手动离线对局并学习触摸操作")
@@ -86,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--output", help="输出 PNG 路径")
     run = subcommands.add_parser("run", help="运行自动训练")
     run.add_argument("--dry-run", action="store_true", help="只识别与记录，不点击")
+    run.add_argument("--decision-engine", choices=("legacy", "shadow", "predictive"), help="覆盖本次决策模式")
     run.add_argument("--max-battles", type=int, default=0, help="完成多少局后停止，0 表示不限")
     return parser
 
@@ -120,6 +126,12 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         config, config_path = load_config(arguments.config)
+        if arguments.command == "knowledge":
+            path = resolve_project_path(config_path, config.get("prediction", {}).get("knowledge_path", "data/battle_knowledge.json"))
+            result = (KnowledgeBase.load(path).audit(int(config.get("prediction", {}).get("assumed_level", 11)))
+                      if arguments.action == "audit" else audit_predictions(config_path.parent))
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if arguments.command == "sync":
             service = ReplaySync(config_path.parent)
             if arguments.action == "setup":
@@ -307,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
             print(output)
             return 0
         if arguments.command == "run":
+            config = apply_runtime_model(config, load_runtime_model(config_path, config))
+            config = apply_decision_engine(config, arguments.decision_engine or load_decision_engine(config_path, config))
             engine = BotEngine(
                 device,
                 config,

@@ -27,6 +27,8 @@ class LearnedBattlefieldDetector:
         self.class_names: list[str] = []
         self.error = ""
         self.observed_allies: list[dict[str, Any]] = []
+        self.observed_enemies: list[dict[str, Any]] = []
+        self.last_detection_succeeded = False
         self.allies_observed = False
         model_path = self.registry.champion_model_path()
         if self.champion is None or model_path is None:
@@ -51,6 +53,8 @@ class LearnedBattlefieldDetector:
         fallback: dict[str, LaneThreat],
     ) -> dict[str, LaneThreat]:
         self.observed_allies = []
+        self.observed_enemies = []
+        self.last_detection_succeeded = False
         self.allies_observed = False
         if not self.available:
             return fallback
@@ -65,6 +69,7 @@ class LearnedBattlefieldDetector:
         except Exception as exc:  # pragma: no cover - backend/runtime dependent
             self.error = str(exc)
             return fallback
+        self.last_detection_succeeded = True
         self.allies_observed = any(str(name).startswith("ally__") for name in self.class_names)
         by_lane: dict[str, list[tuple[str, float, float, float]]] = {
             "left": [],
@@ -101,6 +106,10 @@ class LearnedBattlefieldDetector:
                 if not 0.20 <= center_y <= 0.80:
                     continue
                 lane = "left" if center_x < 0.5 else "right"
+                self.observed_enemies.append({
+                    "card_id": card_id, "x": round(center_x, 4), "y": round(center_y, 4),
+                    "lane": lane, "confidence": float(confidence),
+                })
                 by_lane[lane].append((card_id, center_x, center_y, float(confidence)))
 
         merged: dict[str, LaneThreat] = {}

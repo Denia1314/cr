@@ -78,6 +78,10 @@ class BattleDecision:
     placement_candidates: tuple[str, ...] = ()
     counterpush_investment: float = 0.0
     rejected_candidate_reasons: tuple[str, ...] = ()
+    decision_engine: str = "legacy"
+    plan_revision: int = 0
+    plan_valid_until: float = 0.0
+    knowledge_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
