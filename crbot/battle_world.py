@@ -19,6 +19,8 @@ class Track:
     hp_fraction: float | None = None
     variant: str = "unknown"
     hypotheses: tuple[str, ...] = ()
+    vx: float = 0
+    vy: float = 0
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,12 @@ class BattleWorld:
                        and math.hypot(t.x - x, t.y - y) <= .07 + min(.18, dt * .06)]
             if options:
                 t = min(options, key=lambda t: math.hypot(t.x - x, t.y - y))
+                age = now - t.last_seen
+                if .05 <= age <= 1.5:
+                    t.vx = max(-.3, min(.3, (x-t.x)/age))
+                    t.vy = max(-.3, min(.3, (y-t.y)/age))
+                else:
+                    t.vx = t.vy = 0
                 t.x, t.y, t.last_seen, t.confidence = x, y, now, confidence
                 t.observations += 1
             else:

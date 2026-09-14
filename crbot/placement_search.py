@@ -8,7 +8,7 @@ def screen(x, y):
     return .05 + x * .05, .18 + y * .02
 
 
-def placement_points(sim, state, card_id, side):
+def placement_points(sim, state, card_id, side, *, limit=12):
     card = sim.kb.cards[card_id]
     roster = sim.kb.roster(card_id, sim.level)
     spell = sim.kb.spell(card_id, sim.level)
@@ -17,6 +17,8 @@ def placement_points(sim, state, card_id, side):
     enemies.sort(key=lambda e: min((math.hypot(e.x-t.x, e.y-t.y) for t in towers), default=0))
     enemies = enemies[:8]
     if spell:
+        if spell.get('friendly'):
+            enemies = [e for e in state.entities if e.side == side and not e.tower and not e.spec.building and e.hp>0][:8]
         # Center on groups as well as individuals; project through spell arrival delay.
         projected = [(e.x, max(0, min(32, e.y + side * e.spec.speed * spell['delay']))) for e in enemies]
         points = list(projected)
@@ -25,7 +27,7 @@ def placement_points(sim, state, card_id, side):
                 if math.dist(a, b) <= 2 * spell['radius']:
                     points.append(((a[0]+b[0])/2, (a[1]+b[1])/2))
         def value(p):
-            return sum(min(e.hp, spell['damage']) * (1 + e.value) for e, q in zip(enemies, projected)
+            return sum((e.spec.damage if spell.get('friendly') else min(e.hp, spell['damage'])) * (1 + e.value) for e, q in zip(enemies, projected)
                        if (not e.spec.air or spell['air']) and math.dist(p, q) <= spell['radius'] + e.spec.radius)
     elif roster:
         spec = roster[0][0]
@@ -39,6 +41,11 @@ def placement_points(sim, state, card_id, side):
             distance = max(.01, math.hypot(tx-enemy.x, ty-enemy.y))
             travel = min(distance, enemy.spec.speed * (spec.deploy + spec.first_hit))
             q = (enemy.x + (tx-enemy.x)*travel/distance, enemy.y + (ty-enemy.y)*travel/distance)
+            if enemy.observed_vx or enemy.observed_vy:
+                window=min(.75,spec.deploy+spec.first_hit)
+                portion=window/max(.1,spec.deploy+spec.first_hit)
+                q=(max(0,min(18,q[0]+(enemy.observed_vx*window-(q[0]-enemy.x)*portion)*.5)),
+                   max(0,min(32,q[1]+(enemy.observed_vy*window-(q[1]-enemy.y)*portion)*.5)))
             projected.append((enemy, q))
             # Continuous offsets around the predicted contact point enable precise interceptions.
             for radius in (1., 2.5, max(1., spec.reach)):
@@ -92,6 +99,6 @@ def placement_points(sim, state, card_id, side):
     for _, point, normalized in ranked:
         if all(math.dist(point, other) >= 1.5 for other, _ in selected):
             selected.append((point, normalized))
-        if len(selected) == 12:
+        if len(selected) == limit:
             break
     return [normalized for _, normalized in selected]

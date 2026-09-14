@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,9 @@ class UnitSpec:
     ramp_damage: tuple[float, float] = (0, 0)
     stun: float = 0
     pushback: float = 0
+    resource_period: float = 0
+    resource_amount: float = 0
+    resource_on_death: float = 0
 
 
 class KnowledgeBase:
@@ -156,12 +159,29 @@ class KnowledgeBase:
             ramp_damage=(float(raw.get("variable_damage2") or 0) * scale, float(raw.get("variable_damage3") or 0) * scale),
             stun=stun_time if buff.get("hit_speed_multiplier") == -100 else 0,
             pushback=float(projectile.get("pushback") or raw.get("attack_push_back") or 0) / 1000,
+            resource_period=float(raw.get('mana_generate_time_ms') or 0)/1000,
+            resource_amount=float(raw.get('mana_collect_amount') or 0),
+            resource_on_death=float(raw.get('mana_on_death') or 0),
         )
         self._cache[key] = spec
         return spec
 
     def roster(self, card_id: str, level: int = 11) -> list[tuple[UnitSpec, int]]:
         card = self.cards.get(card_id, {})
+        if card_id == 'elixir_collector':
+            unit=self.unit('ElixirCollector',level)
+            return [(unit,1)] if unit else []
+        if card_id == 'berserker' and card.get('detail_stats'):
+            detail=card['detail_stats']
+            row=next((r for r in detail['levelStats'] if r['level']==level),None)
+            if row is None:
+                raise ValueError('berserker: missing explicit level')
+            base=self.unit('Knight',level)
+            if base is None:
+                return []
+            return [(replace(base,name='detail:berserker',hp=row['hitpoints'],damage=row['damage'],
+                period=detail['hitSpeed'],first_hit=detail['firstHitSpeed'],speed=1.5,reach=self.unit('Skeleton',level).reach,
+                deploy=detail['deployTime'],unsupported=('detail_base_attack_unvalidated_balance',)),1)]
         result = []
         for entry in card.get("summons", []):
             unit = self.unit(entry["unit"], level)
@@ -171,6 +191,10 @@ class KnowledgeBase:
         return result
 
     def spell(self, card_id: str, level: int = 11) -> dict | None:
+        from .card_effects import spell_effect
+        effect = spell_effect(self, card_id, level)
+        if effect is not None:
+            return effect
         if "spell_pattern" in self.cards.get(card_id, {}).get("unsupported", []):
             return None  # do not model a line/limited-target/multiwave spell as a circle
         raw = self.cards.get(card_id, {}).get("spell")
@@ -191,6 +215,7 @@ class KnowledgeBase:
         return result
 
     def audit(self, level: int = 11) -> dict:
+        from .card_effects import PATTERNS
         supported, missing, partial, numeric = [], [], [], []
         for cid, card in self.cards.items():
             try:
@@ -208,6 +233,7 @@ class KnowledgeBase:
             except ValueError:
                 missing.append(cid)
         return {"knowledge_version": self.version, "source": self.source,
+                "effect_record_cards": len(self.cards), "executable_spell_patterns": dict(PATTERNS),
                 "directory_source": self.payload.get('directory_source'),
                 "detail_cards": sum('detail_stats' in c for c in self.cards.values()),
                 "detail_level_rows": sum(len(c.get('detail_stats', {}).get('levelStats', [])) for c in self.cards.values()),

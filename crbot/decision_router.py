@@ -103,9 +103,6 @@ class PredictiveBattlePolicy(BattlePolicy):
                                      uncertain=uncertain)
         if not hand or self.last_hand_image is not current:
             return self._fallback(current, previous, now, "hand_unavailable")
-        if any(not self.planner.kb.roster(cid, self.planner.sim.level) and not self.planner.kb.spell(cid, self.planner.sim.level)
-               for _, cid in hand):
-            return self._fallback(current, previous, now, "hand_mechanism_data_missing")
         result = self.planner.plan(snapshot)
         self.last_plan = result.to_dict()
         self.last_plan["perception_mode"] = "exact_cards" if getattr(detector, "last_detection_succeeded", False) and not any(x.startswith("enemy_identity_unknown") for x in uncertain) else "lane_hypotheses"

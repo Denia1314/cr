@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from crbot.deckbuilder_import import SOURCE_URL, parse_database, parse_details, merge_directory
 from crbot.knowledge import KnowledgeBase
 from crbot.cards import CardCatalog
+from crbot.card_effects import mechanism_profile
 
 
 def download(url):
@@ -81,6 +82,10 @@ def main():
             CardCatalog.load(temporary)
         temporary.replace(path)
     print(json.dumps(KnowledgeBase(kb).audit(), ensure_ascii=False, indent=2))
+    loaded=KnowledgeBase(kb)
+    effects=dict(schema_version=1,knowledge_version=loaded.version,
+                 cards={cid:mechanism_profile(loaded,cid) for cid in loaded.cards})
+    Path('data/card_effects.json').write_text(json.dumps(effects,ensure_ascii=False,separators=(',',':'))+'\n',encoding='utf8')
 
 
 if __name__ == '__main__':

@@ -21,11 +21,13 @@ class PlanResult:
     reason: str = ""
     elapsed_ms: float = 0
     knowledge_version: str = ""
-    simulation_version: str = "spatial_v2_placement"
+    simulation_version: str = "spatial_v3_card_effects"
     nodes: int = 0
     completed_depth: int = 0
     budget_exhausted: bool = False
     placement_mode: str = "scene_grid_and_intercepts"
+    hand_evaluations: list[dict] = field(default_factory=list)
+    enemy_forecast: list[dict] = field(default_factory=list)
 
     def to_dict(self):
         return asdict(self)
@@ -46,7 +48,8 @@ class PredictivePlanner:
                 continue
             if not self.kb.roster(cid, self.sim.level) and not self.kb.spell(cid, self.sim.level):
                 continue
-            points = placement_points(self.sim, s, cid, side)
+            positions = max(2,min(24,int(self.config.get('positions_per_card',12))))
+            points = placement_points(self.sim, s, cid, side, limit=positions)
             for x, y in points:
                 result.append(SimAction(cid, slot, x, y))
         # Round-robin by card avoids exhausting the budget on the first hand slot.
@@ -101,8 +104,9 @@ class PredictivePlanner:
             x, y = self.sim.xy(t.x, t.y)
             fraction = t.hp_fraction if t.hp_fraction is not None else (health if t.side == -1 else .7)
             card = self.kb.cards[cid]
-            self.sim.add(s, spec, t.side, x, y, hp_fraction=fraction,
-                         value=float(card.get("elixir") or 0) / max(1, sum(n for _, n in roster)))
+            entity = self.sim.add(s, spec, t.side, x, y, hp_fraction=fraction,
+                                 value=float(card.get("elixir") or 0) / max(1, sum(n for _, n in roster)))
+            entity.observed_vx, entity.observed_vy = t.vx*20, t.vy*50
             if t.variant != "base":
                 s.uncertainties.add("variant_unknown")
         for event in world.confirmed_placements:
@@ -137,17 +141,39 @@ class PredictivePlanner:
                             "unavailable", knowledge_version=self.kb.version)
         try:
             initial = self.initial(world, world.enemy_elixir[1], 1.)
-            roots = self.candidates(initial, 1, limit=int(self.config.get("candidate_limit", 9)))
+            for enemy in (e for e in initial.entities if e.side == -1 and not e.tower):
+                tower = min((t for t in initial.entities if t.side == 1 and t.tower),
+                            key=lambda t: self.sim.distance(enemy,t), default=None)
+                if tower is not None:
+                    eta=max(0,self.sim.distance(enemy,tower)-enemy.spec.reach)/max(.1,enemy.spec.speed)
+                    result.enemy_forecast.append(dict(unit=enemy.spec.name, x=enemy.x, y=enemy.y,
+                        target_x=tower.x,target_y=tower.y,unopposed_tower_eta_s=round(eta,2),
+                        observed_velocity=[enemy.observed_vx,enemy.observed_vy], status='hypothesis'))
+            # Every legal hand card receives its full spatial shortlist before refinement.
+            positions = max(2,min(24,int(self.config.get('positions_per_card',12))))
+            roots = self.candidates(initial, 1, limit=1 + positions * len(initial.hands[1]))
+            for slot, cid in initial.hands[1]:
+                card = self.kb.cards.get(cid, {})
+                positions = sum(a.card_id == cid for a in roots)
+                reason = ('dynamic_cost_unknown' if card.get('elixir') is None else
+                          'insufficient_elixir' if card['elixir'] > initial.elixir[1] else
+                          'mechanism_or_target_unavailable' if not positions else 'pending')
+                result.hand_evaluations.append(dict(slot=slot, card_id=cid, positions=positions,
+                                                    evaluated=0, status=reason))
             horizon = max(4, min(15, float(self.config.get("horizon_s", 8))))
+            if result.enemy_forecast:
+                horizon=max(horizon,min(24,min(f['unopposed_tower_eta_s'] for f in result.enemy_forecast)+3))
             # Same scenarios and same horizon for every root, with conservative lower-tail weighting.
             scenarios = [(world.enemy_elixir[0], .65, False),
                          (max(world.enemy_elixir[0], min(world.enemy_elixir[1], world.enemy_elixir_estimate)), .85, True),
                          (world.enemy_elixir[1], 1., True)]
             coarse_rows = []
+            published_round = 0
+            initial_scenarios = [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
             for root in roots:
                 outcomes, branches = [], []
-                for enemy_cost, hp, responds in scenarios:
-                    s = self.initial(world, enemy_cost, hp)
+                for index, (enemy_cost, hp, responds) in enumerate(scenarios):
+                    s = initial_scenarios[index].clone()
                     if not self.sim.apply(s, root, 1):
                         continue
                     self.sim.advance(s, 1.5, deadline=deadline, clock=self.clock)
@@ -164,6 +190,25 @@ class PredictivePlanner:
                     score = (1-risk) * sum(outcomes) / len(outcomes) + risk * min(outcomes)
                     coarse_rows.append({"action": asdict(root), "label": root.label,
                                         "score": round(score, 4), "branches": branches})
+                    for entry in result.hand_evaluations:
+                        if entry['card_id'] == root.card_id:
+                            entry['evaluated'] += 1
+                            entry['status'] = 'complete' if entry['evaluated'] == entry['positions'] else 'partial'
+                    active = [e for e in result.hand_evaluations if e['positions']]
+                    completed_round = min((e['evaluated'] for e in active if e['evaluated'] < e['positions']), default=positions)
+                    if active and completed_round > published_round:
+                        # Commit equal spatial rounds across all usable cards. A timeout cannot
+                        # prefer a card simply because its next location happened to finish first.
+                        counts = {}
+                        balanced = []
+                        for row in coarse_rows:
+                            cid = row['action']['card_id']
+                            if cid is None or counts.get(cid, 0) < completed_round:
+                                balanced.append(row)
+                                counts[cid] = counts.get(cid, 0) + 1
+                        result.candidates = balanced
+                        result.completed_depth = 1
+                        published_round = completed_round
             # Publish only a complete, equally evaluated layer. Refinements remain private until complete.
             result.candidates = coarse_rows
             result.completed_depth = 1
@@ -222,6 +267,12 @@ class PredictivePlanner:
         if result.candidates:
             result.candidates.sort(key=lambda c: c["score"], reverse=True)
             best = result.candidates[0]
+            for entry in result.hand_evaluations:
+                option=next((c for c in result.candidates if c['action']['card_id']==entry['card_id']),None)
+                if option is not None:
+                    entry['best_position']=[option['action']['x'],option['action']['y']]
+                    entry['best_score']=option['score']
+                    entry['worst_tower_damage']=max(b['own_tower_damage'] for b in option['branches'])
             result.action = SimAction(**best["action"])
             result.status = "wait" if result.action.card_id is None else "ready"
             responses = "; ".join(f"敌方 {b['enemy_response']} → 我方 {b['own_followup']}" for b in best["branches"])

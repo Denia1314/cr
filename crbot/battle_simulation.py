@@ -39,6 +39,14 @@ class Entity:
     walked: float = 0
     locked_at: float = 0
     stunned_until: float = 0
+    haste_until: float = 0
+    haste: float = 1
+    slow_until: float = 0
+    slow: float = 1
+    cloned: bool = False
+    observed_vx: float = 0
+    observed_vy: float = 0
+    resource_at: float = float('inf')
 
 
 @dataclass
@@ -53,13 +61,14 @@ class SimState:
     next_uid: int = 1
     seconds_per_elixir: float = 2.8
     tower_shots: dict[int, int] = field(default_factory=lambda: {1: 0, -1: 0})
+    effects: list[dict] = field(default_factory=list)
 
     def clone(self):
         # Specs are immutable and can be shared across all branches.
         return SimState(self.time, [copy.copy(e) for e in self.entities], dict(self.elixir),
                         {k: list(v) for k, v in self.hands.items()}, dict(self.damage),
                         list(self.impacts), set(self.uncertainties), self.next_uid, self.seconds_per_elixir,
-                        dict(self.tower_shots))
+                        dict(self.tower_shots), [dict(e) for e in self.effects])
 
 
 class Simulator:
@@ -74,6 +83,8 @@ class Simulator:
         if not (.05 <= x <= .95 and .18 <= y <= .82):
             return False
         card = self.kb.cards.get(card_id, {})
+        if card_id == 'royal_delivery' and ((side == 1 and y < .51) or (side == -1 and y > .49)):
+            return False
         if card.get('kind') == 'spell':
             return True
         if (side == 1 and y < .51) or (side == -1 and y > .49):
@@ -96,6 +107,8 @@ class Simulator:
                    s.time + spec.spawn_start if spec.spawn else math.inf,
                    value=value, tower=tower)
         s.next_uid += 1
+        if spec.resource_period:
+            e.resource_at=s.time+spec.deploy+spec.resource_period
         s.entities.append(e)
         s.uncertainties.update(spec.unsupported)
         return e
@@ -125,6 +138,11 @@ class Simulator:
                              y + (index // 3) * .35 * side, value=card["elixir"] / total, deployed=True)
                     index += 1
         elif spell:
+            if spell.get('pattern'):
+                from .card_effects import queue_effect
+                queue_effect(self,s,dict(spell,summon_value=card['elixir']/max(1,spell.get('spawn_count',1))),side,x,y)
+                s.uncertainties.add('public_spell_pattern_spatial_approximation')
+                return True
             pulses = max(1, int(spell["duration"] / spell["period"]))
             for i in range(min(40, pulses)):
                 s.impacts.append((s.time + spell["delay"] + i * spell["period"], side, None,
@@ -155,6 +173,9 @@ class Simulator:
                 raise TimeoutError("推演预算耗尽")
             dt = min(self.step, end - s.time)
             s.time += dt
+            from .card_effects import resolve_effects
+            if s.effects:
+                resolve_effects(self,s)
             for side in (1, -1):
                 s.elixir[side] = min(10, s.elixir[side] + dt / s.seconds_per_elixir)
             impacts, s.impacts = s.impacts, []
@@ -168,12 +189,12 @@ class Simulator:
                         continue
                     if (radius > 0 and math.hypot(e.x - x, e.y - y) <= radius + e.spec.radius) or (radius == 0 and e.uid == target):
                         self.hit(s, e, damage * (tower_mult if e.tower else 1))
-                        if control and not e.tower:
+                        if control:
                             stun, pushback = control
                             e.stunned_until = max(e.stunned_until, s.time + stun)
                             if stun:
                                 e.walked, e.locked_at = 0, s.time + stun
-                            if pushback and not e.spec.building:
+                            if pushback and not e.spec.building and not e.tower:
                                 e.y = max(0, min(32, e.y - side * pushback))
             for e in list(s.entities):
                 if e.hp <= 0:
@@ -183,11 +204,18 @@ class Simulator:
                     continue
                 if s.time < max(e.ready_at, e.stunned_until):
                     continue
+                if s.time >= e.resource_at:
+                    s.elixir[e.side]=min(10,s.elixir[e.side]+e.spec.resource_amount)
+                    e.resource_at=s.time+e.spec.resource_period
                 if e.spawn_at <= s.time and len(s.entities) < 96:
                     spec = self.kb.unit(e.spec.spawn, self.level)
                     if spec:
                         for i in range(min(8, e.spec.spawn_count)):
-                            self.add(s, spec, e.side, e.x + i * .3, e.y, deployed=True)
+                            child=self.add(s, spec, e.side, e.x + i * .3, e.y, deployed=True,
+                                           hp_fraction=1/spec.hp if e.cloned else 1)
+                            child.cloned=e.cloned
+                            if e.cloned:
+                                child.shield=1 if spec.shield else 0
                     e.spawn_at = s.time + max(1, e.spec.spawn_period)
                 enemies = [t for t in s.entities if t.side != e.side and t.hp > 0
                            and ("air" if t.spec.air else "ground") in e.spec.targets
@@ -222,7 +250,7 @@ class Simulator:
                     e.walked = 0
                     s.impacts.append((s.time + delay, e.side, target.uid, target.x, target.y,
                                       damage, e.spec.splash, "air" in e.spec.targets, 1., e.spec.stun, e.spec.pushback))
-                    e.ready_at = s.time + e.spec.period
+                    e.ready_at = s.time + e.spec.period / (e.haste if s.time < e.haste_until else 1)
                     if e.tower:
                         s.tower_shots[e.side] += 1
                 elif e.spec.speed > 0 and not e.tower:
@@ -234,20 +262,27 @@ class Simulator:
                     dist = math.hypot(tx - e.x, ty - e.y)
                     if dist:
                         multiplier = e.spec.charge_multiplier if e.spec.charge_distance and e.walked >= e.spec.charge_distance else 1
-                        step = min(e.spec.speed * multiplier * dt, dist)
+                        speed_factor=(e.haste if s.time < e.haste_until else 1)*(e.slow if s.time < e.slow_until else 1)
+                        step = min(e.spec.speed * multiplier * speed_factor * dt, dist)
                         e.walked += step
                         e.x += (tx - e.x) / dist * step
                         e.y += (ty - e.y) / dist * step
             dead = [e for e in s.entities if e.hp <= 0]
             s.entities = [e for e in s.entities if e.hp > 0]
             for e in dead:
+                if e.spec.resource_on_death:
+                    s.elixir[e.side]=min(10,s.elixir[e.side]+e.spec.resource_on_death)
                 if e.spec.death_damage:
                     s.impacts.append((s.time, e.side, None, e.x, e.y, e.spec.death_damage,
                                       e.spec.death_radius, True, 1.))
                 spec = self.kb.unit(e.spec.death_spawn, self.level) if e.spec.death_spawn else None
                 if spec and len(s.entities) < 96:
                     for i in range(min(8, e.spec.death_count)):
-                        self.add(s, spec, e.side, e.x + i * .35, e.y, deployed=True)
+                        child=self.add(s, spec, e.side, e.x + i * .35, e.y, deployed=True,
+                                       hp_fraction=1/spec.hp if e.cloned else 1)
+                        child.cloned=e.cloned
+                        if e.cloned:
+                            child.shield=1 if spec.shield else 0
             if len(s.entities) >= 96:
                 s.uncertainties.add("entity_budget")
 

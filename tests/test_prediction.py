@@ -249,7 +249,8 @@ class PlannerTests(unittest.TestCase):
         left = planner.plan(world())
         right = planner.plan(world(tracks=(Track(1, "giant", -1, .72, .5, 99, 100, .9, 3),)))
         self.assertLess(left.action.x, .5)
-        self.assertGreater(right.action.x, .5)
+        self.assertGreaterEqual(right.action.x, .5)  # central ranged support can cover the right lane
+        self.assertGreater(right.action.x,left.action.x)
 
     def test_no_full_swarm_is_spawned_per_detected_box(self):
         planner = PredictivePlanner(knowledge(), {})
@@ -261,9 +262,10 @@ class PlannerTests(unittest.TestCase):
         timer, calls = [0.], [0]
         planner.clock = lambda: timer[0]
         original = planner.sim.evaluate
+        root_count=len(planner.candidates(planner.initial(world(),7,1),1,limit=49))
         def evaluate(s):
             calls[0] += 1
-            if calls[0] == 27:
+            if calls[0] == root_count*3:
                 timer[0] = 1.
             return original(s)
         with patch.object(planner.sim, "evaluate", side_effect=evaluate):
@@ -271,7 +273,8 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result.completed_depth, 1)
         self.assertTrue(result.budget_exhausted)
         self.assertIn(result.status, {"ready", "wait"})
-        self.assertEqual(len(result.candidates), 9)
+        self.assertEqual(len(result.candidates), root_count)
+        self.assertTrue(all(e['status']=='complete' for e in result.hand_evaluations))
 
 
 class SelectionTests(unittest.TestCase):

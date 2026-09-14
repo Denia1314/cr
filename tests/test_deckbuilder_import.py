@@ -75,7 +75,7 @@ class DeckbuilderImportTests(unittest.TestCase):
         spell = kb.spell('fireball', 11)
         source = next(r for r in kb.cards['fireball']['detail_stats']['levelStats'] if r['level'] == 11)
         self.assertAlmostEqual(spell['damage'] * spell['tower_multiplier'], source['crownTowerDamage'])
-        self.assertIsNone(kb.spell('lightning'))
+        self.assertEqual(kb.spell('lightning')['pattern'], 'highest_hp')
 
 
 if __name__ == '__main__':
