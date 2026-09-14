@@ -48,6 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="config.json", help="配置文件路径")
     parser.add_argument("--version", action="version", version=release_label())
     subcommands = parser.add_subparsers(dest="command", required=True)
+    lab=subcommands.add_parser("battle-lab",help="准备机制覆盖、失败复核队列和攻防场景评估")
+    lab.add_argument("action",choices=("prepare","evaluate"))
     subcommands.add_parser("doctor", help="检查 MuMu、ADB、游戏与标定")
     knowledge = subcommands.add_parser("knowledge", help="战斗知识库与推演运行审计")
     knowledge.add_argument("action", choices=("audit", "runtime-audit"), nargs="?", default="audit")
@@ -126,6 +128,11 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         config, config_path = load_config(arguments.config)
+        if arguments.command == "battle-lab":
+            from .battle_lab import prepare,evaluate
+            result=(prepare if arguments.action=="prepare" else evaluate)(config_path.parent,config)
+            print(json.dumps(result,ensure_ascii=False,indent=2))
+            return 0
         if arguments.command == "knowledge":
             path = resolve_project_path(config_path, config.get("prediction", {}).get("knowledge_path", "data/battle_knowledge.json"))
             result = (KnowledgeBase.load(path).audit(int(config.get("prediction", {}).get("assumed_level", 11)))

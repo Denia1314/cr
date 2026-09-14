@@ -206,9 +206,9 @@ def apply_decision_engine(config: dict, value: str) -> dict:
     effective.setdefault("policy", {})["decision_engine"] = value
     if value == "predictive":
         # Predictor trajectories must not masquerade as legacy training labels.
-        effective.setdefault("replay", {}).update({"training_policy_version": "predictive_spatial_v1",
+        effective.setdefault("replay", {}).update({"training_policy_version": "predictive_calibrated_v2",
             "transfer_policy_versions": [], "require_action_confirmation": True})
-        effective["policy"]["version"] = "predictive_spatial_v1"
+        effective["policy"]["version"] = "predictive_calibrated_v2"
         effective["policy"]["temporal_perception_enabled"] = True
         effective["policy"]["hand_stability_frames"] = max(2, int(effective["policy"].get("hand_stability_frames", 2)))
     return effective

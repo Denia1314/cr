@@ -96,19 +96,22 @@ class PredictiveBattlePolicy(BattlePolicy):
                 if m.card_id and m.confidence >= float(self.policy.get("hand_min_confidence", .4))]
         costs = {cid: c["elixir"] for cid, c in self.planner.kb.cards.items() if c.get("elixir") is not None}
         elixir = float(self.last_elixir_estimate_value or 0)
+        from .tower_observation import observe_tower_health
+        tower_health=observe_tower_health(current,self.planning_config.get("tower_bar_rois",[]))
         snapshot = self.world.update(detections, now=now, elapsed=now-self.battle_started_at,
                                      elixir=elixir, hand=hand, costs=costs,
                                      seconds_per_elixir=float(self.policy.get("seconds_per_elixir", 2.8)) / self._elixir_rate_multiplier,
-                                     uncertain=uncertain)
+                                     uncertain=uncertain,tower_health=tower_health)
         if self.pending_action_id is not None or now < self.next_action_at:
             return None
         if not hand or self.last_hand_image is not current:
             return self._fallback(current, previous, now, "hand_unavailable")
-        if self.planning_config.get("fast_defense", False) and not any(
+        if self.planning_config.get("fast_defense", False) and not self.planning_config.get("unified_tactics",False) and not any(
             t.side == -1 and t.hp_fraction != 0 and now - t.last_seen <= 1.5 for t in snapshot.tracks
         ):
             return self._fallback(current, previous, now, "no_active_enemy_use_normal_play")
         frame_age = max(0, float(getattr(self, "prediction_frame_age_s", 0)))
+        snapshot=replace(snapshot,observation_delay_s=frame_age+time.perf_counter()-decision_started)
         result = self.planner.plan(snapshot)
         result.valid_until -= frame_age
         self.last_plan = result.to_dict()

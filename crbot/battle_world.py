@@ -39,6 +39,7 @@ class WorldSnapshot:
     tower_health: tuple[float | None, ...] = (None, None, None, None)
     enemy_elixir_estimate: float = 5.0
     confirmed_placements: tuple[dict, ...] = ()
+    observation_delay_s: float = 0.
 
 
 class BattleWorld:
@@ -56,6 +57,7 @@ class BattleWorld:
         self.events: list[dict] = []
         self._event_keys: set[str] = set()
         self.confirmed: set[str] = set()
+        self.tower_health=(None,)*4
 
     def update(self, detections: list[dict], *, now: float, elapsed: float, elixir: float,
                hand: list[tuple[int, str]], costs: dict[str, float], seconds_per_elixir: float,
@@ -125,6 +127,7 @@ class BattleWorld:
                         self.enemy_elixir_estimate = max(0, self.enemy_elixir_estimate - costs.get(cid, 0) * likelihood)
                         self.events.append({"id": f"sighting-{t.track_id}", "card_id": cid,
                                             "at": now, "kind": "sighting", "deployment_likelihood": likelihood})
+        self.tower_health=tuple(tower_health or (None,)*4)
         self.enemy_elixir = low, high
         self.tracks = {k: t for k, t in self.tracks.items() if now - t.last_seen <= 3}
         for track in self.tracks.values():
@@ -137,7 +140,7 @@ class BattleWorld:
             reasons.append("enemy_elixir_interval")
         if any(t.hp_fraction is None for t in self.tracks.values()):
             reasons.append("unit_health_estimated")
-        if tower_health is None:
+        if tower_health is None or any(v is None for v in tower_health):
             reasons.append("tower_health_unknown")
         return WorldSnapshot(self.revision, now, elapsed, elixir, (low, high), tuple(hand),
                              tuple(Track(**asdict(t)) for t in self.tracks.values()),
@@ -158,5 +161,7 @@ class BattleWorld:
                 "enemy_elixir_estimate": round(self.enemy_elixir_estimate, 2),
                 "enemy_seen": list(self.enemy_seen), "tracks": len(self.tracks),
                 "recent_events": self.events[-8:],
+                "at": self.at,"tower_health": self.tower_health,
+                "observations": [asdict(t) for t in self.tracks.values()],
                 "unit_health": [{"track_id": t.track_id, "side": t.side, "hp_fraction": t.hp_fraction,
                                  "observed_at": t.hp_observed_at} for t in self.tracks.values()]}

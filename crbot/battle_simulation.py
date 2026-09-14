@@ -47,6 +47,9 @@ class Entity:
     observed_vx: float = 0
     observed_vy: float = 0
     resource_at: float = float('inf')
+    track_id: int | None = None
+    active_at: float = 0.
+    winding_target: int | None = None
 
 
 @dataclass
@@ -74,20 +77,27 @@ class SimState:
 class Simulator:
     def __init__(self, knowledge: KnowledgeBase, level: int = 11, step: float = .25):
         self.kb, self.level, self.step = knowledge, level, max(.05, min(.5, step))
+        from .arena_geometry import ArenaGeometry
+        self.geometry=ArenaGeometry()
 
-    @staticmethod
-    def xy(x, y):
-        return (x - .05) / .9 * 18, (y - .18) / .64 * 32
+    def xy(self,x,y):
+        return self.geometry.xy(x,y)
+
+    def screen(self,x,y):
+        return self.geometry.screen(x,y)
 
     def legal_placement(self, s, card_id, side, x, y):
-        if not (.05 <= x <= .95 and .18 <= y <= .82):
+        left,top,right,bottom=self.geometry.bounds
+        if not (left <= x <= right and top <= y <= bottom):
             return False
         card = self.kb.cards.get(card_id, {})
-        if card_id == 'royal_delivery' and ((side == 1 and y < .51) or (side == -1 and y > .49)):
+        px,py=self.xy(x,y)
+        home=(py+1e-8>=16.5 if side==1 else py-1e-8<=15.5)
+        if card_id == 'royal_delivery' and not home:
             return False
         if card.get('kind') == 'spell':
             return True
-        if (side == 1 and y < .51) or (side == -1 and y > .49):
+        if not home:
             return False
         px, py = self.xy(x, y)
         # King-tower footprint remains excluded even though king activation is not modeled.
@@ -106,6 +116,7 @@ class Simulator:
                    s.time + spec.lifetime if spec.lifetime else math.inf,
                    s.time + spec.spawn_start if spec.spawn else math.inf,
                    value=value, tower=tower)
+        e.active_at=s.time+(spec.deploy if deployed else 0)
         s.next_uid += 1
         if spec.resource_period:
             e.resource_at=s.time+spec.deploy+spec.resource_period
@@ -194,6 +205,7 @@ class Simulator:
                             e.stunned_until = max(e.stunned_until, s.time + stun)
                             if stun:
                                 e.walked, e.locked_at = 0, s.time + stun
+                                e.winding_target=None
                             if pushback and not e.spec.building and not e.tower:
                                 e.y = max(0, min(32, e.y - side * pushback))
             for e in list(s.entities):
@@ -202,7 +214,7 @@ class Simulator:
                 if e.expires_at <= s.time:
                     e.hp = 0
                     continue
-                if s.time < max(e.ready_at, e.stunned_until):
+                if s.time < max(e.active_at, e.stunned_until):
                     continue
                 if s.time >= e.resource_at:
                     s.elixir[e.side]=min(10,s.elixir[e.side]+e.spec.resource_amount)
@@ -230,11 +242,14 @@ class Simulator:
                     target = min(nearby or towers, key=lambda t: self.distance(e, t), default=None)
                     if target and target.uid != e.target:
                         e.target = target.uid
-                        e.locked_at = s.time
-                        e.ready_at = s.time + e.spec.first_hit
+                        e.winding_target=None
                 if target is None:
                     continue
                 if self.distance(e, target) <= e.spec.reach:
+                    if e.winding_target != target.uid:
+                        e.winding_target=target.uid
+                        e.locked_at=s.time
+                        e.ready_at=max(e.ready_at,s.time+e.spec.first_hit)
                     if s.time < e.ready_at or e.spec.damage <= 0:
                         continue
                     delay = self.distance(e, target) / e.spec.projectile_speed if e.spec.projectile_speed else 0
@@ -254,10 +269,11 @@ class Simulator:
                     if e.tower:
                         s.tower_shots[e.side] += 1
                 elif e.spec.speed > 0 and not e.tower:
+                    e.winding_target=None
                     tx, ty = target.x, target.y
                     if not e.spec.air and (e.y - 16) * (ty - 16) < 0:
                         # Ground units cross on a bridge before heading for the target.
-                        tx = 4.5 if e.x < 9 else 13.5
+                        tx = self.geometry.bridges[0] if e.x < 9 else self.geometry.bridges[1]
                         ty = 16 - e.side * .5
                     dist = math.hypot(tx - e.x, ty - e.y)
                     if dist:

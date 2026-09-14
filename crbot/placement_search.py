@@ -5,7 +5,7 @@ import math
 
 
 def screen(x, y):
-    return .05 + x * .05, .18 + y * .02
+    return round(.05 + x * .05,12), round(.18 + y * .02,12)
 
 
 def placement_points(sim, state, card_id, side, *, limit=12):
@@ -79,7 +79,10 @@ def placement_points(sim, state, card_id, side, *, limit=12):
                     total -= threat * max(0, min(spec.reach, 4)-distance) * .8
                 if not can_hit and not can_pull:
                     total -= threat
-            if not enemies:
+            if not enemies and getattr(sim,'tactical_phase','legacy') in {'develop','counterpush'}:
+                opposing=[t for t in state.entities if t.side != side and t.tower]
+                total-=min((math.dist(p,(t.x,t.y))/max(.5,spec.speed) for t in opposing),default=0)
+            elif not enemies:
                 # Quiet-board development also follows the surviving towers and existing formation.
                 total -= min((math.dist(p, (t.x,t.y-side*2)) for t in towers), default=abs(p[0]-9))*.2
             return total
@@ -91,7 +94,7 @@ def placement_points(sim, state, card_id, side, *, limit=12):
     ranked = []
     seen = set()
     for point in points:
-        x, y = screen(*point)
+        x, y = sim.screen(*point)
         if limit is None:
             x, y = round(x,12), round(y,12)
         key = (round(x, 4), round(y, 4))

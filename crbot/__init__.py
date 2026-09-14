@@ -1,6 +1,6 @@
 """MuMu offline-AI battle automation reference implementation."""
 
-__version__ = "3.4.0"
+__version__ = "3.5.0"
 
 # Delivered capabilities, not model identities or claims of battle acceptance.
 # Keep chronological order; all release displays derive from this catalog.

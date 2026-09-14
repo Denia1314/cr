@@ -276,6 +276,15 @@
   },
   "prediction": {
     "knowledge_path": "data/battle_knowledge.json",
+    "arena_geometry": {
+      "bounds": [0.075, 0.097, 0.925, 0.757],
+      "tower_points": [[0.24, 0.625], [0.76, 0.625], [0.24, 0.219], [0.76, 0.219]],
+      "bridges": [3.5, 14.5],
+      "source": "portrait_reference_20260914_pending_multiscene_validation"
+    },
+    "tower_bar_rois": [[0.2, 0.619792, 0.309259, 0.622917], [0.724074, 0.619792, 0.833333, 0.622917], [0.201852, 0.148958, 0.307407, 0.152083], [0.724074, 0.148958, 0.82963, 0.152083]],
+    "unified_tactics": true,
+    "attack_reserve": 3,
     "assumed_level": 11,
     "budget_ms": 160,
     "all_placement_points": true,

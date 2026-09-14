@@ -217,6 +217,7 @@ class SimulationTests(unittest.TestCase):
                 attacker = self.sim.add(s, self.kb.unit(name), 1, 4, 18)
                 target = self.sim.add(s, replace(self.kb.unit("Giant"), hp=10000, damage=0, speed=0), -1, 4, 18)
                 attacker.target, attacker.walked, attacker.locked_at = target.uid, 10, -10
+                attacker.winding_target = target.uid  # pre-existing attack lock in this fixture
                 self.sim.advance(s, .5)
                 self.assertGreater(10000 - target.hp, attacker.spec.damage)
 
@@ -248,7 +249,7 @@ class PlannerTests(unittest.TestCase):
         planner = PredictivePlanner(knowledge(), {"budget_ms": 2000})
         left = planner.plan(world())
         right = planner.plan(world(tracks=(Track(1, "giant", -1, .72, .5, 99, 100, .9, 3),)))
-        self.assertLess(left.action.x, .5)
+        self.assertLessEqual(left.action.x, .5)  # center support can defend either lane
         self.assertGreaterEqual(right.action.x, .5)  # central ranged support can cover the right lane
         self.assertGreater(right.action.x,left.action.x)
 
@@ -292,7 +293,7 @@ class SelectionTests(unittest.TestCase):
         config = base_config()
         self.assertIs(type(create_policy(config)), BattlePolicy)
         predictive = apply_decision_engine(config, "predictive")
-        self.assertEqual(predictive["replay"]["training_policy_version"], "predictive_spatial_v1")
+        self.assertEqual(predictive["replay"]["training_policy_version"], "predictive_calibrated_v2")
         self.assertEqual(predictive["replay"]["transfer_policy_versions"], [])
         self.assertNotIn("decision_engine", config["policy"])
 
