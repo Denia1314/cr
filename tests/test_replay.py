@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from dataclasses import replace
@@ -551,6 +552,12 @@ class ReplayPolicyLearningTests(unittest.TestCase):
             with np.load(path) as data:
                 legacy = {key: data[key].copy() for key in data.files if key != "value_sample_weights"}
             np.savez_compressed(path, **legacy)
+            # An edited artifact with the old digest must fail, even if its arrays are valid.
+            self.assertEqual(ReplayPolicyModel(root).load_error, "model_checksum_mismatch")
+            registry = ReplayPolicyRegistry(root)
+            payload = registry.load()
+            payload["champion"]["model_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            registry.path.write_text(json.dumps(payload), encoding="utf-8")
             model = ReplayPolicyModel(root)
             self.assertTrue(model.available)
             np.testing.assert_array_equal(model.value_sample_weights, np.ones(len(model.value_y)))

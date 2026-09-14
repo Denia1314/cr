@@ -247,6 +247,8 @@ class PlannerTests(unittest.TestCase):
 
     def test_changes_in_enemy_lane_change_placement(self):
         planner = PredictivePlanner(knowledge(), {"budget_ms": 2000})
+        # Spatial behavior is independent of machine load; timeout has dedicated tests.
+        planner.clock = lambda: 0.
         left = planner.plan(world())
         right = planner.plan(world(tracks=(Track(1, "giant", -1, .72, .5, 99, 100, .9, 3),)))
         self.assertLessEqual(left.action.x, .5)  # center support can defend either lane

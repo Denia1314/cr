@@ -352,6 +352,7 @@ class ExperienceReplayRecorder:
 
         self.episode_sequence += 1
         episode = {
+            "sl4_runtime": dict(trial_runtime or {}) if self.policy_metadata.get("sl4_deployment_id") else {},
             "sl3_runtime": dict(trial_runtime or {}),
             "schema_version": REPLAY_SCHEMA_VERSION,
             "episode_id": f"{self.run_dir.name}-b{battle_index:03d}",

@@ -15,7 +15,7 @@ from PIL import Image
 from .battle_perception import LaneThreat
 from .cards import CardCatalog, CardDefinition
 from .gpu import compute_device, predict as gpu_predict
-from .training_sync import ReplaySync, replay_source_prefix, shared_training
+from .training_sync import ReplaySync, replay_source_prefix, shared_training, registry_serialized
 from .imitation import (
     BATTLEFIELD_FEATURE_COUNT,
     battlefield_features,
@@ -1383,6 +1383,7 @@ class ReplayPolicyRegistry:
         path = self.root / str(champion.get("model_path", ""))
         return path if path.is_file() else None
 
+    @registry_serialized
     def register(
         self,
         model_path: Path,
@@ -1490,6 +1491,9 @@ class ReplayPolicyRegistry:
         score = _evaluation_score(metrics)
         registry = self.load()
         promotion_blockers: list[str] = []
+        from .learning_store import read_json
+        if read_json(self.root.parent.parent / "config.json").get("self_learning_deployment", {}).get("enabled", False):
+            promotion_blockers.append("SL4 已启用；必须通过实战证据与局间部署流程")
         quality_passed = not reasons
         if candidate_only:
             promotion_blockers.append("自主学习仅生成候选，等待独立实战验收")
@@ -1542,6 +1546,9 @@ def train_replay_policy(
     active_trial = read_json(project_root / "training/self_learning/trials/ledger.json").get("active")
     if active_trial and active_trial.get("status") == "battle_trial":
         raise ValueError("自动实测尚未结束，暂缓训练以保持固定对照")
+    deployment = ReplayPolicyRegistry(project_root).load().get("deployment") or {}
+    if deployment.get("state") in {"probation", "rollback_pending"}:
+        raise ValueError("部署观察尚未结束，暂缓训练")
     if snapshot_root is not None and not candidate_only:
         raise ValueError("冻结快照入口仅允许生成候选")
     data_root = snapshot_root or project_root
@@ -2201,6 +2208,7 @@ class ReplayPolicyModel:
         self.registry = ReplayPolicyRegistry(project_root)
         self.champion = dict(entry) if entry is not None else self.registry.champion()
         self.available = False
+        self.loaded_model_sha256 = None
         self.load_error: str | None = None
         self.influence_scale = 0.0
         self.action_value_head = None
@@ -2240,6 +2248,10 @@ class ReplayPolicyModel:
             self.load_error = "champion_model_missing" if self.champion else "no_champion"
             return
         try:
+            self.loaded_model_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            if (self.champion or {}).get("model_sha256") not in {None, self.loaded_model_sha256}:
+                self.load_error = "model_checksum_mismatch"
+                return
             with np.load(path) as data:
                 from .action_value import ActionValueHead
                 try:

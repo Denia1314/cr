@@ -153,7 +153,8 @@ class BotEngine:
             prior_episodes=prior_experiment_episodes,
         )
         self.auto_trial = None
-        if (not dry_run and config.get("self_learning_trial", {}).get("enabled", False)
+        if (not dry_run and (config.get("self_learning_trial", {}).get("enabled", False)
+                            or config.get("self_learning_deployment", {}).get("enabled", False))
                 and config.get("policy", {}).get("decision_engine") == "predictive"):
             from .autonomous_trial import AutonomousTrial
             self.auto_trial = AutonomousTrial(self.project_root, config, self.policy)
@@ -201,6 +202,7 @@ class BotEngine:
             "hand_matching": hand_status,
             "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
             "replay_model": {
+                "loaded_sha256": getattr(replay_model, "loaded_model_sha256", None),
                 "version": ((replay_model.champion or {}).get("version") if replay_model else None),
                 "loaded": bool(replay_model is not None and replay_model.available),
                 "load_error": (getattr(replay_model, "load_error", None) if replay_model else "disabled"),
@@ -616,7 +618,8 @@ class BotEngine:
                     except (OSError, ValueError) as exc:
                         # Ownership/state failures must not start an unaccounted trial battle.
                         raise DeviceError(f"自动实测状态不可用，已停止：{exc}") from exc
-                if self.self_learning is not None and not (getattr(self, "auto_trial", None) and self.auto_trial.active):
+                if self.self_learning is not None and not (getattr(self, "auto_trial", None) and
+                        (self.auto_trial.active or self.auto_trial.deployment.blocks_trial)):
                     try:
                         if self.self_learning.boundary():
                             # Training can take minutes. Never click using the pre-training frame.

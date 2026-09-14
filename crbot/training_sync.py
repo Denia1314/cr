@@ -105,6 +105,16 @@ def exclusive(path: Path):
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+def registry_serialized(function):
+    """Serialize model-registry read/modify/write across training, sync and deployment."""
+    @functools.wraps(function)
+    def wrapped(self, *args, **kwargs):
+        root = self.root if isinstance(self, ReplaySync) else self.root.parent.parent
+        with exclusive(root / ".training-sync/model-registry.lock"):
+            return function(self, *args, **kwargs)
+    return wrapped
+
+
 def gh_path() -> str:
     found = shutil.which("gh")
     if found:
@@ -440,6 +450,9 @@ class ReplaySync:
 
     def compatibility(self, replay_config: dict[str, Any] | None = None) -> str:
         config = read_json(self.root / "config.json", {})
+        if replay_config is None:
+            from .runtime_model import apply_decision_engine, load_decision_engine
+            config = apply_decision_engine(config, load_decision_engine(self.root / "config.json", config))
         replay = dict(config.get("replay", {}) if replay_config is None else replay_config)
         replay.pop("allow_bot_training", None)
         digest = hashlib.sha256(encode(replay))
@@ -480,15 +493,17 @@ class ReplaySync:
             raise SyncError("模型路径或大小无效")
         data = source.read_bytes()
         digest = hashlib.sha256(data).hexdigest()
+        if candidate.get("model_sha256") not in {None, digest}:
+            raise SyncError("候选文件与登记哈希不一致，停止发布")
         pointer = {"schema": SCHEMA, "trainer_device": self.config["device_id"],
                    "sha256": digest, "compatibility": compatibility, "candidate": candidate}
         pointer_path = self.checkout / "models/replay_policy.json"
+        if bool(sync_config.get("publish_releases", False)):
+            self._publish_model_release(candidate, source)
         if read_json(pointer_path) == pointer:
             return 0
         atomic_write(self.checkout / "models" / (digest + ".npz"), data)
         atomic_write(pointer_path, encode(pointer))
-        if bool(sync_config.get("publish_releases", False)):
-            self._publish_model_release(candidate, source)
         return 1
 
     def _publish_model_release(self, candidate: dict[str, Any], source: Path) -> None:
@@ -499,10 +514,16 @@ class ReplaySync:
             raise SyncError("模型版本号无效，无法创建 Release")
         tag = f"model-{version}"
         try:
-            command([gh_path(), "release", "view", tag, "--repo", repository])
-            return
+            release = json.loads(command([gh_path(), "release", "view", tag, "--repo", repository, "--json", "assets"]))
         except SyncError:
-            pass
+            release = None
+        if release is not None:
+            checksum = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+            asset = next((a for a in release.get("assets", []) if a.get("name") == source.name), None)
+            if asset and asset.get("size") == source.stat().st_size and asset.get("digest", checksum) == checksum:
+                return
+            command([gh_path(), "release", "upload", tag, str(source), "--repo", repository, "--clobber"])
+            return
         notes = (f"自动发布模型 {version}\n"
                  f"status: {candidate.get('status')}\n"
                  f"quality_passed: {bool(candidate.get('quality_passed'))}\n"
@@ -510,6 +531,7 @@ class ReplaySync:
         command([gh_path(), "release", "create", tag, str(source), "--repo", repository,
                  "--title", f"Model {version}", "--notes", notes])
 
+    @registry_serialized
     def import_model(self) -> int:
         if self.config.get("trainer"):
             return 0
@@ -544,7 +566,9 @@ class ReplaySync:
         replay_config = read_json(self.root / "config.json", {}).get("replay", {})
         if existing is not None:
             # An explicit local opt-in after downloading must also take effect.
-            if existing.get("promoted") is True and replay_config.get("allow_bot_training") is True and registry.get("champion") != existing:
+            if (existing.get("promoted") is True and replay_config.get("allow_bot_training") is True
+                    and not existing.get("deployment_generation") and not registry.get("deployment")
+                    and registry.get("champion") != existing):
                 registry["champion"] = existing
                 atomic_write(registry_path, encode(registry))
                 return 1
@@ -553,7 +577,8 @@ class ReplaySync:
         atomic_write(model_root / relative, data)
         candidate.update(model_path=relative, sync_sha256=digest, sync_publication=publication, sync_trainer=pointer["trainer_device"])
         registry.setdefault("candidates", []).append(candidate)
-        if candidate.get("promoted") is True and replay_config.get("allow_bot_training") is True:
+        if (candidate.get("promoted") is True and replay_config.get("allow_bot_training") is True
+                and not candidate.get("deployment_generation") and not registry.get("deployment")):
             registry["champion"] = candidate
         atomic_write(registry_path, encode(registry))
         return 1
@@ -568,15 +593,33 @@ class ReplaySync:
                 self.protocol()
                 exported = self.export_records()
                 imported = self.import_records()
-                published = self.publish_model()
-                received = self.import_model()
+                from .deployment_sync import publish_deployment, import_deployment, acknowledge_publication
+                published_deployments = publish_deployment(self)
+                received_deployments = import_deployment(self)
+                published = received = 0
+                candidate_model_error = None
+                try:
+                    published = self.publish_model()
+                    received = self.import_model()
+                except (SyncError, OSError, ValueError, KeyError, TypeError) as exc:
+                    if not read_json(self.checkout / "models/deployment.json"):
+                        raise
+                    # A failed candidate asset must not hold back a verified rollback notice.
+                    candidate_model_error = str(exc)
                 total = sum(path.stat().st_size for folder in ("records", "models")
                             for path in (self.checkout / folder).rglob("*") if path.is_file())
                 if total > MAX_CHECKOUT_BYTES:
                     raise SyncError("共享数据已超过 512 MiB，请迁移存储后再继续上传")
                 self._commit()
                 self._push()
+                if read_json(self.checkout / "models/deployment.json"):
+                    remote = self.git("ls-remote", "origin", "refs/heads/main").split()[0]
+                    if remote != self.git("rev-parse", "HEAD"):
+                        raise SyncError("远端提交尚未核验一致，部署发布将重试")
+                    acknowledge_publication(self)
                 result = {"enabled": True, "time": time.time(), "exported_episodes": exported,
+                          "candidate_model_error": candidate_model_error,
+                          "published_deployments": published_deployments, "received_deployments": received_deployments,
                           "imported_episodes": imported, "published_models": published,
                           "received_models": received, "shared_bytes": total, "error": None}
                 atomic_write(self.state / "status.json", encode(result))

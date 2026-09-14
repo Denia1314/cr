@@ -96,6 +96,8 @@ class AutonomousTrial:
         self.root, self.config, self.policy = Path(root), config, policy
         self.settings = trial_settings(config)
         self.enabled = bool(config.get("self_learning_trial", {}).get("enabled", False))
+        self.trial_enabled = self.enabled
+        self.enabled |= bool(config.get("self_learning_deployment", {}).get("enabled", False))
         self.directory = self.root / "training/self_learning/trials"
         self.path = self.directory / "ledger.json"
         self.lock = None
@@ -106,6 +108,8 @@ class AutonomousTrial:
         self.phase = "idle"
         self.pending = None
         self.counters = {}
+        from .deployment import DeploymentService
+        self.deployment = DeploymentService(self)
 
     @property
     def active(self):
@@ -194,15 +198,19 @@ class AutonomousTrial:
                 raise
             self._restore()
         paused = read_json(self.root / "training/self_learning/control.json").get("paused", False)
-        allowed = (not paused and training_allowed(self.root)
+        allowed = (not paused
                    and self.config.get("policy", {}).get("decision_engine") == "predictive"
                    and self.config.get("prediction", {}).get("learned_action_value", True)
                    and self.config.get("replay", {}).get("allow_bot_training", False))
         if not allowed:
+            if not self.active and self.deployment.boundary(allow_new=False):
+                return True
             self.phase = "paused_or_not_eligible"
             changed = self.policy.replay_model is not self.original_model
             self.policy.replay_model = self.original_model
             return changed
+        if self.active and not training_allowed(self.root):
+            self._finish("interrupted", "trainer_role_changed")
         registry = ReplayPolicyRegistry(self.root).load()
         trial = self.ledger.get("active")
         if trial and trial["status"] != "battle_trial":
@@ -219,6 +227,14 @@ class AutonomousTrial:
             if changed:
                 return True
             trial = None
+        if trial is None:
+            if self.deployment.boundary():
+                self.phase = self.deployment.state.get("state", "deployment")
+                return True
+            if self.deployment.blocks_trial or not self.trial_enabled or not training_allowed(self.root):
+                self.phase = "deployment_monitoring" if self.deployment.blocks_trial else "collector"
+                return False
+            registry = ReplayPolicyRegistry(self.root).load()
         if trial is None:
             attempted = {t["candidate"]["model_sha256"] for t in self.ledger["history"]}
             candidates = [c for c in registry.get("candidates", []) if c.get("quality_passed") is True
@@ -293,7 +309,7 @@ class AutonomousTrial:
 
     def start_battle(self):
         if not self.active or self.pending is None or self.phase == "paused_or_not_eligible":
-            return {"sl3_trial_id": None, "sl3_evaluation_only": False}
+            return {"sl3_trial_id": None, "sl3_evaluation_only": False, **self.deployment.start_battle()}
         if self.policy.replay_model is not self.models.get((self.ledger["active"]["id"], self.pending["arm"])):
             self._finish("rejected", "runtime_model_changed")
             return {"sl3_trial_id": None, "sl3_evaluation_only": False}
@@ -304,12 +320,15 @@ class AutonomousTrial:
         trial, arm = self.ledger["active"], self.pending["arm"]
         entry = trial[arm] or {}
         return dict(sl3_trial_id=trial["id"], sl3_index=self.pending["index"], sl3_arm=arm,
+                    sl4_deployment_id=None,
                     sl3_model_sha256=entry.get("model_sha256"), sl3_model_version=entry.get("version"),
+                    replay_policy_version=entry.get("version"), replay_policy_status=entry.get("status"),
                     sl3_protocol=PROTOCOL, sl3_evaluation_only=True,
                     runtime_replay_version=entry.get("version"), runtime_replay_loaded=bool(entry))
 
     def decision(self, prediction):
         if not self.active or not self.pending or not self.pending.get("started"):
+            self.deployment.decision(prediction)
             return
         plan = prediction.get("plan") or {}
         revision = prediction.get("world", {}).get("revision")
@@ -328,6 +347,9 @@ class AutonomousTrial:
         self.counters["max_plan_ms"] = max(self.counters["max_plan_ms"], float(plan.get("elapsed_ms", 0)))
 
     def observe(self, episode):
+        if episode.get("policy", {}).get("sl4_deployment_id"):
+            self.deployment.observe(episode)
+            return
         if not self.active or not self.pending:
             return
         trial, pending = self.ledger["active"], self.pending
@@ -365,7 +387,7 @@ class AutonomousTrial:
         ledger = self.ledger or {}
         trial = ledger.get("active") or (ledger.get("history") or [{}])[-1]
         return dict(phase=self.phase, trial_id=trial.get("id"), completed=len(trial.get("rows", [])),
-                    trial_status=trial.get("status"), report=trial.get("report"), deployed=False)
+                    trial_status=trial.get("status"), report=trial.get("report"), deployment=self.deployment.status())
 
     def close(self):
         self.policy.replay_model = self.original_model

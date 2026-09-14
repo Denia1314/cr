@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -157,6 +158,10 @@ class ActionFeedbackTests(unittest.TestCase):
             values.update(local_x=np.asarray([feature]), local_y=np.asarray([0.4]),
                           local_sample_weights=np.asarray([1.0]), local_feedback_weight=np.asarray([0.15]))
             np.savez_compressed(path, **values)
+            registry = ReplayPolicyRegistry(root)
+            payload = registry.load()
+            payload["champion"]["model_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            registry.path.write_text(json.dumps(payload), encoding="utf-8")
             weighted = ReplayPolicyModel(root)
             self.assertAlmostEqual(weighted.card_score(catalog.by_id[row.card_id], row.elixir, row.threats()), 0.06)
             candidate = ReplayPolicyRegistry(root).register(path, result["metrics"], helper._config(True), {"local_feedback_weight": 0.15})

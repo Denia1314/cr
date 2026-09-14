@@ -148,6 +148,11 @@ def main(argv: list[str] | None = None) -> int:
             from .learning_store import read_json
             ledger = read_json(store.root / "trials/ledger.json")
             result["autonomous_trial"] = ledger.get("active") or (ledger.get("history") or [None])[-1]
+            from .replay_learning import ReplayPolicyRegistry
+            registry = ReplayPolicyRegistry(config_path.parent).load()
+            result["deployment"] = registry.get("deployment")
+            result["deployment_publication"] = registry.get("deployment_publication")
+            result["remote_deployment_error"] = registry.get("remote_deployment_error")
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 1 if result.get("phase") in {"failed", "budget_exhausted"} else 0
         if arguments.command == "battle-lab":

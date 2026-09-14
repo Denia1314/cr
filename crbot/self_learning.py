@@ -179,6 +179,9 @@ def run_cycle(root: Path, request: dict) -> dict:
     active_trial = read_json(store.root / "trials/ledger.json").get("active")
     if active_trial and active_trial.get("status") == "battle_trial":
         return store.status("waiting_trial", "固定对照实测进行中，暂缓产生下一候选")
+    deployment = ReplayPolicyRegistry(root).load().get("deployment") or {}
+    if deployment.get("state") in {"probation", "rollback_pending"}:
+        return store.status("waiting_deployment", "部署观察进行中，暂缓产生下一候选")
     if not training_allowed(root):
         return store.status("collector", "本机仅采集；候选由指定训练机生成")
     if read_json(store.root / "control.json").get("paused"):

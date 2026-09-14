@@ -1120,9 +1120,23 @@ class RoyalTrainerApp:
                 text += f"\n已记录 {len(trial.get('rows', []))} 局；候选 {trial['candidate'].get('version', '未知')}"
             else:
                 text += "\n自动实测：尚无试验记录"
-            text += "\n实战通过仅进入待部署阶段，不自动替换冠军。"
+            from .replay_learning import ReplayPolicyRegistry
+            registry = ReplayPolicyRegistry(self.config_path.parent).load()
+            deployment = registry.get("deployment") or {}
+            stages = {"probation": "已加载，观察中", "stable": "稳定运行", "rollback_pending": "等待局间回退",
+                      "rolled_back": "已回退"}
+            text += "\n自动部署：" + stages.get(deployment.get("state"), "等待通过实战验收的候选")
+            if deployment:
+                if deployment.get("reason"):
+                    text += "\n部署说明：" + str(deployment["reason"])
+                text += f"\n部署代次：{deployment.get('generation')}；观察记录：{deployment.get('total_battles', 0)} 局"
+                publication = registry.get("deployment_publication", {})
+                text += "\n发布：" + ("远端提交已核验" if publication.get("generation") == deployment.get("generation")
+                                     and publication.get("uploaded") else "尚未确认上传")
+            if registry.get("remote_deployment_error"):
+                text += "\n远端部署待处理：" + registry["remote_deployment_error"].get("reason", "未知原因")
             self._append_log("自主学习状态：" + json.dumps(status, ensure_ascii=False), "action")
-            messagebox.showinfo("自主学习 SL3 · 自动实战验收", text, parent=self.root)
+            messagebox.showinfo("自主学习 SL4 · 自动部署回退", text, parent=self.root)
         except (OSError, ValueError) as exc:
             messagebox.showerror("自主学习状态读取失败", str(exc), parent=self.root)
 

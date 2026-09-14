@@ -136,6 +136,11 @@
     "minimum_gain": 0.03,
     "family_alpha": 0.05
   },
+  "self_learning_deployment": {
+    "enabled": true,
+    "probation_battles": 20,
+    "minimum_health_battles": 10
+  },
   "training_sync": {
     "publish_unvalidated_models": true,
     "publish_releases": true
