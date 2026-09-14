@@ -1,6 +1,6 @@
 """MuMu offline-AI battle automation reference implementation."""
 
-__version__ = "3.6.0"
+__version__ = "3.7.0"
 
 # Delivered capabilities, not model identities or claims of battle acceptance.
 # Keep chronological order; all release displays derive from this catalog.
@@ -10,6 +10,7 @@ IMPLEMENTED_STAGES = (
     ("P1", "预测推演 · 实验版"),
     ("SL0", "学习数据契约"),
     ("SL1", "自主候选调度"),
+    ("SL2", "学习动作评分"),
 )
 
 

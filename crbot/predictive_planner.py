@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import math
 from dataclasses import asdict, dataclass, field
 
 from .battle_simulation import SimAction, Simulator, SimState
@@ -31,6 +32,7 @@ class PlanResult:
     compute: dict = field(default_factory=dict)
     tactical_phase: str = "legacy"
     combo_candidates: list[dict] = field(default_factory=list)
+    learning: dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)
@@ -148,13 +150,19 @@ class PredictivePlanner:
         s.uncertainties.add("enemy_hand_hypotheses_not_observed")
         return s
 
-    def plan(self, world: WorldSnapshot) -> PlanResult:
+    def plan(self, world: WorldSnapshot, *, action_scorer=None, learning_status=None) -> PlanResult:
         fast = bool(self.config.get("fast_defense", False))
         started = self.clock()
         deadline = started + max(.01, min(2., float(self.config.get("budget_ms", 180)) / 1000))
+        total_deadline = deadline
+        if action_scorer is not None:
+            reserve = max(0., min(.02, float(self.config.get("learning_budget_ms", 8)) / 1000))
+            deadline -= min(reserve, (deadline - started) / 4)
         coarse_deadline=started+(deadline-started)*.65 if fast and self.config.get("unified_tactics",False) else deadline
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
                             "unavailable", knowledge_version=self.kb.version)
+        result.learning = {**(learning_status or {}), "applied": False,
+                           "selected_for_execution": False, "changed_selection": False}
         try:
             initial = self.initial(world, world.enemy_elixir[1], 1.)
             from .tactical_objective import phase_for,score_action
@@ -301,9 +309,13 @@ class PredictivePlanner:
             except TimeoutError:
                 result.budget_exhausted=True
         if result.candidates:
+            baseline_selection = sorted(result.combo_candidates or result.candidates,
+                                        key=lambda c: c["score"], reverse=True)
+            self.apply_learning(result, action_scorer, total_deadline)
             result.candidates.sort(key=lambda c: c["score"], reverse=True)
             selection=sorted(result.combo_candidates or result.candidates,key=lambda c:c["score"],reverse=True)
             best = selection[0]
+            baseline = baseline_selection[0]
             if fast and any(e.side == -1 and not e.tower for e in initial.entities):
                 def loss(row):
                     return max(100000 * (sum(e.tower and e.side == 1 for e in initial.entities) - b.get("own_towers_remaining", 2))
@@ -319,7 +331,13 @@ class PredictivePlanner:
                         cid = row["action"]["card_id"]
                         return row.get("planned_cost",self.kb.cards[cid]["elixir"] if cid else 0)
                     best = min(sufficient, key=lambda c: (expense(c), loss(c), -c["score"]))
+                    baseline = min((c for c in baseline_selection if loss(c) <= best_loss + tolerance),
+                                   key=lambda c: (expense(c), loss(c), -c.get("simulation_score", c["score"])))
                     result.placement_mode = "fast_defense_cost_and_tower_loss"
+
+            result.learning.update(changed_selection=best["action"] != baseline["action"],
+                                   baseline_action=baseline["action"],
+                                   selected_action_supported="learned_value" in best)
 
             for entry in result.hand_evaluations:
                 option=next((c for c in result.candidates if c['action']['card_id']==entry['card_id']),None)
@@ -345,6 +363,36 @@ class PredictivePlanner:
             result.reason = f"格点评分 {result.compute['spatial_scored']}；战斗精算 {result.compute['combat_evaluated']}/{result.compute['spatial_scored']}；" + result.reason
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
+
+    def apply_learning(self, result, scorer, deadline):
+        """Atomically adjust completed rows; preserve tower and cost selection guards."""
+        if scorer is None:
+            result.learning.setdefault("reason", "no_action_scorer")
+            return
+        rows = result.candidates + result.combo_candidates
+        updates = []
+        try:
+            for row in rows:
+                if self.clock() >= deadline:
+                    raise TimeoutError()
+                estimate = scorer(row["action"]) if row["action"].get("card_id") else None
+                if estimate is not None:
+                    delta = float(estimate["delta"])
+                    if not math.isfinite(delta):
+                        raise ValueError("nonfinite learned score")
+                    updates.append((row, estimate, max(-1., min(1., delta))))
+            if self.clock() >= deadline:
+                raise TimeoutError()
+        except (TimeoutError, ValueError, KeyError, TypeError, ArithmeticError) as exc:
+            result.learning.update(reason="learning_budget_exhausted" if isinstance(exc, TimeoutError)
+                                   else "learning_error", error=str(exc), applied=False)
+            return
+        for row, estimate, delta in updates:
+            row["simulation_score"] = row["score"]
+            row["learned_value"] = estimate
+            row["score"] += delta
+        result.learning.update(applied=bool(updates), supported_rows=len(updates),
+                               compared_rows=len(rows), reason="applied" if updates else "insufficient_support")
 
     def refine_combinations(self,world,result,roots,scenarios,horizon,deadline):
         from .tactical_objective import score_action

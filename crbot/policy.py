@@ -4,7 +4,7 @@ import copy
 import random
 import time
 import uuid
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,7 @@ class BattleDecision:
     plan_revision: int = 0
     plan_valid_until: float = 0.0
     knowledge_version: str = ""
+    learned_action_value: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)

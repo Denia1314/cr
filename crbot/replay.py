@@ -140,6 +140,8 @@ def action_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "formation_phase": str(payload.get("formation_phase", "")),
         "card_formation_role": str(payload.get("card_formation_role", "")),
         "desired_formation_role": str(payload.get("desired_formation_role", "")),
+        "learned_action_value": dict(payload.get("learned_action_value", {}))
+        if isinstance(payload.get("learned_action_value"), dict) else {},
         "card_attack_targets": [
             str(value) for value in payload.get("card_attack_targets", [])
         ],

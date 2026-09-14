@@ -302,6 +302,8 @@
     "attack_reserve": 3,
     "assumed_level": 11,
     "budget_ms": 160,
+    "learned_action_value": true,
+    "learning_budget_ms": 8,
     "all_placement_points": true,
     "placement_grid_step": 1.0,
     "horizon_s": 8,

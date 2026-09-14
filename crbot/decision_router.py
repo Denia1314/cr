@@ -112,7 +112,13 @@ class PredictiveBattlePolicy(BattlePolicy):
             return self._fallback(current, previous, now, "no_active_enemy_use_normal_play")
         frame_age = max(0, float(getattr(self, "prediction_frame_age_s", 0)))
         snapshot=replace(snapshot,observation_delay_s=frame_age+time.perf_counter()-decision_started)
-        result = self.planner.plan(snapshot)
+        scorer, learning = None, {"available": False, "reason": "disabled"}
+        if self.planning_config.get("learned_action_value", True):
+            learning["reason"] = "model_unavailable"
+            if self.replay_model is not None:
+                scorer, learning = self.replay_model.action_scorer(
+                    self.catalog, elixir, threats, current, now - self.battle_started_at)
+        result = self.planner.plan(snapshot, action_scorer=scorer, learning_status=learning)
         result.valid_until -= frame_age
         self.last_plan = result.to_dict()
         self.last_plan["frame_age_before_perception_s"] = round(frame_age, 4)
@@ -150,6 +156,7 @@ class PredictiveBattlePolicy(BattlePolicy):
         self.next_action_at = now + float(self.planning_config.get("action_cooldown_s", .65))
         self._remember_formation(lane, card, deploy, now, "predictive")
         self._proposed_prediction = (card.card_id, action.x, action.y)
+        self.last_plan["learning"]["selected_for_execution"] = bool(result.learning.get("applied"))
         return BattleDecision(action.slot, list(self.vision["card_slot_centers"][action.slot]), deploy,
                               lane, "推演：" + result.reason, elixir, self.last_elixir_estimate_source, 0, 0,
                               card_id=card.card_id, card_name=card.name_zh or card.name_en, card_cost=card.elixir,
@@ -157,6 +164,12 @@ class PredictiveBattlePolicy(BattlePolicy):
                               enemy_cards=strongest.enemy_cards, threat_type=strongest.threat,
                               threat_proximity=strongest.proximity, left_threat=threats["left"].score,
                               right_threat=threats["right"].score, battle_elapsed_s=now-self.battle_started_at,
+                              left_threat_type=threats["left"].threat, right_threat_type=threats["right"].threat,
+                              left_threat_proximity=threats["left"].proximity, right_threat_proximity=threats["right"].proximity,
+                              left_threat_approach_rate=threats["left"].approach_rate, right_threat_approach_rate=threats["right"].approach_rate,
+                              left_unit_count=threats["left"].unit_count, right_unit_count=threats["right"].unit_count,
+                              replay_learning_used=bool(result.learning.get("applied")),
+                              learned_action_value=dict(self.last_plan["learning"]),
                               decision_engine="predictive", plan_revision=snapshot.revision,
                               plan_valid_until=result.valid_until, knowledge_version=self.planner.kb.version,
                               hand_confidence=self.hand_history.metadata(now).get(str(action.slot), {}).get("confidence", .5),
@@ -165,6 +178,8 @@ class PredictiveBattlePolicy(BattlePolicy):
     def resolve_action(self, action_id, status, *, now=None):
         changed = super().resolve_action(action_id, status, now=now)
         if changed and self._proposed_prediction is not None:
+            if self.last_plan is not None:
+                self.last_plan.setdefault("learning", {})["action_confirmation"] = status
             if status == "confirmed":
                 cid, x, y = self._proposed_prediction
                 self.world.confirm(action_id, cid, x, y, time.monotonic() if now is None else now)

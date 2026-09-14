@@ -682,6 +682,8 @@ class BotEngine:
                 self.recorder.record("battle_prediction", None, prediction)
                 print(f"[推演] 执行={prediction['actual_engine']} "
                       f"感知={plan.get('perception_mode', 'unavailable')} "
+                      f"学习={plan.get('learning', {}).get('reason', 'unavailable')} "
+                      f"改选={plan.get('learning', {}).get('changed_selection', False)} "
                       f"{plan.get('fallback_reason') or plan.get('reason') or '等待观察'}")
         self._write_runtime_status()
         self.response_timing.record("perception", timing["perception_s"])

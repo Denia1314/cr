@@ -5,7 +5,7 @@ import json
 import math
 import shutil
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -2019,8 +2019,16 @@ def train_replay_policy(
     temporary_dir = project_root.resolve() / "models" / "replay_policy" / "temporary"
     temporary_dir.mkdir(parents=True, exist_ok=True)
     temporary_model = temporary_dir / "candidate.npz"
+    from .action_value import train_head
+    action_head, action_head_manifest = train_head(
+        trainable_actions, train, validation, temporal_train, temporal_validation,
+        lambda a: _feature(replace(a, formation_phase="", desired_role=""),
+                           catalog.by_id[a.card_id], visual_weight),
+        require_temporal=bool(config.get("require_temporal_validation", False)),
+    )
     np.savez_compressed(
         temporary_model,
+        **action_head.arrays(),
         value_x=value_x,
         value_y=value_y,
         value_sample_weights=value_sample_weights,
@@ -2073,6 +2081,7 @@ def train_replay_policy(
         model_config=model_config,
     )
     manifest = {
+        "action_value": action_head_manifest,
         "source": "verified_offline_ai_replay",
         "compute_device": compute_device(),
         "policy_actions_are_ground_truth": False,
@@ -2187,6 +2196,8 @@ class ReplayPolicyModel:
         self.available = False
         self.load_error: str | None = None
         self.influence_scale = 0.0
+        self.action_value_head = None
+        self.action_value_error = "head_missing"
         self.visual_weight = 0.0
         self.visual_feature_count = 0
         self.tactical_feature_count = 0
@@ -2217,6 +2228,15 @@ class ReplayPolicyModel:
             return
         try:
             with np.load(path) as data:
+                from .action_value import ActionValueHead
+                try:
+                    self.action_value_head = ActionValueHead.load(data)
+                    self.action_value_error = (
+                        "head_missing" if self.action_value_head is None else
+                        "head_validation_failed" if not self.action_value_head.enabled else ""
+                    )
+                except (ValueError, KeyError, IndexError, TypeError) as exc:
+                    self.action_value_error = f"invalid_head: {exc}"
                 self.value_x = data["value_x"].copy()
                 self.value_y = data["value_y"].copy()
                 if "local_feedback_weight" in data:
@@ -2279,6 +2299,31 @@ class ReplayPolicyModel:
 
     def prepare_frame(self, image: Image.Image) -> None:
         self._battlefield(image)
+
+    def action_scorer(self, catalog, elixir, threats, image, battle_elapsed_s):
+        """Return a per-frame scorer only for an admitted head on the loaded champion."""
+        status = dict(model_version=(self.champion or {}).get("version"),
+                      available=False, reason=self.load_error or self.action_value_error)
+        if not self.available or self.action_value_head is None or not self.action_value_head.enabled:
+            return None, status
+        scale = float(self.influence_scale)
+        if not np.isfinite(scale) or scale <= 0:
+            status["reason"] = "influence_disabled"
+            return None, status
+        status.update(available=True, reason="ready", influence_scale=min(scale, 1.0))
+        features = {}
+        def score(action):
+            cid = action.get("card_id")
+            card = catalog.get(cid) if cid else None
+            if card is None:
+                return None
+            if cid not in features:
+                features[cid] = self._feature(card, elixir, threats, image, "", "", battle_elapsed_s)
+            estimate = self.action_value_head.predict(cid, features[cid], [action["x"], action["y"]])
+            if estimate is None:
+                return None
+            return {**estimate, "delta": (estimate["value"] - .5) * 2 * min(scale, 1.0)}
+        return score, status
 
     def _feature(
         self,
