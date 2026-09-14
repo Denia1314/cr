@@ -279,7 +279,8 @@ class BotEngine:
             float(automation.get("matchmaking_status_interval_s", 60.0)),
         )
         battle_threshold = float(automation.get("battle_ui_threshold", 0.72))
-        end_frames = int(automation.get("battle_end_consecutive_frames", 4))
+        from .battle_transition import BattleTransitionGuard
+        transition = BattleTransitionGuard.from_config(automation)
         confirm_interval = float(
             automation.get("post_battle_confirm_interval_s", 0.75)
         )
@@ -301,7 +302,6 @@ class BotEngine:
         awaiting_battle = False
         last_start_at = 0.0
         last_matchmaking_notice_at = 0.0
-        battle_absent_frames = 0
         post_battle = False
         post_battle_since = 0.0
         last_confirm_at = 0.0
@@ -340,6 +340,7 @@ class BotEngine:
             gate = self._update_offline_gate(image, matches)
             ui_score = battle_ui_score(image, automation["battle_ui_roi"])
             battle_detected = ui_score >= battle_threshold
+            transition.observe(battle_detected, now)
 
             # These two high-specificity controls are checked before the battle
             # color heuristic. Purple chest themes otherwise resemble the
@@ -362,6 +363,7 @@ class BotEngine:
                     self.battle_seen = False
                     self.previous_battle_frame = None
                     self.completed_battles += 1
+                    transition.reset()
                     post_battle = True
                     post_battle_since = now
                     result_reward_recorded = False
@@ -440,6 +442,7 @@ class BotEngine:
                     self.battle_seen = False
                     self.previous_battle_frame = None
                     self.completed_battles += 1
+                    transition.reset()
                     result_reward_recorded = False
                     self.recorder.record(
                         "battle_ended_by_chest",
@@ -453,7 +456,6 @@ class BotEngine:
                 awaiting_battle = False
                 post_battle = True
                 post_battle_since = now
-                battle_absent_frames = 0
                 self.offline_verified = False
                 self.offline_gate_streak = 0
                 self.last_known_at = now
@@ -508,11 +510,20 @@ class BotEngine:
 
             if battle_detected and (self.in_battle or awaiting_battle or self.offline_verified):
                 self.last_known_at = now
-                battle_absent_frames = 0
+                if (not self.in_battle or post_battle) and not transition.entry_ready:
+                    if self._sleep(poll_interval):
+                        return
+                    continue
+                if self.in_battle and post_battle:
+                    self.recorder.record("battle_resumed_after_ui_gap", image,
+                                         {"battle_ui_score": round(ui_score, 4),
+                                          "completed_battles": self.completed_battles})
+                    print("[战斗] 战斗界面恢复，撤销待确认结算并继续当前对局")
                 awaiting_battle = False
                 post_battle = False
                 if not self.in_battle:
                     self.in_battle = True
+                    transition.start(now)
                     self.battle_seen = True
                     self.previous_battle_frame = None
                     self.policy.reset_battle(now)
@@ -533,27 +544,23 @@ class BotEngine:
                 self._play_battle(image)
 
             elif self.in_battle:
-                battle_absent_frames += 1
-                if battle_absent_frames >= end_frames:
-                    self.in_battle = False
-                    self.battle_seen = False
-                    self.previous_battle_frame = None
-                    self.completed_battles += 1
+                # Missing elixir UI can be loading, animation or occlusion. It is
+                # not positive evidence of a completed match, and must not clear
+                # the current policy/replay or revoke its right to resume.
+                self.last_known_at = now
+                if transition.end_pending and not post_battle:
                     post_battle = True
                     post_battle_since = now
-                    last_confirm_at = 0.0
-                    result_confirmed_at = 0.0
-                    result_reward_recorded = False
-                    print(f"[结算] 自动判断第 {self.completed_battles} 局结束")
-                    self.recorder.record(
-                        "battle_ended_auto",
-                        image,
-                        {
-                            "battle_ui_score": round(ui_score, 4),
-                            "completed_battles": self.completed_battles,
-                        },
-                    )
-                    self._record_response_timing(image, "auto_end")
+                    self.recorder.record("battle_end_pending", image,
+                                         {"battle_ui_score": round(ui_score, 4),
+                                          "absent_frames": transition.absent_frames,
+                                          "completed_battles": self.completed_battles})
+                    print("[战斗] 界面暂时消失，等待结算证据或战斗画面恢复")
+                if post_battle and now - post_battle_since > post_timeout:
+                    self.recorder.record("post_battle_timeout", image,
+                                         {"seconds": round(now-post_battle_since, 2),
+                                          "end_confirmed": False})
+                    raise DeviceError("战斗界面持续缺失且未确认结算，已停止；本局未计为完成")
 
             elif post_battle:
                 self.last_known_at = now

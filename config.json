@@ -33,6 +33,10 @@
       0.999
     ],
     "battle_ui_threshold": 0.72,
+    "battle_start_consecutive_frames": 2,
+    "battle_start_stable_s": 0.7,
+    "battle_start_grace_s": 10.0,
+    "battle_end_absent_s": 3.0,
     "battle_end_consecutive_frames": 4,
     "post_battle_confirm_interval_s": 0.75,
     "post_battle_timeout_s": 35,
