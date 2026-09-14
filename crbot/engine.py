@@ -188,6 +188,7 @@ class BotEngine:
             "prediction": self.policy.prediction_status() if hasattr(self.policy, "prediction_status") else {"selected_engine": "legacy", "actual_engine": "legacy"},
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "hand_matching": hand_status,
+            "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
             "replay_model": {
                 "version": ((replay_model.champion or {}).get("version") if replay_model else None),
                 "loaded": bool(replay_model is not None and replay_model.available),
@@ -220,6 +221,20 @@ class BotEngine:
     def _sleep(self, seconds: float) -> bool:
         """Wait interruptibly and return True when a stop was requested."""
         return self.stop_event.wait(max(0.0, float(seconds)))
+
+    def _capture_frame(self, *, after=0., timeout=8.):
+        stream=getattr(self,'frame_stream',None)
+        if stream is None:
+            started=time.monotonic()
+            image=self.device.screenshot()
+            finished=time.monotonic()
+        else:
+            frame=stream.get(sequence=getattr(self,'_frame_sequence',0),after=after,timeout=timeout)
+            self._frame_sequence=frame.sequence
+            image,started,finished=frame.image,frame.started,frame.finished
+        self._last_battle_capture=(image,started)
+        self._last_screenshot_elapsed_s=finished-started
+        return image
 
     def _tap(self, point: list[float], image: Image.Image) -> list[int] | None:
         if self.dry_run:
@@ -318,9 +333,7 @@ class BotEngine:
 
             now = time.monotonic()
             screenshot_started = time.perf_counter()
-            image = self.device.screenshot()
-            self._last_battle_capture = (image, now)
-            self._last_screenshot_elapsed_s = time.perf_counter() - screenshot_started
+            image = self._capture_frame()
             self.response_timing.record("screenshot", self._last_screenshot_elapsed_s)
             self.latest_frame = image
             matches = self.recognizer.match_all(image)
@@ -719,6 +732,30 @@ class BotEngine:
         else:
             self.previous_battle_frame = image.copy()
 
+    def _revalidate_prediction(self, image, decision):
+        stream=getattr(self,'frame_stream',None)
+        if stream is None or getattr(decision,'decision_engine','legacy') != 'predictive':
+            return image,None
+        frame=stream.latest()
+        if frame is None or frame.sequence <= getattr(self,'_frame_sequence',0):
+            return image,None
+        if time.monotonic()-frame.started > float(self.config.get('prediction',{}).get('max_plan_age_s',2.5)):
+            return image,'latest_frame_stale'
+        current=frame.image
+        matches=self.policy.hand_recognizer.recognize(current)
+        match=next((m for m in matches if m.slot_index==decision.slot_index),None)
+        if match is None or match.card_id != decision.card_id or match.confidence < float(getattr(self.policy,'policy',{}).get('hand_min_confidence',.4)):
+            return current,'hand_changed_before_send'
+        elixir,confidence=estimate_elixir(current,self.config['vision']['elixir_roi'])
+        if confidence >= .08 and elixir is not None and elixir < (decision.card_cost or 0):
+            return current,'elixir_changed_before_send'
+        threats=self.policy._perceive_threats(current,image,time.monotonic())
+        old=decision.left_threat if decision.lane=='left' else decision.right_threat
+        threat=threats[decision.lane]
+        if old >= .17 and threat.score < .05 and threat.unit_count == 0:
+            return current,'threat_disappeared_before_send'
+        return current,None
+
     def _execute_action(
         self,
         image: Image.Image,
@@ -730,6 +767,14 @@ class BotEngine:
         """Send one action and resolve it from bounded post-click evidence."""
         decision = self.policy.prepare_action(decision, policy_snapshot)
         action_id = decision.action_id
+        recheck_started=time.perf_counter()
+        image,rejected=self._revalidate_prediction(image,decision)
+        if hasattr(self,'response_timing'):
+            self.response_timing.record('pre_send_recheck',time.perf_counter()-recheck_started)
+        if rejected:
+            confirmation=ActionConfirmation(action_id,'rejected',1.,rejected,{'pre_send_recheck':rejected},0.,0)
+            self.policy.resolve_action(action_id,'rejected',now=time.monotonic())
+            return replace(decision,action_status='rejected'),None,None,confirmation,image,rejected
         self.recorder.record(
             "battle_action_proposed",
             image,
@@ -801,6 +846,9 @@ class BotEngine:
             )
 
         send_started = time.perf_counter()
+        captured=getattr(self,'_last_battle_capture',None)
+        if captured:
+            self.response_timing.record('capture_to_send',max(0,time.monotonic()-captured[1]))
         try:
             card_pixel = list(self.device.tap_normalized(decision.card_point, image.size))
             if self._sleep(0.09):
@@ -838,7 +886,7 @@ class BotEngine:
         while time.monotonic() < deadline and not self._stop_requested():
             capture_started = time.perf_counter()
             try:
-                post_image = self.device.screenshot()
+                post_image = self._capture_frame(after=confirmation_window_started_at,timeout=max(.01,deadline-time.monotonic()))
             except Exception as exc:
                 send_error = send_error or f"确认截图失败：{exc}"
                 confirmation_error = True
@@ -967,4 +1015,12 @@ class BotEngine:
             return
         print(f"训练数据目录：{self.recorder.run_dir}")
         print("离线安全门已启用；可随时从控制台安全停止。")
-        self._run_single_marker(package)
+        self.frame_stream=None
+        if self.config.get('automation',{}).get('latest_frame_capture',False):
+            from .frame_stream import LatestFrameStream
+            self.frame_stream=LatestFrameStream(getattr(self.device,'screenshot_fast',self.device.screenshot)).start()
+        try:
+            self._run_single_marker(package)
+        finally:
+            if self.frame_stream is not None:
+                self.frame_stream.close()

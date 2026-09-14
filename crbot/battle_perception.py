@@ -84,10 +84,20 @@ class UniversalHandRecognizer:
                     template_id = f"{card.card_id}:{variant_index}"
                     self.templates[template_id] = (card, descriptors)
 
+        if self.vision.get('card_match_prewarm',False) and self.templates:
+            self.gpu_matcher=HandDescriptorMatcher([ref for _,ref in self.templates.values()],self.vision.get('card_match_device'))
+            self.gpu_matcher.warming_up=True
+            self.gpu_matcher.counts(np.zeros((2,32),dtype=np.uint8),float(self.vision.get('card_match_ratio',.78)))
+            self.gpu_matcher.warmup_calls=self.gpu_matcher.calls
+            self.gpu_matcher.calls=0
+            self.gpu_matcher.warming_up=False
+
     def compute_status(self) -> dict[str, Any]:
         return {
             "device": self.gpu_matcher.device if self.gpu_matcher is not None else "not_executed",
             "gpu_match_calls": self.gpu_matcher.calls if self.gpu_matcher is not None else 0,
+            "unchanged_slot_cache_hits": getattr(self,"slot_cache_hits",0),
+            "warmup_calls": getattr(self.gpu_matcher,"warmup_calls",0),
         }
 
     def _slot_image(self, image: Image.Image, center: list[float]) -> np.ndarray:
@@ -99,7 +109,7 @@ class UniversalHandRecognizer:
         right_px = min(image.width, round((x + half_width) * image.width))
         top_px = max(0, round(top * image.height))
         bottom_px = min(image.height, round(bottom * image.height))
-        crop = np.asarray(image.convert("L"))[top_px:bottom_px, left_px:right_px]
+        crop = np.asarray(image.crop((left_px,top_px,right_px,bottom_px)).convert("L"))
         return cv2.resize(crop, (180, 220), interpolation=cv2.INTER_AREA)
 
     def recognize(self, image: Image.Image) -> list[HandCardMatch]:
@@ -115,8 +125,16 @@ class UniversalHandRecognizer:
         minimum_margin = float(self.vision.get("card_match_min_margin", 1.45))
         empty_keypoints = int(self.vision.get("card_empty_max_keypoints", 150))
         matches: list[HandCardMatch] = []
+        cache=getattr(self,"_slot_cache",{})
+        keys=[]
         for slot_index, center in enumerate(centers):
             observed = self._slot_image(image, center)
+            key=(observed.tobytes(),ratio,minimum_good,minimum_margin,empty_keypoints,id(self.templates),len(self.templates))
+            keys.append(key)
+            if slot_index in cache and cache[slot_index][0] == key:
+                matches.append(cache[slot_index][1])
+                self.slot_cache_hits=getattr(self,"slot_cache_hits",0)+1
+                continue
             keypoints, descriptors = self.orb.detectAndCompute(observed, None)
             keypoint_count = len(keypoints)
             if descriptors is None or keypoint_count <= empty_keypoints:
@@ -159,6 +177,7 @@ class UniversalHandRecognizer:
                     empty=False,
                 )
             )
+        self._slot_cache={i:(key,matches[i]) for i,key in enumerate(keys)}
         return matches
 
 

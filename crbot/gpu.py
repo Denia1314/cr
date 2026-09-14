@@ -91,7 +91,7 @@ class HandDescriptorMatcher:
                 counts.append((nearest[..., 0] < ratio * nearest[..., 1]).sum(dim=1))
             result = torch.cat(counts).cpu().tolist()
             self.calls += 1
-            if self.calls == 1:
+            if self.calls == 1 and not getattr(self,"warming_up",False):
                 print(f"[GPU] 手牌匹配已实际使用 {self.device}；模板={len(result)}")
             return result
 

@@ -40,7 +40,7 @@ class PredictivePlanner:
         self.sim = Simulator(kb, int(config.get("assumed_level", 11)))
         if config.get("gpu_placement", False):
             from .gpu_placement import PlacementBatch
-            self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")))
+            self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")),trajectory=bool(config.get("gpu_trajectory_screening",False)))
         self.sim.placement_grid_step = float(config.get("placement_grid_step", 1.))
         self.clock = time.perf_counter
 

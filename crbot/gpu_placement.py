@@ -5,21 +5,23 @@ from .gpu import resolve_device
 
 
 class PlacementBatch:
-    def __init__(self, requested="auto"):
+    def __init__(self, requested="auto", *, trajectory=False):
         self.device = resolve_device(requested)
+        self.trajectory=trajectory
         self.calls = 0
         self.positions = 0
         self.error = ""
         if self.device != 'cpu':
             from types import SimpleNamespace
             # Warm every ranking operation before the first battle's time budget starts.
-            spec = SimpleNamespace(reach=3.,radius=.5)
-            self._compute([[1.,20.]], [[2.,18.,.5,1.,1.,2.,1.]],
+            spec = SimpleNamespace(reach=3.,radius=.5,hp=1000.,shield=0.,damage=100.,period=1.,first_hit=.5)
+            self._compute([[1.,20.]], [[2.,18.,.5,1.,1.,2.,1.,500.,100.,4.]],
                           [[3.,28.,8.,100.]], [[1.]], spec)
 
     def status(self):
         return dict(device=self.device, calls=self.calls, positions=self.positions, error=self.error,
-                    scope="placement_ranking", combat_device="cpu")
+                    scope="placement_ranking_and_dps_trajectory" if self.trajectory else "placement_ranking",
+                    trajectory_steps=33 if self.trajectory else 0, combat_device="cpu")
 
     def score(self, points, spec, projected, towers):
         # Precompute immutable card attributes once; all positions share this batch.
@@ -31,7 +33,9 @@ class PlacementBatch:
             pull = (not enemy.spec.building_only or spec.building) and ('air' if spec.air else 'ground') in enemy.spec.targets
             urgency = 1/(1+min((max(0,np.hypot(q[0]-t.x,q[1]-t.y)-enemy.spec.reach-t.spec.radius) for t in towers),default=12)/5)
             rows.append([*q, enemy.spec.radius, float(hit), float(pull),
-                         max(.5,spec.speed+(enemy.spec.speed if pull else 0)), (1+enemy.value)*urgency])
+                         max(.5,spec.speed+(enemy.spec.speed if pull else 0)), (1+enemy.value)*urgency,
+                         enemy.hp+enemy.shield,enemy.spec.damage/max(.1,enemy.spec.period),
+                         min((max(0,np.hypot(q[0]-t.x,q[1]-t.y)-enemy.spec.reach-t.spec.radius)/max(.1,enemy.spec.speed) for t in towers),default=8.)])
         cover = [[t.x,t.y,t.spec.reach+t.spec.radius,t.spec.damage/max(.1,t.spec.period)] for t in towers]
         eligible = [[float(('air' if e.spec.air else 'ground') in t.spec.targets) for t in towers] for e,_ in projected]
         try:
@@ -70,5 +74,21 @@ class PlacementBatch:
         if spec.reach > 2:
             value -= e[None,:,6]*clamp(min(spec.reach,4)-distance)*.8*e[None,:,3]*e[None,:,4]
         value -= e[None,:,6]*(1-e[None,:,3])*(1-e[None,:,4])
+        if self.trajectory:
+            # All positions and observed enemies receive the same 33-step DPS screen.
+            # Share firepower rather than allowing a single unit/tower to shoot every target.
+            ticks=arr([i*.25 for i in range(33)])[None,None,:]
+            own_dps=spec.damage/max(.1,spec.period)*e[None,:,3]/max(1,sum(r[3] for r in rows))
+            shared_tower=tower_dps/max(1,len(rows))
+            incoming=(e[None,:,8]*e[None,:,4]*xp.exp(-contact/2)).sum(axis=-1)
+            lifetime=(spec.hp+spec.shield)/(incoming+.001)
+            active=clamp(ticks-contact[:,:,None]-spec.first_hit)
+            cap=clamp(lifetime[:,None]-contact-spec.first_hit)[:,:,None]
+            active=xp.minimum(active,cap)
+            hp=e[None,:,None,7]-own_dps[:,:,None]*active-shared_tower[:,:,None]*ticks
+            stall=clamp(lifetime[:,None]-contact)*e[None,:,4]*(contact<e[None,:,9])
+            arrival=e[None,:,9]+stall
+            tower_damage=((hp>0)*(ticks>=arrival[:,:,None])*e[None,:,None,8]*.25).sum(axis=-1)
+            value-=tower_damage/150
         result = value.sum(axis=-1)
         return result.tolist() if self.device == 'cpu' else result.cpu().tolist()

@@ -55,3 +55,18 @@ class PlacementBatchTests(unittest.TestCase):
         waiting = next(c for c in result.candidates if c['label']=='WAIT')
         self.assertEqual(min(b['own_towers_remaining'] for b in chosen['branches']),2)
         self.assertLess(min(b['own_towers_remaining'] for b in waiting['branches']),2)
+
+    def test_trajectory_cpu_cuda_parity(self):
+        try:
+            import torch
+            if not torch.cuda.is_available():self.skipTest('CUDA not available')
+        except ImportError:self.skipTest('CUDA not available')
+        from crbot.placement_search import placement_points
+        p=PredictivePlanner(self.kb,{})
+        state=p.initial(world(),7,1)
+        p.sim.placement_batch=PlacementBatch('cpu',trajectory=True)
+        expected=placement_points(p.sim,state,'knight',1,limit=None)
+        p.sim.placement_batch=PlacementBatch('cuda',trajectory=True)
+        actual=placement_points(p.sim,state,'knight',1,limit=None)
+        self.assertEqual(expected,actual)
+        self.assertEqual(p.sim.placement_batch.status()['trajectory_steps'],33)

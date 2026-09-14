@@ -430,6 +430,36 @@ class MumuDevice:
         )
         return result.stdout
 
+    @staticmethod
+    def decode_raw_screenshot(raw: bytes) -> Image.Image:
+        import struct
+        if len(raw) < 12:
+            raise DeviceError("raw screenshot header missing")
+        width,height,fmt=struct.unpack_from('<III',raw)
+        if not (0 < width <= 8192 and 0 < height <= 8192) or fmt not in (1,2,3):
+            raise DeviceError("unsupported raw screenshot format")
+        channels=3 if fmt == 3 else 4
+        header=len(raw)-width*height*channels
+        if header not in (12,16):
+            raise DeviceError("raw screenshot length mismatch")
+        return Image.frombytes('RGB' if channels==3 else 'RGBA',(width,height),raw[header:]).convert('RGB')
+
+    def screenshot_fast(self) -> Image.Image:
+        if getattr(self,'_raw_capture_disabled',False):
+            raw=self.adb(['exec-out','screencap','-p'],timeout=5,binary=True)
+            try:
+                return Image.open(io.BytesIO(raw)).convert('RGB')
+            except Exception as exc:
+                raise DeviceError('PNG fallback decode failed') from exc
+        try:
+            image=self.decode_raw_screenshot(self.adb(['exec-out','screencap'],timeout=5,binary=True))
+            self.capture_backend='adb_raw'
+            return image
+        except (DeviceError,subprocess.TimeoutExpired,ValueError):
+            self._raw_capture_disabled=True
+            self.capture_backend='adb_png_fallback'
+            return self.screenshot_fast()
+
     def screenshot(self) -> Image.Image:
         arguments = ["exec-out", "screencap", "-p"]
         try:
