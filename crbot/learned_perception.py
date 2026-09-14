@@ -9,6 +9,7 @@ from .cards import CardCatalog
 from .gpu import vision_device
 from .learning import ModelRegistry
 from .unit_health import read_unit_health
+from .knowledge import KnowledgeBase
 
 
 class LearnedBattlefieldDetector:
@@ -21,6 +22,11 @@ class LearnedBattlefieldDetector:
         training_config: dict[str, Any],
     ):
         self.catalog = catalog
+        self.knowledge = None
+        try:
+            self.knowledge = KnowledgeBase.load(project_root / "data/battle_knowledge.json")
+        except (OSError, ValueError, KeyError):
+            pass
         self.training = training_config
         self.registry = ModelRegistry(project_root)
         self.champion = self.registry.champion()
@@ -142,6 +148,20 @@ class LearnedBattlefieldDetector:
             else:
                 threat_type = "single"
             centers = tuple((round(value[1], 4), round(value[2], 4)) for value in predictions)
+            # Preserve badges not explained by a recognized box in this lane.
+            remaining = list(base.centers)
+            for x, y in centers:
+                if remaining:
+                    index = min(range(len(remaining)), key=lambda i: (remaining[i][0]-x)**2 + (remaining[i][1]-y)**2)
+                    if (remaining[index][0]-x)**2 + (remaining[index][1]-y)**2 <= .09**2:
+                        remaining.pop(index)
+            centers += tuple(remaining)
+            knowledge = getattr(self, "knowledge", None)
+            rosters = [knowledge.roster(cid) if knowledge else [] for cid in enemy_cards]
+            layers = tuple(sorted({"air" if unit.air else "ground" for roster in rosters for unit, _ in roster}))
+            # Card attack targets describe what it can hit, not whether it flies.
+            complete = all(rosters) and not remaining and base.unit_count <= len(predictions)
+            layer_confidence = min(value[3] for value in predictions) if complete else 0.0
             merged[lane] = LaneThreat(
                 lane=lane,
                 score=round(max(base.score, learned_score), 4),
@@ -151,7 +171,7 @@ class LearnedBattlefieldDetector:
                 centers=centers,
                 enemy_cards=enemy_cards,
                 approach_rate=base.approach_rate,
-                unit_layers=base.unit_layers,
-                layer_confidence=base.layer_confidence,
+                unit_layers=layers if complete else (),
+                layer_confidence=layer_confidence,
             )
         return merged

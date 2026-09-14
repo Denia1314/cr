@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -74,10 +75,10 @@ class PredictiveBattlePolicy(BattlePolicy):
         uncertain = ["enemy_deployment_events_unconfirmed", "cycle_unknown"]
         for lane, threat in threats.items():
             known = [d for d in detections if d["side"] == -1 and ("left" if d["x"] < .5 else "right") == lane]
-            if threat.score < float(self.policy.get("enemy_pressure_threshold", .17)) or known:
+            if threat.score < float(self.policy.get("enemy_pressure_threshold", .17)):
                 continue
-            air = "air" in threat.unit_layers
-            if air:
+            layers = set(threat.unit_layers) if threat.layer_confidence >= float(self.policy.get("threat_layer_min_confidence", .70)) else set()
+            if layers == {"air"}:
                 hypotheses = ("minions", "baby_dragon", "balloon")
             elif threat.threat == "swarm":
                 hypotheses = ("skeletons", "goblins", "barbarians")
@@ -85,11 +86,23 @@ class PredictiveBattlePolicy(BattlePolicy):
                 hypotheses = ("giant", "valkyrie", "pekka")
             else:
                 hypotheses = ("knight", "musketeer", "mini_pekka")
+            if layers != {"ground"} and layers != {"air"}:
+                # Missing layer evidence is not evidence of ground troops.
+                hypotheses = (hypotheses[0], "minions", "balloon")
             centers = threat.centers or ((.28 if lane == "left" else .72, max(.25, threat.proximity)),)
-            for x, y in centers[:8]:
+            unmatched = list(centers)
+            for detection in known:
+                if unmatched:
+                    index = min(range(len(unmatched)), key=lambda i: math.hypot(unmatched[i][0]-detection["x"], unmatched[i][1]-detection["y"]))
+                    if math.hypot(unmatched[index][0]-detection["x"], unmatched[index][1]-detection["y"]) <= .09:
+                        unmatched.pop(index)
+            for x, y in unmatched[:8]:
                 detections.append({"card_id": f"unknown:{lane}:{threat.threat}", "side": -1,
                                    "x": x, "y": y, "confidence": .5, "hypotheses": hypotheses})
-            uncertain.append("enemy_identity_unknown:" + lane)
+            if unmatched:
+                uncertain.append("enemy_identity_unknown:" + lane)
+                if not layers or layers == {"ground", "air"}:
+                    uncertain.append("enemy_layer_unknown:" + lane)
         matches = (self.hand_history.matches_for_decision(self.last_hand_matches, now)
                    if self.temporal_perception_enabled else self.last_hand_matches)
         hand = [(m.slot_index, m.card_id) for m in matches

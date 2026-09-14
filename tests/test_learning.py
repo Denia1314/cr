@@ -287,6 +287,20 @@ class LearnedPerceptionTests(unittest.TestCase):
         self.assertEqual(threats["right"].threat, "heavy")
         self.assertGreater(threats["right"].score, 0.2)
 
+        from crbot.knowledge import KnowledgeBase
+        detector.catalog = CardCatalog.load(Path(__file__).resolve().parents[1] / "data/cards.json")
+        detector.knowledge = KnowledgeBase.load(Path(__file__).resolve().parents[1] / "data/battle_knowledge.json")
+        for cid, layer in (("giant", "ground"), ("balloon", "air"), ("minions", "air"), ("musketeer", "ground")):
+            detector.class_names = ["enemy__" + cid]
+            result = detector.detect(Image.new("RGB", (600, 1000), "black"), fallback)["right"]
+            self.assertEqual(result.unit_layers, (layer,))
+            self.assertGreaterEqual(result.layer_confidence, .7)
+        fallback["right"] = LaneThreat("right", .8, 2, .7, "heavy", ((.65, .58), (.8, .7)))
+        result = detector.detect(Image.new("RGB", (600, 1000), "black"), fallback)["right"]
+        self.assertIn((.8, .7), result.centers)
+        self.assertEqual(result.layer_confidence, 0)
+        self.assertEqual(result.unit_layers, ())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -364,6 +364,37 @@ class RouterTests(unittest.TestCase):
         self.assertTrue(observed.tracks[0].card_id.startswith("unknown:"))
         self.assertFalse(observed.enemy_seen)
         self.assertEqual(self.p.last_plan["perception_mode"], "lane_hypotheses")
+        self.assertIn("enemy_layer_unknown:left", observed.uncertainty)
+        specs = [self.p.planner.kb.roster(cid)[0][0] for cid in observed.tracks[0].hypotheses]
+        self.assertTrue(any(spec.air for spec in specs))
+        self.assertTrue(any(not spec.air for spec in specs))
+
+    def test_known_ground_unit_does_not_hide_unidentified_same_lane_enemy(self):
+        threats = {lane: LaneThreat(lane, 0, 0, 0, "none", ()) for lane in ("left", "right")}
+        threats["left"] = LaneThreat("left", .8, 2, .65, "heavy", ((.28, .5), (.28, .65)))
+        self.threats.return_value = threats
+        with patch.object(self.p.planner, "plan", return_value=self.result()) as plan:
+            self.p.decide(self.image, None, now=100)
+        tracks = plan.call_args.args[0].tracks
+        self.assertEqual(len(tracks), 2)
+        unknown = next(t for t in tracks if t.card_id.startswith("unknown:"))
+        self.assertIn("balloon", unknown.hypotheses)
+
+    def test_air_hypotheses_require_trusted_layer_evidence(self):
+        for confidence, ground_expected in ((.2, True), (.9, False)):
+            self.p.world.reset()
+            self.p.next_action_at = 0
+            self.p.learned_detector.observed_enemies = []
+            self.threats.return_value = {
+                "left": LaneThreat("left", .8, 1, .6, "heavy", ((.28, .6),), unit_layers=("air",), layer_confidence=confidence),
+                "right": LaneThreat("right", 0, 0, 0, "none", ())}
+            with patch.object(self.p.planner, "plan", return_value=self.result()) as plan:
+                self.p.decide(self.image, None, now=100)
+            world = plan.call_args.args[0]
+            simulated = [self.p.planner.initial(world, 5, hp) for hp in (.65, .85, 1.)]
+            layers = [e.spec.air for s in simulated for e in s.entities if e.side == -1 and not e.tower]
+            self.assertIn(True, layers)
+            self.assertEqual(False in layers, ground_expected)
 
     def test_prediction_confirmed_once_and_rejection_rolls_back(self):
         for status in ("rejected", "confirmed"):
