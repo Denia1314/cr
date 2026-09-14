@@ -15,7 +15,7 @@ def placement_points(sim, state, card_id, side, *, limit=12):
     enemies = [e for e in state.entities if e.side != side and not e.tower and e.hp > 0]
     towers = [e for e in state.entities if e.side == side and e.tower and e.hp > 0]
     enemies.sort(key=lambda e: min((math.hypot(e.x-t.x, e.y-t.y) for t in towers), default=0))
-    enemies = enemies[:8]
+    enemies = enemies[:24 if getattr(sim, "placement_batch", None) else 8]
     if spell:
         if spell.get('friendly'):
             enemies = [e for e in state.entities if e.side == side and not e.tower and not e.spec.building and e.hp>0][:8]
@@ -33,7 +33,8 @@ def placement_points(sim, state, card_id, side, *, limit=12):
         spec = roster[0][0]
         # Cover the full conservative home deployment region, not a list of lane anchors.
         points = [(float(x), float(y if side == 1 else 32-y))
-                  for x in range(1, 18, 2) for y in range(17, 30, 2)]
+                  for x in range(1, 18, 1 if getattr(sim, "placement_batch", None) else 2)
+                  for y in range(17, 30, 1 if getattr(sim, "placement_batch", None) else 2)]
         projected = []
         for enemy in enemies:
             tower = min(towers, key=lambda t: math.hypot(enemy.x-t.x, enemy.y-t.y), default=None)
@@ -92,7 +93,11 @@ def placement_points(sim, state, card_id, side, *, limit=12):
         if key in seen or not sim.legal_placement(state, card_id, side, x, y):
             continue
         seen.add(key)
-        ranked.append((value(point), point, (x,y)))
+        ranked.append((0., point, (x,y)))
+    batch = getattr(sim, "placement_batch", None)
+    values = batch.score([r[1] for r in ranked], spec, projected, towers) if batch and roster and not spell and ranked else None
+    ranked = [(values[i] if values is not None else value(point), point, normalized)
+              for i, (_, point, normalized) in enumerate(ranked)]
     ranked.sort(key=lambda r: r[0], reverse=True)
     # Keep alternatives spatially distinct so combat search compares genuinely different defenses.
     selected = []

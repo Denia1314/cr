@@ -28,6 +28,7 @@ class PlanResult:
     placement_mode: str = "scene_grid_and_intercepts"
     hand_evaluations: list[dict] = field(default_factory=list)
     enemy_forecast: list[dict] = field(default_factory=list)
+    compute: dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)
@@ -37,6 +38,9 @@ class PredictivePlanner:
     def __init__(self, kb: KnowledgeBase, config: dict):
         self.kb, self.config = kb, config
         self.sim = Simulator(kb, int(config.get("assumed_level", 11)))
+        if config.get("gpu_placement", False):
+            from .gpu_placement import PlacementBatch
+            self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")))
         self.clock = time.perf_counter
 
     def candidates(self, s: SimState, side: int, *, limit=12) -> list[SimAction]:
@@ -175,6 +179,7 @@ class PredictivePlanner:
                 scenarios = [(world.enemy_elixir[1], 1., False)]
                 if any(t.hypotheses for t in world.tracks):
                     scenarios.insert(0, (world.enemy_elixir[0], .65, False))
+                    scenarios.insert(1, (world.enemy_elixir_estimate, .85, False))
             coarse_rows = []
             published_round = 0
             initial_scenarios = [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
@@ -278,7 +283,8 @@ class PredictivePlanner:
             best = result.candidates[0]
             if fast and any(e.side == -1 and not e.tower for e in initial.entities):
                 def loss(row):
-                    return max(b["own_tower_damage"] + b.get("imminent_tower_exposure", 0)
+                    return max(100000 * (sum(e.tower and e.side == 1 for e in initial.entities) - b.get("own_towers_remaining", 2))
+                               + b["own_tower_damage"] + b.get("imminent_tower_exposure", 0)
                                for b in row["branches"])
                 waiting = next((c for c in result.candidates if c["action"]["card_id"] is None), None)
                 if waiting is not None:
@@ -302,6 +308,8 @@ class PredictivePlanner:
             result.status = "wait" if result.action.card_id is None else "ready"
             responses = "; ".join(f"敌方 {b['enemy_response']} → 我方 {b['own_followup']}" for b in best["branches"])
             result.reason = f"完整比较 {len(result.candidates)} 个方案 / 深度 {result.completed_depth} / {horizon:g} 秒；{responses}"
+        if getattr(self.sim, "placement_batch", None):
+            result.compute = self.sim.placement_batch.status()
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
 

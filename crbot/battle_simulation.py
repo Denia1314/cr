@@ -310,7 +310,7 @@ class Simulator:
             exposure += enemy.spec.damage / max(.1, enemy.spec.period) * max(0, 3-eta) * (2-tower.hp/tower.spec.hp)
         score -= exposure / 150
         score -= .08 * len(s.uncertainties)
-        return score, {"own_tower_damage": round(own_loss, 1), "enemy_tower_damage": round(enemy_loss, 1),
+        return score, {"own_towers_remaining": own_towers, "own_tower_damage": round(own_loss, 1), "enemy_tower_damage": round(enemy_loss, 1),
                        "own_tower_shots": s.tower_shots[1], "enemy_tower_shots": s.tower_shots[-1],
                        "imminent_tower_exposure": round(exposure, 1),
                        "material": round(material, 2), "elixir_advantage": round(reserve, 2),
