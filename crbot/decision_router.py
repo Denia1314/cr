@@ -104,10 +104,15 @@ class PredictiveBattlePolicy(BattlePolicy):
             return None
         if not hand or self.last_hand_image is not current:
             return self._fallback(current, previous, now, "hand_unavailable")
+        if self.planning_config.get("fast_defense", False) and not any(
+            t.side == -1 and t.hp_fraction != 0 and now - t.last_seen <= 1.5 for t in snapshot.tracks
+        ):
+            return self._fallback(current, previous, now, "no_active_enemy_use_normal_play")
         frame_age = max(0, float(getattr(self, "prediction_frame_age_s", 0)))
         result = self.planner.plan(snapshot)
         result.valid_until -= frame_age
         self.last_plan = result.to_dict()
+        self.last_plan["frame_age_before_perception_s"] = round(frame_age, 4)
         self.last_plan["perception_mode"] = "exact_cards" if getattr(detector, "last_detection_succeeded", False) and not any(x.startswith("enemy_identity_unknown") for x in uncertain) else "lane_hypotheses"
         if self.decision_engine == "shadow":
             self.last_execution_engine = "legacy_shadow"

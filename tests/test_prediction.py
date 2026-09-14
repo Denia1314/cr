@@ -393,6 +393,27 @@ class RouterTests(unittest.TestCase):
         old.assert_not_called()
         self.assertEqual(self.p.last_plan["fallback_reason"], "plan_expired_recapture")
 
+    def test_device_capture_latency_does_not_expire_new_default_plan(self):
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        self.p.prediction_frame_age_s = 1.05
+        result = self.result()
+        result.valid_until = 100 + config["prediction"]["max_plan_age_s"]
+        result.elapsed_ms = 100
+        with patch.object(self.p.planner, "plan", return_value=result):
+            decision = self.p.decide(self.image, None, now=100)
+        self.assertIsNotNone(decision)
+        self.assertGreater(decision.plan_valid_until, 101.2)
+
+    def test_no_enemy_uses_normal_play_instead_of_permanent_wait(self):
+        self.p.planning_config["fast_defense"] = True
+        self.p.learned_detector.observed_enemies = []
+        empty = {lane: LaneThreat(lane, 0, 0, 0, "none", (), ()) for lane in ("left", "right")}
+        with patch.object(self.p, "_perceive_threats", return_value=empty), patch.object(self.p.planner, "plan") as plan, patch.object(BattlePolicy, "decide", return_value=None) as old:
+            self.p.decide(self.image, None, now=100)
+        plan.assert_not_called()
+        old.assert_called_once()
+        self.assertEqual(self.p.last_plan["fallback_reason"], "no_active_enemy_use_normal_play")
+
     def test_capture_age_counts_toward_expiration(self):
         self.p.prediction_frame_age_s = 1.1
         with patch.object(self.p.planner, "plan", return_value=self.result()), patch.object(BattlePolicy, "decide") as old:

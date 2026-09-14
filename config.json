@@ -278,7 +278,7 @@
     "budget_ms": 100,
     "positions_per_card": 12,
     "horizon_s": 8,
-    "max_plan_age_s": 0.5,
+    "max_plan_age_s": 2.5,
     "action_cooldown_s": 0.65,
     "downside_weight": 0.65,
     "unknown_response_cards": ["knight", "musketeer", "fireball"],

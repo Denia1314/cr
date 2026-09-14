@@ -276,7 +276,7 @@ class PredictivePlanner:
         if result.candidates:
             result.candidates.sort(key=lambda c: c["score"], reverse=True)
             best = result.candidates[0]
-            if fast:
+            if fast and any(e.side == -1 and not e.tower for e in initial.entities):
                 def loss(row):
                     return max(b["own_tower_damage"] + b.get("imminent_tower_exposure", 0)
                                for b in row["branches"])
