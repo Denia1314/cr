@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import queue
 import sys
@@ -239,6 +240,7 @@ class RoyalTrainerApp:
             ("训练数据", self.open_runs_folder),
             ("精确标注（可选）", self.open_annotation),
             ("无标注自学", self.check_learning_status),
+            ("自主学习状态", self.show_self_learning_status),
             ("示范学习", self.start_demonstration),
             ("双机数据同步", self.sync_training_data),
         ):
@@ -1092,6 +1094,28 @@ class RoyalTrainerApp:
         AnnotationWindow(window, self.config_path.parent)
         self._append_log("可选的精确敌军标注窗口已打开。", "success")
 
+    def show_self_learning_status(self) -> None:
+        from .learning_store import LearningStore
+        try:
+            status = LearningStore(self.config_path.parent).current_status()
+            labels = {"idle": "尚未开始", "auditing": "审计数据", "training": "训练候选",
+                      "candidate_ready": "候选已保存", "waiting_data": "等待有效数据",
+                      "cooldown": "等待训练间隔", "paused": "已暂停", "failed": "任务失败",
+                      "budget_exhausted": "达到时间预算", "collector": "仅采集",
+                      "deferred": "等待其他训练结束", "waiting_boundary": "等待局间边界"}
+            text = labels.get(status.get("phase"), status.get("phase", "未知")) + "\n" + status.get("reason", "")
+            for key, label in (("target", "学习目标"), ("new_battles", "新增有效局"),
+                               ("new_actions", "新增有效动作"), ("candidate_version", "候选版本")):
+                if key in status:
+                    text += f"\n{label}：{status[key]}"
+            if "quality_passed" in status:
+                text += "\n离线检查：" + ("通过" if status["quality_passed"] else "未通过")
+            text += "\n本阶段只产候选，尚未自动实战晋级。"
+            self._append_log("自主学习状态：" + json.dumps(status, ensure_ascii=False), "action")
+            messagebox.showinfo("自主学习 SL0/SL1（只产候选）", text, parent=self.root)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("自主学习状态读取失败", str(exc), parent=self.root)
+
     def check_learning_status(self) -> None:
         if self._bot_is_running():
             messagebox.showinfo(
@@ -1105,6 +1129,8 @@ class RoyalTrainerApp:
         def worker() -> None:
             try:
                 config, config_path = load_config(self.config_path)
+                from .self_learning import effective_learning_config
+                config = effective_learning_config(config, config_path)
                 catalog_value = config.get("dataset", {}).get(
                     "card_catalog", "data/cards.json"
                 )
@@ -1177,6 +1203,7 @@ class RoyalTrainerApp:
                         config_path.parent,
                         catalog,
                         replay_config,
+                        candidate_only=True,
                     )
                 payload = {
                     "imitation": imitation_audit.to_dict(),
@@ -1441,7 +1468,10 @@ class RoyalTrainerApp:
 
         if self.engine is not None and self._bot_is_running():
             self.battle_value.configure(text=f"{self.engine.completed_battles} 局")
-            if self.engine.in_battle:
+            learning = getattr(self.engine, "self_learning", None)
+            if learning is not None and learning.phase in {"auditing", "training"}:
+                self.battle_note.configure(text="局间自主学习 · " + ("审计" if learning.phase == "auditing" else "候选训练"))
+            elif self.engine.in_battle:
                 self.battle_note.configure(text="当前正在战斗")
             elif self.engine.offline_verified:
                 self.battle_note.configure(text="已验证离线入口")

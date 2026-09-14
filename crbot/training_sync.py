@@ -605,6 +605,12 @@ def shared_training(function):
     def wrapped(project_root, *args, **kwargs):
         root = Path(project_root).resolve()
         with exclusive(root / ".training-sync/training.lock"):
+            if kwargs.get("candidate_only", False):
+                # Snapshot candidates never pull new data or publish/promote as
+                # a hidden side effect of training. Existing manual API is unchanged.
+                if not training_allowed(root):
+                    raise SyncError("本机是采集机；自主训练由指定训练机执行")
+                return function(project_root, *args, **kwargs)
             prepare_training(root)
             result = function(project_root, *args, **kwargs)
             if settings(root).get("enabled"):

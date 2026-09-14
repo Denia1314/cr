@@ -44,6 +44,12 @@ class ConsoleTests(unittest.TestCase):
         self.root.update_idletasks()
         self.root.update()
         self.assertIn("P1", self.app.engine_combo["values"][-1])
+        from crbot import current_stage_label
+        from tkinter.font import Font
+        current = self.app.engine_combo["values"][-1]
+        self.assertIn(current_stage_label(), current)
+        label_width = Font(self.root, font=self.app.engine_combo["font"]).measure(current)
+        self.assertLessEqual(label_width + 24, self.app.engine_combo.winfo_width())
         for widget in (self.app.engine_combo, self.app.model_combo, self.app.start_button,
                        self.app.stop_button, self.app.release_heading):
             left = widget.winfo_rootx() - self.root.winfo_rootx()
@@ -103,7 +109,7 @@ class ConsoleTests(unittest.TestCase):
     def test_tools_menu_routes_all_auxiliary_actions(self) -> None:
         methods = (
             "open_calibration", "open_runs_folder", "open_annotation",
-            "check_learning_status", "start_demonstration", "sync_training_data",
+            "check_learning_status", "show_self_learning_status", "start_demonstration", "sync_training_data",
         )
         with ExitStack() as stack:
             actions = [stack.enter_context(patch.object(RoyalTrainerApp, method)) for method in methods]

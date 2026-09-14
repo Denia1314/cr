@@ -309,7 +309,7 @@ class SelectionTests(unittest.TestCase):
     def test_stage_is_in_actual_predictor_option_not_legacy_option(self):
         from crbot import current_stage_label
         from crbot.runtime_model import RUNTIME_MODEL_LABELS
-        self.assertEqual(DECISION_ENGINE_LABELS["predictive"], current_stage_label())
+        self.assertEqual(DECISION_ENGINE_LABELS["predictive"], current_stage_label() + " / P1 推演")
         self.assertIn("M3-E", RUNTIME_MODEL_LABELS["m3_c3"])
 
 

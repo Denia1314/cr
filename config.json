@@ -117,6 +117,17 @@
     "policy_card_weight": 2.0,
     "policy_deploy_weight": 0.2
   },
+  "self_learning": {
+    "enabled": true,
+    "audit_every_battles": 20,
+    "minimum_new_battles": 100,
+    "minimum_new_actions": 500,
+    "minimum_interval_s": 7200,
+    "max_cycle_seconds": 7200,
+    "max_attempts": 2,
+    "max_snapshot_mb": 512,
+    "retained_snapshots": 2
+  },
   "training_sync": {
     "publish_unvalidated_models": true,
     "publish_releases": true

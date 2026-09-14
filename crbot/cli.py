@@ -85,6 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay.add_argument("--review-file", help="动作确认人工复核 JSONL 文件")
     replay.add_argument("--review-limit", type=int, default=200, help="复核导出的完整尝试数")
+    autonomous = subcommands.add_parser("self-learn", help="自主候选学习：状态、单轮运行和暂停/恢复")
+    autonomous.add_argument("action", choices=("status", "cycle", "pause", "resume"), nargs="?", default="status")
     sync = subcommands.add_parser("sync", help="双机回放数据共享")
     sync.add_argument("action", choices=("setup", "now", "status"), nargs="?", default="now")
     sync.add_argument("--repository", default=DEFAULT_REPOSITORY)
@@ -128,6 +130,23 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         config, config_path = load_config(arguments.config)
+        if arguments.command == "self-learn":
+            from .learning_store import LearningStore, atomic_json
+            from .self_learning import SelfLearningService, effective_learning_config
+            store = LearningStore(config_path.parent)
+            if arguments.action in {"pause", "resume"}:
+                paused = arguments.action == "pause"
+                atomic_json(store.root / "control.json", {"paused": paused})
+                result = store.status("paused" if paused else "waiting_boundary",
+                                      "自主学习已暂停" if paused else "下次审计边界恢复；不会自动启动游戏")
+            elif arguments.action == "cycle":
+                service = SelfLearningService(config_path.parent, effective_learning_config(config, config_path))
+                service.boundary()
+                result = store.current_status()
+            else:
+                result = store.current_status()
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 1 if result.get("phase") in {"failed", "budget_exhausted"} else 0
         if arguments.command == "battle-lab":
             from .battle_lab import prepare,evaluate
             result=(prepare if arguments.action=="prepare" else evaluate)(config_path.parent,config)
@@ -244,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if arguments.command == "replay":
+            from .self_learning import effective_learning_config
+            config = effective_learning_config(config, config_path)
             replay_config = dict(config.get("replay", {}))
             result: dict[str, object] = {}
             review_file = (

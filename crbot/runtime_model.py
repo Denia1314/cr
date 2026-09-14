@@ -10,7 +10,7 @@ from . import current_stage_label
 DECISION_ENGINE_LABELS = {
     "legacy": "原有策略 · M3-E / 旧版本",
     "shadow": "推演观察 · 旧策略出牌",
-    "predictive": current_stage_label(),
+    "predictive": current_stage_label() + " / P1 推演",
 }
 
 RUNTIME_MODEL_LABELS: dict[str, str] = {

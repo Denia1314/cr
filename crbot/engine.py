@@ -55,6 +55,10 @@ class BotEngine:
         self.dry_run = dry_run
         self.max_battles = max(0, int(max_battles))
         self.stop_event = stop_event or Event()
+        self.self_learning = None
+        if not dry_run and config.get("self_learning", {}).get("enabled", False):
+            from .self_learning import SelfLearningService
+            self.self_learning = SelfLearningService(self.project_root, config, self._stop_requested)
         self.recognizer = WorkflowRecognizer(config, config_path)
         self.policy = create_policy(config, config_path)
         print(f"[决策引擎] {config.get('policy', {}).get('decision_engine', 'legacy')}")
@@ -407,6 +411,8 @@ class BotEngine:
                     )
                     result_reward_recorded = episode is not None
                     if episode is not None:
+                        if self.self_learning is not None:
+                            self.self_learning.on_battle_completed(episode)
                         stop_reason = self.experiment.observe(episode)
                         if stop_reason:
                             print(f"[实验护栏] {stop_reason}，将在局间停止。")
@@ -587,6 +593,16 @@ class BotEngine:
 
             elif gate is not None and self.offline_verified and not awaiting_battle:
                 self.last_known_at = now
+                if self.self_learning is not None:
+                    try:
+                        if self.self_learning.boundary():
+                            # Training can take minutes. Never click using the pre-training frame.
+                            self.last_known_at = time.monotonic()
+                            self.offline_verified = False
+                            self.offline_gate_streak = 0
+                            continue
+                    except (OSError, ValueError) as exc:
+                        print(f"[自主学习] 暂停本次任务，现役保持不变：{exc}")
                 if now - last_start_at >= start_retry_s:
                     pixel = self._tap(start_point, image)
                     print(

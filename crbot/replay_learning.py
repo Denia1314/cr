@@ -1387,6 +1387,8 @@ class ReplayPolicyRegistry:
         metrics: dict[str, Any],
         config: dict[str, Any],
         manifest: dict[str, Any],
+        *,
+        candidate_only: bool = False,
     ) -> dict[str, Any]:
         version = f"{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 1_000_000_000:09d}"
         relative = Path("candidates") / f"replay_policy_{version}.npz"
@@ -1487,6 +1489,8 @@ class ReplayPolicyRegistry:
         registry = self.load()
         promotion_blockers: list[str] = []
         quality_passed = not reasons
+        if candidate_only:
+            promotion_blockers.append("自主学习仅生成候选，等待独立实战验收")
         if not bool(config.get("allow_bot_training", False)):
             promotion_blockers.append("配置为影子模式，未授权机器人经验接管实战")
         champion = registry.get("champion")
@@ -1527,16 +1531,23 @@ def train_replay_policy(
     project_root: Path,
     catalog: CardCatalog,
     config: dict[str, Any],
+    *,
+    candidate_only: bool = False,
+    snapshot_root: Path | None = None,
+    learning_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    audit = audit_replay_learning(project_root, catalog, config)
+    if snapshot_root is not None and not candidate_only:
+        raise ValueError("冻结快照入口仅允许生成候选")
+    data_root = snapshot_root or project_root
+    audit = audit_replay_learning(data_root, catalog, config)
     if not audit.ready:
         raise ValueError("回放数据尚未达标：" + "；".join(audit.blocking_reasons))
-    actions = collect_replay_learning_actions(project_root, catalog, config)
+    actions = collect_replay_learning_actions(data_root, catalog, config)
     validation_fraction = float(config.get("validation_fraction", 0.25))
     seed = int(config.get("training_seed", config.get("seed", 20260903)))
     neighbors = int(config.get("training_neighbors", 31))
     visual_weight = float(config.get("battlefield_visual_weight", 0.08))
-    transfer = _transfer_actions(project_root, catalog, config)
+    transfer = _transfer_actions(data_root, catalog, config)
     transfer_weight = float(config.get("transfer_sample_weight", 0.25))
     local_weight = float(config.get("local_feedback_weight", 0.0))
     if not math.isfinite(local_weight) or not 0 <= local_weight <= 0.3:
@@ -2152,8 +2163,11 @@ def train_replay_policy(
         ),
         "runtime_requires_explicit_allow_bot_training": True,
     }
+    if learning_manifest is not None:
+        manifest["self_learning"] = dict(learning_manifest)
+    manifest["candidate_only"] = candidate_only
     candidate = ReplayPolicyRegistry(project_root).register(
-        temporary_model, metrics, config, manifest
+        temporary_model, metrics, config, manifest, candidate_only=candidate_only
     )
     return {
         "audit": audit.to_dict(),
