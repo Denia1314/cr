@@ -145,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
                 result = store.current_status()
             else:
                 result = store.current_status()
+            from .learning_store import read_json
+            ledger = read_json(store.root / "trials/ledger.json")
+            result["autonomous_trial"] = ledger.get("active") or (ledger.get("history") or [None])[-1]
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 1 if result.get("phase") in {"failed", "budget_exhausted"} else 0
         if arguments.command == "battle-lab":

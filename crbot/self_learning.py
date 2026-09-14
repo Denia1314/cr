@@ -97,7 +97,8 @@ def freeze_snapshot(root: Path, destination: Path, request: dict) -> None:
     for run in sorted((root / "runs").glob("*")):
         if not run.is_dir():
             continue
-        episodes = [r for r in _rows(run / "replay_episodes.jsonl") if _policy_version(r) in versions]
+        episodes = [r for r in _rows(run / "replay_episodes.jsonl") if _policy_version(r) in versions
+                    and not r.get("policy", {}).get("sl3_evaluation_only", False)]
         if not episodes:
             continue
         indices = {r.get("battle_index") for r in episodes}
@@ -175,6 +176,9 @@ def run_cycle(root: Path, request: dict) -> dict:
     from .training_sync import exclusive, training_allowed, SyncBusyError
     root = root.resolve()
     store = LearningStore(root)
+    active_trial = read_json(store.root / "trials/ledger.json").get("active")
+    if active_trial and active_trial.get("status") == "battle_trial":
+        return store.status("waiting_trial", "固定对照实测进行中，暂缓产生下一候选")
     if not training_allowed(root):
         return store.status("collector", "本机仅采集；候选由指定训练机生成")
     if read_json(store.root / "control.json").get("paused"):

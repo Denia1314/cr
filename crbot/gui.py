@@ -1110,9 +1110,19 @@ class RoyalTrainerApp:
                     text += f"\n{label}：{status[key]}"
             if "quality_passed" in status:
                 text += "\n离线检查：" + ("通过" if status["quality_passed"] else "未通过")
-            text += "\n本阶段只产候选，尚未自动实战晋级。"
+            from .learning_store import read_json
+            ledger = read_json(self.config_path.parent / "training/self_learning/trials/ledger.json")
+            trial = ledger.get("active") or (ledger.get("history") or [None])[-1]
+            if trial:
+                phases = {"battle_trial": "实战比较中", "battle_pass": "实战通过，待部署",
+                          "rejected": "验收未通过", "inconclusive": "证据不足", "interrupted": "实测中断"}
+                text += "\n自动实测：" + phases.get(trial["status"], trial["status"])
+                text += f"\n已记录 {len(trial.get('rows', []))} 局；候选 {trial['candidate'].get('version', '未知')}"
+            else:
+                text += "\n自动实测：尚无试验记录"
+            text += "\n实战通过仅进入待部署阶段，不自动替换冠军。"
             self._append_log("自主学习状态：" + json.dumps(status, ensure_ascii=False), "action")
-            messagebox.showinfo("自主学习 SL0/SL1（只产候选）", text, parent=self.root)
+            messagebox.showinfo("自主学习 SL3 · 自动实战验收", text, parent=self.root)
         except (OSError, ValueError) as exc:
             messagebox.showerror("自主学习状态读取失败", str(exc), parent=self.root)
 

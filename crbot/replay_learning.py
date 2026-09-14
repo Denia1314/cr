@@ -192,6 +192,8 @@ def collect_replay_learning_actions(
             continue
         source_prefix = replay_source_prefix(run_dir)
         for row in _read_jsonl(run_dir / "replay_transitions.jsonl"):
+            if row.get("policy", {}).get("sl3_evaluation_only", False):
+                continue
             transition_id = str(row.get("transition_id", "")).strip()
             if transition_id and source_prefix and not transition_id.startswith(source_prefix):
                 transition_id = source_prefix + transition_id
@@ -1536,6 +1538,10 @@ def train_replay_policy(
     snapshot_root: Path | None = None,
     learning_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from .learning_store import read_json
+    active_trial = read_json(project_root / "training/self_learning/trials/ledger.json").get("active")
+    if active_trial and active_trial.get("status") == "battle_trial":
+        raise ValueError("自动实测尚未结束，暂缓训练以保持固定对照")
     if snapshot_root is not None and not candidate_only:
         raise ValueError("冻结快照入口仅允许生成候选")
     data_root = snapshot_root or project_root
@@ -2190,9 +2196,10 @@ class ReplayPolicyModel:
         self,
         project_root: Path,
         replay_config: dict[str, Any] | None = None,
+        *, entry: dict[str, Any] | None = None,
     ):
         self.registry = ReplayPolicyRegistry(project_root)
-        self.champion = self.registry.champion()
+        self.champion = dict(entry) if entry is not None else self.registry.champion()
         self.available = False
         self.load_error: str | None = None
         self.influence_scale = 0.0
@@ -2223,6 +2230,12 @@ class ReplayPolicyModel:
             self.load_error = "champion_incompatible"
             return
         path = self.registry.champion_path()
+        if entry is not None:
+            path = (self.registry.root / str(entry.get("model_path", ""))).resolve()
+            if (not path.is_relative_to(self.registry.root.resolve()) or not path.is_file()
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != entry.get("model_sha256")):
+                self.load_error = "trial_model_checksum_or_path_invalid"
+                return
         if path is None:
             self.load_error = "champion_model_missing" if self.champion else "no_champion"
             return

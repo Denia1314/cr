@@ -152,6 +152,12 @@ class BotEngine:
             self.policy.replay_model,
             prior_episodes=prior_experiment_episodes,
         )
+        self.auto_trial = None
+        if (not dry_run and config.get("self_learning_trial", {}).get("enabled", False)
+                and config.get("policy", {}).get("decision_engine") == "predictive"):
+            from .autonomous_trial import AutonomousTrial
+            self.auto_trial = AutonomousTrial(self.project_root, config, self.policy)
+            self.experiment.enabled = False  # SL3 compares actual models, not influence on/off.
         if self.experiment.enabled:
             print(
                 f"[实验] 已恢复当前模型的有效批次进度："
@@ -189,6 +195,7 @@ class BotEngine:
         hand = getattr(self.policy, "hand_recognizer", None)
         hand_status = hand.compute_status() if hand is not None and hasattr(hand, "compute_status") else None
         ReplaySync(self.project_root).write_runtime_status({
+            "autonomous_trial": self.auto_trial.status() if getattr(self, "auto_trial", None) else {"phase": "disabled"},
             "prediction": self.policy.prediction_status() if hasattr(self.policy, "prediction_status") else {"selected_engine": "legacy", "actual_engine": "legacy"},
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "hand_matching": hand_status,
@@ -408,9 +415,12 @@ class BotEngine:
                         self.completed_battles,
                         result,
                         event.get("frame"),
+                        trial_runtime=dict(self.auto_trial.counters) if getattr(self, "auto_trial", None) else None,
                     )
                     result_reward_recorded = episode is not None
                     if episode is not None:
+                        if getattr(self, "auto_trial", None) is not None:
+                            self.auto_trial.observe(episode)
                         if self.self_learning is not None:
                             self.self_learning.on_battle_completed(episode)
                         stop_reason = self.experiment.observe(episode)
@@ -536,6 +546,8 @@ class BotEngine:
                     self.replay.policy_metadata.update(
                         self.experiment.activate(self.completed_battles + 1)
                     )
+                    if getattr(self, "auto_trial", None) is not None:
+                        self.replay.policy_metadata.update(self.auto_trial.start_battle())
                     # Each new match must return to the marked offline screen
                     # before the following match can be started.
                     self.offline_verified = False
@@ -593,7 +605,18 @@ class BotEngine:
 
             elif gate is not None and self.offline_verified and not awaiting_battle:
                 self.last_known_at = now
-                if self.self_learning is not None:
+                if getattr(self, "auto_trial", None) is not None:
+                    try:
+                        if self.auto_trial.boundary():
+                            print(f"[自动实测] {self.auto_trial.phase}；重新确认离线大厅")
+                            self.offline_verified = False
+                            self.offline_gate_streak = 0
+                            self.last_known_at = time.monotonic()
+                            continue
+                    except (OSError, ValueError) as exc:
+                        # Ownership/state failures must not start an unaccounted trial battle.
+                        raise DeviceError(f"自动实测状态不可用，已停止：{exc}") from exc
+                if self.self_learning is not None and not (getattr(self, "auto_trial", None) and self.auto_trial.active):
                     try:
                         if self.self_learning.boundary():
                             # Training can take minutes. Never click using the pre-training frame.
@@ -675,6 +698,8 @@ class BotEngine:
         timing["decision_s"] = time.perf_counter() - decision_started
         if hasattr(self.policy, "prediction_status"):
             prediction = self.policy.prediction_status()
+            if getattr(self, "auto_trial", None) is not None:
+                self.auto_trial.decision(prediction)
             plan = prediction.get("plan") or {}
             key = (self.completed_battles, prediction["world"]["revision"], prediction["fallback_count"])
             if key != getattr(self, "_last_prediction_log_key", None):
@@ -1047,5 +1072,7 @@ class BotEngine:
         try:
             self._run_single_marker(package)
         finally:
+            if getattr(self, "auto_trial", None) is not None:
+                self.auto_trial.close()
             if self.frame_stream is not None:
                 self.frame_stream.close()

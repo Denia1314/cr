@@ -284,6 +284,7 @@ class ExperienceReplayRecorder:
         battle_index: int,
         result: BattleResult,
         frame: str | None,
+        *, trial_runtime: dict | None = None,
     ) -> dict[str, Any] | None:
         if not self.enabled:
             return None
@@ -336,6 +337,7 @@ class ExperienceReplayRecorder:
                 ),
                 "eligible_for_training": (
                     verified
+                    and not self.policy_metadata.get("sl3_evaluation_only", False)
                     and self.allow_bot_training
                     and str(
                         transition.get("action", {}).get(
@@ -350,6 +352,7 @@ class ExperienceReplayRecorder:
 
         self.episode_sequence += 1
         episode = {
+            "sl3_runtime": dict(trial_runtime or {}),
             "schema_version": REPLAY_SCHEMA_VERSION,
             "episode_id": f"{self.run_dir.name}-b{battle_index:03d}",
             "timestamp_unix": time.time(),
@@ -366,6 +369,7 @@ class ExperienceReplayRecorder:
             },
             "eligible_for_training": (
                 verified
+                and not self.policy_metadata.get("sl3_evaluation_only", False)
                 and self.allow_bot_training
                 and action_count > 0
                 and confirmed_action_count == action_count
