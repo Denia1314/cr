@@ -85,10 +85,15 @@ def placement_points(sim, state, card_id, side, *, limit=12):
             return total
     else:
         return []
+    if limit is None:
+        from .placement_domain import deployment_domain
+        points = [sim.xy(x,y) for x,y in deployment_domain(sim,state,card_id,side,step=getattr(sim,"placement_grid_step",1.))]
     ranked = []
     seen = set()
     for point in points:
         x, y = screen(*point)
+        if limit is None:
+            x, y = round(x,12), round(y,12)
         key = (round(x, 4), round(y, 4))
         if key in seen or not sim.legal_placement(state, card_id, side, x, y):
             continue
@@ -99,6 +104,8 @@ def placement_points(sim, state, card_id, side, *, limit=12):
     ranked = [(values[i] if values is not None else value(point), point, normalized)
               for i, (_, point, normalized) in enumerate(ranked)]
     ranked.sort(key=lambda r: r[0], reverse=True)
+    if limit is None:
+        return [normalized for _, _, normalized in ranked]
     # Keep alternatives spatially distinct so combat search compares genuinely different defenses.
     selected = []
     for _, point, normalized in ranked:

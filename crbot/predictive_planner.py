@@ -41,6 +41,7 @@ class PredictivePlanner:
         if config.get("gpu_placement", False):
             from .gpu_placement import PlacementBatch
             self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")))
+        self.sim.placement_grid_step = float(config.get("placement_grid_step", 1.))
         self.clock = time.perf_counter
 
     def candidates(self, s: SimState, side: int, *, limit=12) -> list[SimAction]:
@@ -53,10 +54,13 @@ class PredictivePlanner:
             if not self.kb.roster(cid, self.sim.level) and not self.kb.spell(cid, self.sim.level):
                 continue
             positions = max(2,min(24,int(self.config.get('positions_per_card',12))))
-            points = placement_points(self.sim, s, cid, side, limit=positions)
+            points = placement_points(self.sim, s, cid, side,
+                                      limit=None if self.config.get("all_placement_points",False) else positions)
             for x, y in points:
                 result.append(SimAction(cid, slot, x, y))
         # Round-robin by card avoids exhausting the budget on the first hand slot.
+        if limit is None:
+            limit = len(result)
         ordered = [result[0]]
         groups = {}
         for a in result[1:]:
@@ -158,7 +162,7 @@ class PredictivePlanner:
                         observed_velocity=[enemy.observed_vx,enemy.observed_vy], status='hypothesis'))
             # Every legal hand card receives its full spatial shortlist before refinement.
             positions = max(2,min(24,int(self.config.get('positions_per_card',12))))
-            roots = self.candidates(initial, 1, limit=1 + positions * len(initial.hands[1]))
+            roots = self.candidates(initial, 1, limit=None if self.config.get("all_placement_points",False) else 1 + positions * len(initial.hands[1]))
             for slot, cid in initial.hands[1]:
                 card = self.kb.cards.get(cid, {})
                 positions = sum(a.card_id == cid for a in roots)
@@ -166,7 +170,8 @@ class PredictivePlanner:
                           'insufficient_elixir' if card['elixir'] > initial.elixir[1] else
                           'mechanism_or_target_unavailable' if not positions else 'pending')
                 result.hand_evaluations.append(dict(slot=slot, card_id=cid, positions=positions,
-                                                    evaluated=0, status=reason))
+                                                    evaluated=0, status=reason, spatial_scored=positions,
+                                                    full_domain=bool(self.config.get("all_placement_points",False))))
             horizon = max(4, min(15, float(self.config.get("horizon_s", 8))))
             if result.enemy_forecast:
                 horizon=max(horizon,min(24,min(f['unopposed_tower_eta_s'] for f in result.enemy_forecast)+3))
@@ -310,6 +315,13 @@ class PredictivePlanner:
             result.reason = f"完整比较 {len(result.candidates)} 个方案 / 深度 {result.completed_depth} / {horizon:g} 秒；{responses}"
         if getattr(self.sim, "placement_batch", None):
             result.compute = self.sim.placement_batch.status()
+        result.compute["grid_step_tiles"] = self.sim.placement_grid_step
+        result.compute["all_placement_points"] = bool(self.config.get("all_placement_points",False))
+        result.compute["spatial_scored"] = sum(e["spatial_scored"] for e in result.hand_evaluations)
+        result.compute["combat_evaluated"] = sum(e["evaluated"] for e in result.hand_evaluations)
+        result.compute["combat_complete"] = bool(result.hand_evaluations) and all(e["evaluated"] == e["positions"] for e in result.hand_evaluations)
+        if self.config.get("all_placement_points",False):
+            result.reason = f"格点评分 {result.compute['spatial_scored']}；战斗精算 {result.compute['combat_evaluated']}/{result.compute['spatial_scored']}；" + result.reason
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
 
