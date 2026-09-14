@@ -319,6 +319,7 @@ class BotEngine:
             now = time.monotonic()
             screenshot_started = time.perf_counter()
             image = self.device.screenshot()
+            self._last_battle_capture = (image, now)
             self._last_screenshot_elapsed_s = time.perf_counter() - screenshot_started
             self.response_timing.record("screenshot", self._last_screenshot_elapsed_s)
             self.latest_frame = image
@@ -622,6 +623,8 @@ class BotEngine:
             battle_index=self.completed_battles + 1,
         )
         now = time.monotonic()
+        captured = getattr(self, "_last_battle_capture", None)
+        self.policy.prediction_frame_age_s = max(0, now - captured[1]) if captured and captured[0] is image else 0
         cycle_started = time.perf_counter()
         timing: dict[str, float] = {}
         timing["screenshot_s"] = self._last_screenshot_elapsed_s

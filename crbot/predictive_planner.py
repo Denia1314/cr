@@ -89,6 +89,8 @@ class PredictivePlanner:
             if world.at - t.last_seen > 1.5:
                 s.uncertainties.add("occluded_entity")
                 continue
+            if t.hp_fraction == 0:
+                continue
             cid = t.card_id
             if t.hypotheses:
                 index = 0 if health < .75 else (1 if health < .95 else 2)
@@ -135,6 +137,7 @@ class PredictivePlanner:
         return s
 
     def plan(self, world: WorldSnapshot) -> PlanResult:
+        fast = bool(self.config.get("fast_defense", False))
         started = self.clock()
         deadline = started + max(.01, min(2., float(self.config.get("budget_ms", 180)) / 1000))
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
@@ -167,6 +170,11 @@ class PredictivePlanner:
             scenarios = [(world.enemy_elixir[0], .65, False),
                          (max(world.enemy_elixir[0], min(world.enemy_elixir[1], world.enemy_elixir_estimate)), .85, True),
                          (world.enemy_elixir[1], 1., True)]
+            if fast:
+                # Current pressure first; new enemy deployments trigger a fresh plan.
+                scenarios = [(world.enemy_elixir[1], 1., False)]
+                if any(t.hypotheses for t in world.tracks):
+                    scenarios.insert(0, (world.enemy_elixir[0], .65, False))
             coarse_rows = []
             published_round = 0
             initial_scenarios = [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
@@ -213,7 +221,7 @@ class PredictivePlanner:
             result.candidates = coarse_rows
             result.completed_depth = 1
             refined_rows = []
-            for root in roots:
+            for root in ([] if fast else roots):
                 outcomes, branches = [], []
                 for enemy_cost, hp, responds in scenarios:
                     s = self.initial(world, enemy_cost, hp)
@@ -255,8 +263,9 @@ class PredictivePlanner:
                 score = (1-risk) * sum(outcomes) / len(outcomes) + risk * min(outcomes)
                 refined_rows.append({"action": asdict(root), "label": root.label,
                                      "score": round(score, 4), "branches": branches})
-            result.candidates = refined_rows
-            result.completed_depth = 2
+            if not fast:
+                result.candidates = refined_rows
+                result.completed_depth = 2
         except TimeoutError:
             result.budget_exhausted = True
             if not result.candidates:
@@ -267,6 +276,22 @@ class PredictivePlanner:
         if result.candidates:
             result.candidates.sort(key=lambda c: c["score"], reverse=True)
             best = result.candidates[0]
+            if fast:
+                def loss(row):
+                    return max(b["own_tower_damage"] + b.get("imminent_tower_exposure", 0)
+                               for b in row["branches"])
+                waiting = next((c for c in result.candidates if c["action"]["card_id"] is None), None)
+                if waiting is not None:
+                    # Charge for real mitigation, not the residual value of an unnecessary troop.
+                    best_loss = min(map(loss, result.candidates))
+                    tolerance = float(self.config.get("defense_damage_tolerance", 30))
+                    sufficient = [c for c in result.candidates if loss(c) <= best_loss + tolerance]
+                    def expense(row):
+                        cid = row["action"]["card_id"]
+                        return self.kb.cards[cid]["elixir"] if cid else 0
+                    best = min(sufficient, key=lambda c: (expense(c), loss(c), -c["score"]))
+                    result.placement_mode = "fast_defense_cost_and_tower_loss"
+
             for entry in result.hand_evaluations:
                 option=next((c for c in result.candidates if c['action']['card_id']==entry['card_id']),None)
                 if option is not None:

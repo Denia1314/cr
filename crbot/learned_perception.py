@@ -8,6 +8,7 @@ from .battle_perception import LaneThreat
 from .cards import CardCatalog
 from .gpu import vision_device
 from .learning import ModelRegistry
+from .unit_health import read_unit_health
 
 
 class LearnedBattlefieldDetector:
@@ -93,6 +94,7 @@ class LearnedBattlefieldDetector:
                             "card_id": card_id, "x": round(x, 4), "y": round(y, 4),
                             "lane": "left" if x < 0.5 else "right",
                             "confidence": float(confidence),
+                            **read_unit_health(image, bbox, side=1),
                         })
                     continue
                 if not class_name.startswith("enemy__"):
@@ -109,6 +111,7 @@ class LearnedBattlefieldDetector:
                 self.observed_enemies.append({
                     "card_id": card_id, "x": round(center_x, 4), "y": round(center_y, 4),
                     "lane": lane, "confidence": float(confidence),
+                    **read_unit_health(image, bbox, side=-1),
                 })
                 by_lane[lane].append((card_id, center_x, center_y, float(confidence)))
 

@@ -57,8 +57,7 @@ class PredictiveBattlePolicy(BattlePolicy):
 
     def decide(self, current, previous, *, now=None):
         now = time.monotonic() if now is None else now
-        if self.pending_action_id is not None or now < self.next_action_at:
-            return None
+        decision_started = time.perf_counter()
         if self.planner is None or not self.reactive_ready:
             return self._fallback(current, previous, now, self.knowledge_error or "perception_unavailable")
         # Capture observations before either strategy mutates action state.
@@ -101,19 +100,28 @@ class PredictiveBattlePolicy(BattlePolicy):
                                      elixir=elixir, hand=hand, costs=costs,
                                      seconds_per_elixir=float(self.policy.get("seconds_per_elixir", 2.8)) / self._elixir_rate_multiplier,
                                      uncertain=uncertain)
+        if self.pending_action_id is not None or now < self.next_action_at:
+            return None
         if not hand or self.last_hand_image is not current:
             return self._fallback(current, previous, now, "hand_unavailable")
+        frame_age = max(0, float(getattr(self, "prediction_frame_age_s", 0)))
         result = self.planner.plan(snapshot)
+        result.valid_until -= frame_age
         self.last_plan = result.to_dict()
         self.last_plan["perception_mode"] = "exact_cards" if getattr(detector, "last_detection_succeeded", False) and not any(x.startswith("enemy_identity_unknown") for x in uncertain) else "lane_hypotheses"
         if self.decision_engine == "shadow":
             self.last_execution_engine = "legacy_shadow"
             decision = super().decide(current, previous, now=now)
             return replace(decision, decision_engine="legacy_shadow") if decision is not None else None
+        if max(result.elapsed_ms / 1000, time.perf_counter() - decision_started) > result.valid_until - result.observed_at:
+            self.last_plan["fallback_reason"] = "plan_expired_recapture"
+            self.last_execution_engine = "none"
+            return None
+        if result.status == "timeout":
+            self.last_execution_engine = "none"
+            return None
         if result.status not in {"ready", "wait"}:
             return self._fallback(current, previous, now, result.reason)
-        if result.elapsed_ms / 1000 > result.valid_until - result.observed_at:
-            return self._fallback(current, previous, now, "plan_expired")
         self.last_execution_engine = "predictive"
         if result.status == "wait":
             # WAIT never consumes hand/elixir or changes action-confirmation state.

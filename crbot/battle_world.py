@@ -21,6 +21,7 @@ class Track:
     hypotheses: tuple[str, ...] = ()
     vx: float = 0
     vy: float = 0
+    hp_observed_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -97,7 +98,9 @@ class BattleWorld:
                 self.next_id += 1
             claimed.add(t.track_id)
             if d.get("hp_fraction") is not None:
-                t.hp_fraction = min(1, max(0, float(d["hp_fraction"])))
+                hp = float(d["hp_fraction"])
+                if math.isfinite(hp) and 0 <= hp <= 1 and float(d.get("hp_confidence", 1)) >= .8:
+                    t.hp_fraction, t.hp_observed_at = hp, now
             t.variant = str(d.get("variant", "unknown"))
             t.hypotheses = tuple(d.get("hypotheses", ()))
             if side == -1:
@@ -124,6 +127,9 @@ class BattleWorld:
                                             "at": now, "kind": "sighting", "deployment_likelihood": likelihood})
         self.enemy_elixir = low, high
         self.tracks = {k: t for k, t in self.tracks.items() if now - t.last_seen <= 3}
+        for track in self.tracks.values():
+            if track.hp_observed_at is not None and now - track.hp_observed_at > .6:
+                track.hp_fraction = None
         self.events = self.events[-128:]
         recent = tuple(e["card_id"] for e in self.events[-8:] if e["kind"] == "deployment")
         reasons = list(uncertain or [])
@@ -151,4 +157,6 @@ class BattleWorld:
         return {"revision": self.revision, "enemy_elixir_interval": list(self.enemy_elixir),
                 "enemy_elixir_estimate": round(self.enemy_elixir_estimate, 2),
                 "enemy_seen": list(self.enemy_seen), "tracks": len(self.tracks),
-                "recent_events": self.events[-8:]}
+                "recent_events": self.events[-8:],
+                "unit_health": [{"track_id": t.track_id, "side": t.side, "hp_fraction": t.hp_fraction,
+                                 "observed_at": t.hp_observed_at} for t in self.tracks.values()]}

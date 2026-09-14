@@ -347,11 +347,11 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.p.virtual_elixir, before["virtual_elixir"])
         self.assertEqual(self.p.action_sequence, 0)
 
-    def test_timeout_invokes_legacy_and_records_reason(self):
+    def test_timeout_waits_for_fresh_frame_without_legacy_click(self):
         with patch.object(self.p.planner, "plan", return_value=self.result("timeout")), patch.object(BattlePolicy, "decide", return_value=None) as old:
             self.p.decide(self.image, None, now=100)
-        old.assert_called_once()
-        self.assertEqual(self.p.last_execution_engine, "legacy_fallback")
+        old.assert_not_called()
+        self.assertEqual(self.p.last_execution_engine, "none")
 
     def test_unknown_enemy_is_hypothesis_not_a_recognized_card(self):
         self.p.learned_detector.observed_enemies = []
@@ -383,6 +383,31 @@ class RouterTests(unittest.TestCase):
         with patch.object(self.p.planner, "plan") as plan:
             self.assertIsNone(self.p.decide(self.image, None, now=100))
         plan.assert_not_called()
+        self.assertEqual(self.p.world.revision, 1)
+
+    def test_expired_search_never_falls_back_to_old_click(self):
+        result = self.result()
+        result.elapsed_ms = 1100
+        with patch.object(self.p.planner, "plan", return_value=result), patch.object(BattlePolicy, "decide") as old:
+            self.assertIsNone(self.p.decide(self.image, None, now=100))
+        old.assert_not_called()
+        self.assertEqual(self.p.last_plan["fallback_reason"], "plan_expired_recapture")
+
+    def test_capture_age_counts_toward_expiration(self):
+        self.p.prediction_frame_age_s = 1.1
+        with patch.object(self.p.planner, "plan", return_value=self.result()), patch.object(BattlePolicy, "decide") as old:
+            self.assertIsNone(self.p.decide(self.image, None, now=100))
+        old.assert_not_called()
+        self.assertEqual(self.p.last_plan["fallback_reason"], "plan_expired_recapture")
+
+    def test_cooldown_updates_health_without_search_or_spending(self):
+        self.p.next_action_at = 101
+        self.p.learned_detector.observed_enemies[0]["hp_fraction"] = .1
+        with patch.object(self.p.planner, "plan") as plan:
+            self.assertIsNone(self.p.decide(self.image, None, now=100))
+        plan.assert_not_called()
+        self.assertEqual(next(iter(self.p.world.tracks.values())).hp_fraction, .1)
+        self.assertEqual(self.p.action_sequence, 0)
 
     def test_unstable_raw_hand_is_not_used_for_prediction(self):
         self.p.hand_history.stability_frames = 2
