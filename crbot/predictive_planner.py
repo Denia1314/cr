@@ -201,6 +201,12 @@ class PredictivePlanner:
             horizon = max(4, min(15, float(self.config.get("horizon_s", 8))))
             if result.enemy_forecast:
                 horizon=max(horizon,min(24,min(f['unopposed_tower_eta_s'] for f in result.enemy_forecast)+3))
+            urgent = any(f['unopposed_tower_eta_s'] <= 3 for f in result.enemy_forecast)
+            if urgent:
+                # Do not reserve half the budget for optional combinations while
+                # the first defensive comparison is still unfinished.
+                coarse_deadline = deadline
+            result.compute['urgent_tower_defense'] = urgent
             # Same scenarios and same horizon for every root, with conservative lower-tail weighting.
             scenarios = [(world.enemy_elixir[0], .65, False),
                          (max(world.enemy_elixir[0], min(world.enemy_elixir[1], world.enemy_elixir_estimate)), .85, True),
@@ -312,11 +318,15 @@ class PredictivePlanner:
             except TimeoutError:
                 result.budget_exhausted=True
         if result.candidates:
-            baseline_selection = sorted(result.combo_candidates or result.candidates,
+            # An urgent WAIT must stand on the immediate no-play simulation;
+            # a conditional future card is not an executed defensive action.
+            selectable = result.candidates + [r for r in result.combo_candidates
+                if not (urgent and r['action']['card_id'] is None)]
+            baseline_selection = sorted(selectable,
                                         key=lambda c: c["score"], reverse=True)
             self.apply_learning(result, action_scorer, total_deadline)
             result.candidates.sort(key=lambda c: c["score"], reverse=True)
-            selection=sorted(result.combo_candidates or result.candidates,key=lambda c:c["score"],reverse=True)
+            selection=sorted(selectable,key=lambda c:c["score"],reverse=True)
             best = selection[0]
             baseline = baseline_selection[0]
             if fast and result.tactical_phase != 'prepare' and any(e.side == -1 and not e.tower for e in initial.entities):
@@ -446,7 +456,12 @@ class PredictivePlanner:
     def refine_combinations(self,world,result,roots,scenarios,horizon,deadline):
         counts={};shortlist=[]
         per_card=max(1,min(3,int(self.config.get('combo_root_positions',1))))
-        for row in sorted(result.candidates,key=lambda c:c['score'],reverse=True):
+        def priority(row):
+            if result.tactical_phase == 'defend':
+                return (max(-100000*b['own_towers_remaining']+b['own_tower_damage']
+                            +b.get('imminent_tower_exposure',0) for b in row['branches']), -row['score'])
+            return (0, -row['score'])
+        for row in sorted(result.candidates,key=priority):
             cid=row['action']['card_id']
             if counts.get(cid,0)<(per_card if cid else 1):
                 shortlist.append(SimAction(**row['action']));counts[cid]=counts.get(cid,0)+1
