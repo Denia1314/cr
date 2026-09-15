@@ -13,12 +13,13 @@ class Frame:
 
 
 class LatestFrameStream:
-    def __init__(self, capture, interval=.02):
+    def __init__(self, capture, interval=.05):
         self.capture, self.interval = capture, max(.005, interval)
         self.condition, self.stopped = Condition(), Event()
         self.frame = None
         self.error = None
         self.produced = 0
+        self.last_start_interval = None
         self.thread = Thread(target=self._run, name='battle-frame-capture', daemon=True)
 
     def start(self):
@@ -36,10 +37,13 @@ class LatestFrameStream:
                     self.condition.notify_all()
                 return
             with self.condition:
+                if self.frame is not None:
+                    self.last_start_interval = started-self.frame.started
                 self.produced += 1
                 self.frame = Frame(image, started, time.monotonic(), self.produced)
                 self.condition.notify_all()
-            self.stopped.wait(self.interval)
+            # Start-to-start target period, not an extra delay after capture.
+            self.stopped.wait(max(0.,self.interval-(time.monotonic()-started)))
 
     def latest(self):
         with self.condition:
@@ -70,6 +74,9 @@ class LatestFrameStream:
     def status(self):
         f=self.latest()
         return dict(produced=self.produced,queue_capacity=1,
+                    target_interval_s=self.interval,
+                    actual_interval_s=self.last_start_interval,
+                    actual_fps=None if not self.last_start_interval else 1/self.last_start_interval,
                     capture_s=None if f is None else f.finished-f.started,
                     frame_age_s=None if f is None else time.monotonic()-f.started,
                     error=None if self.error is None else str(self.error))

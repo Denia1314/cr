@@ -11,6 +11,20 @@ from crbot.battle_perception import HandCardMatch,LaneThreat
 
 
 class FrameTests(unittest.TestCase):
+    def test_capture_period_subtracts_capture_work_and_never_adds_backlog(self):
+        for duration,expected_wait in ((.1,.15),(.4,0.)):
+            stream=LatestFrameStream(lambda:Image.new('RGB',(2,2)),interval=.25)
+            stop=Mock()
+            stop.is_set.side_effect=[False,False,True]
+            stream.stopped=stop
+            starts=.25 if duration<.25 else duration
+            with patch('crbot.frame_stream.time.monotonic',side_effect=[0.,duration,duration,starts,starts+duration,starts+duration]):
+                stream._run()
+            self.assertAlmostEqual(stop.wait.call_args.args[0],expected_wait)
+            self.assertAlmostEqual(stream.last_start_interval,starts)
+            self.assertEqual(stream.produced,2)
+            self.assertAlmostEqual(stream.status()['actual_fps'],1/starts)
+
     def test_raw_headers_and_truncated_frame(self):
         for extra in (b'',struct.pack('<I',1)):
             data=struct.pack('<III',2,1,1)+extra+bytes([255,0,0,255,0,255,0,255])
@@ -167,3 +181,31 @@ class EngineStreamTests(unittest.TestCase):
         engine._run_single_marker=fail
         with self.assertRaises(DeviceError):engine.run()
         self.assertFalse(engine.frame_stream.thread.is_alive())
+
+
+class DefenseCriticalPathTests(unittest.TestCase):
+    def test_diagnostics_and_sample_encoding_follow_ready_action(self):
+        from crbot.policy import BattleDecision
+        engine = object.__new__(BotEngine)
+        engine.completed_battles = 0
+        engine.previous_battle_frame = None
+        engine._last_screenshot_elapsed_s = .03
+        engine.dry_run = True
+        engine.policy = Mock()
+        engine.policy.observe_replay_state.return_value = dict(allies_observed=False, observed_allies=[])
+        decision = BattleDecision(0,[.1,.9],[.3,.6], 'left','test',5,'vision',0,0)
+        engine.policy.decide.return_value = decision
+        engine.response_timing = Mock()
+        engine.response_timing_summary = Mock(return_value={})
+        engine.recorder = Mock()
+        order = []
+        def execute(*args, **kwargs):
+            order.append('action')
+            return decision, None, None, None, None, None
+        engine._execute_action = execute
+        engine.recorder.record_battle_sample.side_effect = lambda *a, **k: order.append('sample')
+        engine._record_prediction_status = lambda: order.append('diagnostics')
+        with patch('crbot.engine.time.time', return_value=1234):
+            engine._play_battle(Image.new('RGB', (10,10)))
+        self.assertEqual(order, ['action','sample','diagnostics'])
+        self.assertEqual(engine.recorder.record_battle_sample.call_args.kwargs['observed_at_unix'], 1234)

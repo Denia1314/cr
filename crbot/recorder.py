@@ -196,6 +196,7 @@ class TrainingRecorder:
         *,
         battle_index: int,
         observed_at_monotonic: float | None = None,
+        observed_at_unix: float | None = None,
     ) -> SampleRecord | None:
         """Persist an unlabeled battle frame at a controlled sampling rate."""
         if not self.dataset_enabled or self.image_quota_exhausted:
@@ -229,7 +230,7 @@ class TrainingRecorder:
                 f"{self.run_dir.name}-b{max(1, int(battle_index)):03d}"
                 f"-s{self.sample_sequence:06d}"
             ),
-            timestamp_unix=time.time(),
+            timestamp_unix=time.time() if observed_at_unix is None else float(observed_at_unix),
             frame=str(frame_path.relative_to(self.run_dir)).replace("\\", "/"),
             screen_size=stored_frame_size,
             battle_index=max(1, int(battle_index)),

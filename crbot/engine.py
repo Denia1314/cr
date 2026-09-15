@@ -200,7 +200,7 @@ class BotEngine:
             "prediction": self.policy.prediction_status() if hasattr(self.policy, "prediction_status") else {"selected_engine": "legacy", "actual_engine": "legacy"},
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "hand_matching": hand_status,
-            "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
+            "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown"),"ipc_error":getattr(self.device,"capture_ipc_error","")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
             "replay_model": {
                 "loaded_sha256": getattr(replay_model, "loaded_model_sha256", None),
                 "version": ((replay_model.champion or {}).get("version") if replay_model else None),
@@ -339,7 +339,9 @@ class BotEngine:
                 print(f"已达到 max_battles={self.max_battles}，停止。")
                 return
 
+            foreground_started = time.perf_counter()
             foreground = self.device.foreground_package()
+            self.response_timing.record("foreground_check", time.perf_counter() - foreground_started)
             if foreground and foreground != package:
                 print(f"前台应用已离开游戏（{foreground}），为避免误点，停止。")
                 return
@@ -349,6 +351,7 @@ class BotEngine:
             image = self._capture_frame()
             self.response_timing.record("screenshot", self._last_screenshot_elapsed_s)
             self.latest_frame = image
+            ui_started = time.perf_counter()
             matches = self.recognizer.match_all(image)
             gate = self._update_offline_gate(image, matches)
             ui_score = battle_ui_score(image, automation["battle_ui_roi"])
@@ -561,6 +564,7 @@ class BotEngine:
                         {"battle_ui_score": round(ui_score, 4)},
                     )
                     self.replay.start_battle(self.completed_battles + 1)
+                self.response_timing.record("battle_ui_checks", time.perf_counter() - ui_started)
                 self._play_battle(image)
 
             elif self.in_battle:
@@ -675,18 +679,18 @@ class BotEngine:
                     f"未知页面持续超过 {unknown_timeout:.0f} 秒，已安全停止；请重新标定离线标志"
                 )
 
-            if self._sleep(poll_interval):
+            # The latest-frame reader already waits for a new capture in battle.
+            # Keep navigation pacing separate from the battle observation loop.
+            cycle_wait = max(0.,float(self.config["timing"].get("battle_poll_interval_s",0.))) if self.in_battle else poll_interval
+            if self._sleep(cycle_wait):
                 print("[停止] 已收到停止请求，自动训练已安全结束。")
                 return
 
     def _play_battle(self, image: Image.Image) -> None:
-        self.recorder.record_battle_sample(
-            image,
-            battle_index=self.completed_battles + 1,
-        )
         now = time.monotonic()
         captured = getattr(self, "_last_battle_capture", None)
         self.policy.prediction_frame_age_s = max(0, now - captured[1]) if captured and captured[0] is image else 0
+        observed_unix = time.time() - self.policy.prediction_frame_age_s
         cycle_started = time.perf_counter()
         timing: dict[str, float] = {}
         timing["screenshot_s"] = self._last_screenshot_elapsed_s
@@ -699,21 +703,6 @@ class BotEngine:
         decision_started = time.perf_counter()
         decision = self.policy.decide(image, self.previous_battle_frame, now=now)
         timing["decision_s"] = time.perf_counter() - decision_started
-        if hasattr(self.policy, "prediction_status"):
-            prediction = self.policy.prediction_status()
-            if getattr(self, "auto_trial", None) is not None:
-                self.auto_trial.decision(prediction)
-            plan = prediction.get("plan") or {}
-            key = (self.completed_battles, prediction["world"]["revision"], prediction["fallback_count"])
-            if key != getattr(self, "_last_prediction_log_key", None):
-                self._last_prediction_log_key = key
-                self.recorder.record("battle_prediction", None, prediction)
-                print(f"[推演] 执行={prediction['actual_engine']} "
-                      f"感知={plan.get('perception_mode', 'unavailable')} "
-                      f"学习={plan.get('learning', {}).get('reason', 'unavailable')} "
-                      f"改选={plan.get('learning', {}).get('changed_selection', False)} "
-                      f"{plan.get('fallback_reason') or plan.get('reason') or '等待观察'}")
-        self._write_runtime_status()
         self.response_timing.record("perception", timing["perception_s"])
         self.response_timing.record("decision", timing["decision_s"])
         if decision is not None:
@@ -784,6 +773,35 @@ class BotEngine:
                 self.previous_battle_frame = post_image.copy()
         else:
             self.previous_battle_frame = image.copy()
+
+        # Encoding samples, diagnostics and status files must not delay a
+        # defense that is already ready to send. Keep durable action events in
+        # _execute_action, then publish the noncritical per-frame diagnostics.
+        self.recorder.record_battle_sample(
+            image,
+            battle_index=self.completed_battles + 1,
+            observed_at_monotonic=now - self.policy.prediction_frame_age_s,
+            observed_at_unix=observed_unix,
+        )
+        self.response_timing.record("battle_cycle", time.perf_counter() - cycle_started)
+        self._record_prediction_status()
+
+    def _record_prediction_status(self):
+        if hasattr(self.policy, "prediction_status"):
+            prediction = self.policy.prediction_status()
+            if getattr(self, "auto_trial", None) is not None:
+                self.auto_trial.decision(prediction)
+            plan = prediction.get("plan") or {}
+            key = (self.completed_battles, prediction["world"]["revision"], prediction["fallback_count"])
+            if key != getattr(self, "_last_prediction_log_key", None):
+                self._last_prediction_log_key = key
+                self.recorder.record("battle_prediction", None, prediction)
+                print(f"[推演] 执行={prediction['actual_engine']} "
+                      f"感知={plan.get('perception_mode', 'unavailable')} "
+                      f"学习={plan.get('learning', {}).get('reason', 'unavailable')} "
+                      f"改选={plan.get('learning', {}).get('changed_selection', False)} "
+                      f"{plan.get('fallback_reason') or plan.get('reason') or '等待观察'}")
+        self._write_runtime_status()
 
     def _revalidate_prediction(self, image, decision):
         stream=getattr(self,'frame_stream',None)
@@ -1086,7 +1104,8 @@ class BotEngine:
         self.frame_stream=None
         if self.config.get('automation',{}).get('latest_frame_capture',False):
             from .frame_stream import LatestFrameStream
-            self.frame_stream=LatestFrameStream(getattr(self.device,'screenshot_fast',self.device.screenshot)).start()
+            self.frame_stream=LatestFrameStream(getattr(self.device,'screenshot_fast',self.device.screenshot),
+                interval=float(self.config.get('timing',{}).get('capture_interval_s',.05))).start()
         try:
             self._run_single_marker(package)
         finally:
@@ -1094,3 +1113,5 @@ class BotEngine:
                 self.auto_trial.close()
             if self.frame_stream is not None:
                 self.frame_stream.close()
+            if hasattr(self.device,'close_capture'):
+                self.device.close_capture()

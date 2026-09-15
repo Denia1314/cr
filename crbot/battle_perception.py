@@ -196,23 +196,20 @@ def _level_badge_candidates(image: Image.Image) -> list[tuple[float, float, int]
 
     rgb = np.asarray(image.convert("RGB"))
     height, width = rgb.shape[:2]
-    red = rgb[..., 0].astype(np.int16)
-    green = rgb[..., 1].astype(np.int16)
-    blue = rgb[..., 2].astype(np.int16)
-    mask = (
+    # Evaluate color only inside the same playable bounds as the original
+    # full-frame mask. Retain full-size zero padding for identical morphology.
+    top, bottom = round(.20 * height), round(.76 * height)
+    left, right = round(.13 * width), round(.87 * width)
+    arena = rgb[top:bottom, left:right].astype(np.int16)
+    red, green, blue = arena[..., 0], arena[..., 1], arena[..., 2]
+    mask = np.zeros((height, width), dtype=np.uint8)
+    mask[top:bottom, left:right] = (
         (red > 150)
         & (green < 110)
         & (red > green * 1.5)
         & (red > blue * 1.08)
         & ((red - green) > 60)
     ).astype(np.uint8) * 255
-    # Enemy crown-tower level badges are above 0.20. Starting here lets us
-    # observe newly deployed troops on the far side instead of waiting until
-    # they have already crossed the bridge.
-    mask[: round(0.20 * height), :] = 0
-    mask[round(0.76 * height) :, :] = 0
-    mask[:, : round(0.13 * width)] = 0
-    mask[:, round(0.87 * width) :] = 0
     mask[round(0.68 * height) :, round(0.75 * width) :] = 0
     # Princess-tower skins contain red plates and white highlights that look
     # like a level badge.  Troops leaving these areas become visible well

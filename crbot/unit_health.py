@@ -12,7 +12,7 @@ def read_unit_health(image, bbox, side=-1):
     top, bottom = max(0, int(y1*h)-int(.045*h)), min(h, int((y1+.35*(y2-y1))*h))
     if right-left < 12 or bottom-top < 5:
         return {}
-    pixels = np.asarray(image.crop((left, top, right, bottom)).convert("RGB")).astype(int)
+    pixels = np.asarray(image.crop((left, top, right, bottom)).convert("RGB")).astype(np.int16)
     r, g, b = pixels[:,:,0], pixels[:,:,1], pixels[:,:,2]
     colored = ((r >= 200) & (r > g*1.15) & (r > b*.85) if side == -1 else
                (b >= 200) & (b > r*1.2) & (b > g*.9))
@@ -21,8 +21,11 @@ def read_unit_health(image, bbox, side=-1):
     readings = []
     # Require a complete rectangular dark frame and a contiguous colored fill.
     # Do not interpret a disappearing bar as a dead unit.
-    for y in range(1, len(pixels)-3):
-        for start in np.flatnonzero(colored[y] & ~np.roll(colored[y], 1)):
+    starts = colored & ~np.roll(colored, 1, axis=1)
+    # Only rows with a possible fill edge need the exact frame validation.
+    rows = np.flatnonzero(starts.any(axis=1))
+    for y in rows[(rows >= 1) & (rows < len(pixels)-3)]:
+        for start in np.flatnonzero(starts[y]):
             if start < 1 or not (dark[y, start-1] or team[y,start-1]):
                 continue
             end = start
@@ -93,7 +96,7 @@ def detect_unit_health_bars(image, tower_points=()):
     scale = min(1., 720/w)
     small = image.resize((round(w*scale),round(h*scale))) if scale < 1 else image
     sw,sh = small.size
-    rgb = np.asarray(small.convert('RGB')).astype(float)
+    rgb = np.asarray(small.convert('RGB')).astype(np.int16)
     r,g,b = rgb[:,:,0],rgb[:,:,1],rgb[:,:,2]
     results=[]
     for side, mask in ((-1,(r>170)&(r>g*1.15)&(r>b*.85)),(1,(b>170)&(b>r*1.2)&(b>g*.9))):

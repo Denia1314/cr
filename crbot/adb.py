@@ -48,6 +48,9 @@ class MumuDevice:
         self.cli_path = None if self.uses_custom_adb else self._discover_cli()
         self.adb_path = self._discover_adb()
         self.serial: str | None = None
+        self._ipc_enabled = bool(config.get("automation",{}).get("mumu_ipc_capture",False)) and not self.uses_custom_adb
+        self._ipc_capture = None
+        self.capture_ipc_error = ""
 
     @property
     def uses_custom_adb(self) -> bool:
@@ -444,7 +447,29 @@ class MumuDevice:
             raise DeviceError("raw screenshot length mismatch")
         return Image.frombytes('RGB' if channels==3 else 'RGBA',(width,height),raw[header:]).convert('RGB')
 
+    def close_capture(self):
+        capture=getattr(self,'_ipc_capture',None)
+        if capture is not None:
+            self._ipc_capture=None
+            capture.close()
+
     def screenshot_fast(self) -> Image.Image:
+        if getattr(self,'_ipc_enabled',False):
+            try:
+                if self._ipc_capture is None:
+                    from .mumu_capture import MumuCapture
+                    root=self.install_dir or self.cli_path.parent.parent
+                    self._ipc_capture=MumuCapture(root,self.vm_index)
+                image=self._ipc_capture.capture()
+                self.capture_backend='mumu_ipc'
+                return image
+            except (OSError,ValueError,AttributeError) as exc:
+                self.capture_ipc_error=str(exc)
+                self._ipc_enabled=False
+                try:
+                    self.close_capture()
+                except OSError:
+                    pass  # A failed SDK disconnect must not disable ADB fallback.
         if getattr(self,'_raw_capture_disabled',False):
             raw=self.adb(['exec-out','screencap','-p'],timeout=5,binary=True)
             try:

@@ -189,7 +189,7 @@ class PredictiveBattlePolicy(BattlePolicy):
         self.last_execution_engine = "predictive"
         if result.status == "wait":
             # WAIT never consumes hand/elixir or changes action-confirmation state.
-            self.next_action_at = now + min(.4, max(.1, result.action.wait_s))
+            self.next_action_at = now + min(float(self.planning_config.get("wait_recheck_s",.1)), max(.05, result.action.wait_s))
             return None
         action = result.action
         if (action.slot, action.card_id) not in snapshot.hand:

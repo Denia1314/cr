@@ -350,6 +350,14 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.p.virtual_elixir, before["virtual_elixir"])
         self.assertEqual(self.p.action_sequence, 0)
 
+    def test_wait_rechecks_quickly_without_spending_or_action_cooldown(self):
+        result = self.result("wait")
+        result.action = SimAction(wait_s=.4)
+        with patch.object(self.p.planner, "plan", return_value=result):
+            self.assertIsNone(self.p.decide(self.image, None, now=100))
+        self.assertAlmostEqual(self.p.next_action_at, 100.1)
+        self.assertEqual(self.p.action_sequence, 0)
+
     def test_timeout_waits_for_fresh_frame_without_legacy_click(self):
         with patch.object(self.p.planner, "plan", return_value=self.result("timeout")), patch.object(BattlePolicy, "decide", return_value=None) as old:
             self.p.decide(self.image, None, now=100)
