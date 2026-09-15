@@ -8,6 +8,23 @@ def screen(x, y):
     return round(.05 + x * .05,12), round(.18 + y * .02,12)
 
 
+def spatial_rounds(ranked, side):
+    """Visit front, middle and rear before spending the budget on adjacent cells."""
+    groups = {}
+    for row in ranked:
+        depth = row[1][1] if side == 1 else 32-row[1][1]
+        band = 0 if depth < 21 else 1 if depth < 26 else 2
+        groups.setdefault(band, []).append(row)
+    result = []
+    # Preserve heuristic order between bands, and every point within each band.
+    while groups:
+        for band in list(groups):
+            result.append(groups[band].pop(0))
+            if not groups[band]:
+                del groups[band]
+    return result
+
+
 def placement_points(sim, state, card_id, side, *, limit=12):
     card = sim.kb.cards[card_id]
     roster = sim.kb.roster(card_id, sim.level)
@@ -79,10 +96,7 @@ def placement_points(sim, state, card_id, side, *, limit=12):
                     total -= threat * max(0, min(spec.reach, 4)-distance) * .8
                 if not can_hit and not can_pull:
                     total -= threat
-            if not enemies and getattr(sim,'tactical_phase','legacy') in {'develop','counterpush'}:
-                opposing=[t for t in state.entities if t.side != side and t.tower]
-                total-=min((math.dist(p,(t.x,t.y))/max(.5,spec.speed) for t in opposing),default=0)
-            elif not enemies:
+            if not enemies:
                 # Quiet-board development also follows the surviving towers and existing formation.
                 total -= min((math.dist(p, (t.x,t.y-side*2)) for t in towers), default=abs(p[0]-9))*.2
             return total
@@ -107,6 +121,8 @@ def placement_points(sim, state, card_id, side, *, limit=12):
     ranked = [(values[i] if values is not None else value(point), point, normalized)
               for i, (_, point, normalized) in enumerate(ranked)]
     ranked.sort(key=lambda r: r[0], reverse=True)
+    if roster and not spell:
+        ranked = spatial_rounds(ranked, side)
     if limit is None:
         return [normalized for _, _, normalized in ranked]
     # Keep alternatives spatially distinct so combat search compares genuinely different defenses.

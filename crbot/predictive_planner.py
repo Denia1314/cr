@@ -217,7 +217,7 @@ class PredictivePlanner:
                     self.sim.advance(s, horizon - 1.5, deadline=coarse_deadline, clock=self.clock)
                     score, parts = self.sim.evaluate(s)
                     if result.tactical_phase != "legacy":
-                        score=score_action(score,parts,world,self.kb,root,result.tactical_phase,float(self.config.get("attack_reserve",3)))
+                        score=score_action(score,parts,world,self.kb,root,result.tactical_phase,float(self.config.get("attack_reserve",3)),self.sim.geometry)
                     result.nodes += 1
                     outcomes.append(score)
                     branches.append({"enemy_elixir_assumption": enemy_cost, "enemy_response": response.label,
@@ -233,7 +233,8 @@ class PredictivePlanner:
                             entry['status'] = 'complete' if entry['evaluated'] == entry['positions'] else 'partial'
                     active = [e for e in result.hand_evaluations if e['positions']]
                     completed_round = min((e['evaluated'] for e in active if e['evaluated'] < e['positions']), default=positions)
-                    if active and completed_round > published_round:
+                    required_rounds = max((min(3, e['positions']) for e in active), default=1) if self.config.get('all_placement_points',False) else 1
+                    if active and completed_round >= required_rounds and completed_round > published_round:
                         # Commit equal spatial rounds across all usable cards. A timeout cannot
                         # prefer a card simply because its next location happened to finish first.
                         counts = {}
@@ -280,6 +281,9 @@ class PredictivePlanner:
                             continue
                         self.sim.advance(trial, horizon - 3.5, deadline=deadline, clock=self.clock)
                         score, parts = self.sim.evaluate(trial)
+                        if result.tactical_phase != 'legacy':
+                            score = score_action(score, parts, world, self.kb, root, result.tactical_phase,
+                                                 float(self.config.get('attack_reserve',3)), self.sim.geometry)
                         result.nodes += 1
                         if score > best:
                             best, best_parts, follow = score, parts, action
@@ -425,7 +429,7 @@ class PredictivePlanner:
                         self.sim.apply(trial,second_response,-1)
                     self.sim.advance(trial,max(0,horizon-1.5),deadline=deadline,clock=self.clock)
                     score,parts=self.sim.evaluate(trial)
-                    score=score_action(score,parts,world,self.kb,root,result.tactical_phase,float(self.config.get('attack_reserve',3)))
+                    score=score_action(score,parts,world,self.kb,root,result.tactical_phase,float(self.config.get('attack_reserve',3)),self.sim.geometry)
                     spent=sum(float(self.kb.cards[c]['elixir']) for c in (root.card_id,follow.card_id) if c)
                     if result.tactical_phase!='defend':
                         reserve=float(self.config.get('attack_reserve',3))
