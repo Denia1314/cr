@@ -805,7 +805,11 @@ class BotEngine:
         threats=self.policy._perceive_threats(current,image,time.monotonic())
         old=decision.left_threat if decision.lane=='left' else decision.right_threat
         threat=threats[decision.lane]
-        if old >= .17 and threat.score < .05 and threat.unit_count == 0:
+        intent=getattr(decision,'action_intent','reactive')
+        independent_development=intent in {'overflow_development','preparation'}
+        if independent_development and (confidence < .08 or elixir is None or elixir < (9.5 if intent=='overflow_development' else 7)):
+            return current,'development_resource_changed_before_send'
+        if not independent_development and old >= .17 and threat.score < .05 and threat.unit_count == 0:
             return current,'threat_disappeared_before_send'
         return current,None
 

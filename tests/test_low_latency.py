@@ -82,6 +82,21 @@ class RevalidationTests(unittest.TestCase):
         self.engine.policy._perceive_threats=lambda *args:{'left':LaneThreat('left',0,0,0,'none',(),())}
         self.assertEqual(self.check(),'threat_disappeared_before_send')
 
+    def test_full_elixir_development_survives_disappeared_threat(self):
+        self.decision.action_intent='overflow_development'
+        self.engine.policy._perceive_threats=lambda *args:{'left':LaneThreat('left',0,0,0,'none',(),())}
+        self.assertIsNone(self.check(9.9))
+        self.assertEqual(self.check(8),'development_resource_changed_before_send')
+        self.assertEqual(self.check(2),'elixir_changed_before_send')
+        self.decision.card_id='fireball'
+        self.assertEqual(self.check(10),'hand_changed_before_send')
+
+    def test_preparation_keeps_its_separate_resource_threshold(self):
+        self.decision.action_intent='preparation'
+        self.engine.policy._perceive_threats=lambda *args:{'left':LaneThreat('left',0,0,0,'none',(),())}
+        self.assertIsNone(self.check(7))
+        self.assertEqual(self.check(6),'development_resource_changed_before_send')
+
     def test_rejected_recheck_never_reaches_device_taps(self):
         from crbot.policy import BattleDecision
         decision=BattleDecision(0,[.1,.9],[.3,.6],'left','test',5,'vision',0,0,

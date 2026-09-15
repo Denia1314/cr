@@ -220,6 +220,8 @@ class PredictiveBattlePolicy(BattlePolicy):
                               left_unit_count=threats["left"].unit_count, right_unit_count=threats["right"].unit_count,
                               replay_learning_used=bool(result.learning.get("applied")),
                               learned_action_value=dict(self.last_plan["learning"]),
+                              action_intent=('preparation' if result.compute.get('elixir_overflow',{}).get('preparation') else 'overflow_development')
+                                  if result.compute.get('elixir_overflow',{}).get('changed') else 'reactive',
                               decision_engine="predictive", plan_revision=snapshot.revision,
                               plan_valid_until=result.valid_until, knowledge_version=self.planner.kb.version,
                               hand_confidence=self.hand_history.metadata(now).get(str(action.slot), {}).get("confidence", .5),

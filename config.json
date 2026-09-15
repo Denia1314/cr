@@ -40,7 +40,7 @@
     "battle_end_consecutive_frames": 4,
     "post_battle_confirm_interval_s": 0.75,
     "post_battle_timeout_s": 35,
-    "action_confirmation_timeout_s": 1.35,
+    "action_confirmation_timeout_s": 2.2,
     "action_confirmation_poll_interval_s": 0.18,
     "action_confirmation_stable_frames": 2,
     "timing_max_samples": 512

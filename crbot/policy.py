@@ -83,6 +83,7 @@ class BattleDecision:
     plan_valid_until: float = 0.0
     knowledge_version: str = ""
     learned_action_value: dict[str, Any] = field(default_factory=dict)
+    action_intent: str = 'reactive'
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
