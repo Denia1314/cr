@@ -58,6 +58,8 @@ class ElixirOverflowTests(unittest.TestCase):
         planner.clock = lambda: 0.
         snapshot = world(elixir=10, tracks=(Track(1, 'giant', -1, .28, .30, 99, 100, .9, 3),),
                          hand=((0, 'valkyrie'), (1, 'mega_knight'), (2, 'elite_barbarians'), (3, 'ice_golem')))
+        self.addCleanup(patch.stopall)
+        patch('crbot.tactical_objective.phase_for', return_value='defend').start()
         with patch('crbot.tactical_objective.avoid_overflow', side_effect=lambda best, *a: (best, {'changed': False})):
             previous = planner.plan(snapshot)
         self.assertEqual(previous.status, 'wait')

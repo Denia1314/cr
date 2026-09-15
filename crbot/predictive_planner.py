@@ -319,7 +319,7 @@ class PredictivePlanner:
             selection=sorted(result.combo_candidates or result.candidates,key=lambda c:c["score"],reverse=True)
             best = selection[0]
             baseline = baseline_selection[0]
-            if fast and any(e.side == -1 and not e.tower for e in initial.entities):
+            if fast and result.tactical_phase != 'prepare' and any(e.side == -1 and not e.tower for e in initial.entities):
                 def loss(row):
                     return max(100000 * (sum(e.tower and e.side == 1 for e in initial.entities) - b.get("own_towers_remaining", 2))
                                + b["own_tower_damage"] + b.get("imminent_tower_exposure", 0)
@@ -339,10 +339,12 @@ class PredictivePlanner:
                     result.placement_mode = "fast_defense_cost_and_tower_loss"
 
             from .tactical_objective import avoid_overflow
+            preparation = result.tactical_phase == 'prepare' and not any(
+                e.side == 1 and not e.tower and e.hp > 0 for e in initial.entities)
             best, overflow = avoid_overflow(best, result.candidates, world, self.kb,
-                                           float(self.config.get('attack_reserve', 3)))
+                                           float(self.config.get('attack_reserve', 3)), 'score', preparation)
             baseline, _ = avoid_overflow(baseline, result.candidates, world, self.kb,
-                                        float(self.config.get('attack_reserve', 3)), 'simulation_score')
+                                        float(self.config.get('attack_reserve', 3)), 'simulation_score', preparation)
             result.compute['elixir_overflow'] = overflow
             result.learning.update(changed_selection=best["action"] != baseline["action"],
                                    baseline_action=baseline["action"],
@@ -359,7 +361,7 @@ class PredictivePlanner:
             responses = "; ".join(f"敌方 {b['enemy_response']} → 我方 {b['own_followup']}" for b in best["branches"])
             result.reason = f"首步比较 {len(result.candidates)} 个方案 / 深度 {result.completed_depth} / {horizon:g} 秒；{responses}"
             if overflow['changed']:
-                result.reason += '；接近满费，执行安全低费发展'
+                result.reason += '；敌方沉底，提前安全展开' if preparation else '；接近满费，执行安全低费发展'
             if result.combo_candidates:
                 result.reason += f"；条件式后续完整比较 {len(result.combo_candidates)} 个根动作（每牌最佳首步及等待）"
         if getattr(self.sim, "placement_batch", None):
@@ -392,7 +394,7 @@ class PredictivePlanner:
             if not self.sim.apply(state, root, 1):
                 return None
             self.sim.advance(state, 1.5, deadline=deadline, clock=self.clock)
-            response = (self.attack_response(state) if fast and phase in {'develop','counterpush'} and root.card_id
+            response = (self.attack_response(state) if fast and phase in {'develop','counterpush','prepare'} and root.card_id
                         else self.prior_response(state) if responds else SimAction())
             self.sim.apply(state, response, -1)
             self.sim.advance(state, horizon-1.5, deadline=deadline, clock=self.clock)
@@ -475,7 +477,7 @@ class PredictivePlanner:
             state=self.initial(world,enemy_cost,hp)
             if not self.sim.apply(state,root,1):raise ValueError('invalid tactical root')
             self.sim.advance(state,1.5,deadline=deadline,clock=self.clock)
-            response=self.attack_response(state) if phase in {'develop','counterpush'} and root.card_id else SimAction()
+            response=self.attack_response(state) if phase in {'develop','counterpush','prepare'} and root.card_id else SimAction()
             self.sim.apply(state,response,-1)
             # Recompute locations from the actual simulated survivors, health and elixir.
             followups=[SimAction()]
@@ -490,7 +492,7 @@ class PredictivePlanner:
                 trial=state.clone()
                 if not self.sim.apply(trial,follow,1):continue
                 second_response=SimAction()
-                if follow.card_id and phase in {'develop','counterpush'}:
+                if follow.card_id and phase in {'develop','counterpush','prepare'}:
                     second_response=self.attack_response(trial);self.sim.apply(trial,second_response,-1)
                 self.sim.advance(trial,max(0,horizon-1.5),deadline=deadline,clock=self.clock)
                 score,parts=self.sim.evaluate(trial)

@@ -1,20 +1,30 @@
 """Shared attack/defense objective with explicit reserve and response hypotheses."""
 
 def phase_for(state):
-    if any(e.side==-1 and not e.tower and e.hp>0 for e in state.entities):return 'defend'
+    enemies = [e for e in state.entities if e.side == -1 and not e.tower and e.hp > 0]
+    if enemies:
+        # Coordinates are calibrated arena tiles. Only a distant, slow approach
+        # grants preparation time; bridge pressure or ongoing contact is defense.
+        allies = [e for e in state.entities if e.side == 1 and not e.tower and e.hp > 0]
+        distant = all(e.y < 12 and e.spec.speed > 0
+                      and (16-e.y)/max(.1, e.spec.speed) >= 4 for e in enemies)
+        contact = any((e.x-a.x)**2+(e.y-a.y)**2 <= (max(e.spec.reach,a.spec.reach)+2)**2
+                      for e in enemies for a in allies)
+        return 'prepare' if distant and not contact else 'defend'
     if any(e.side==1 and not e.tower and e.hp>0 for e in state.entities):return 'counterpush'
     return 'develop'
 
 
-def avoid_overflow(best, candidates, world, kb, reserve=3., score_key='score'):
+def avoid_overflow(best, candidates, world, kb, reserve=3., score_key='score', preparation=False):
     """Break repeated WAIT near cap using completed, conservative single-card roots.
 
     A receding two-card plan cannot promise that its deferred play will execute.
     Compare immediate roots instead; never fabricate a placement on timeout.
     """
-    diagnostic = dict(active=world.elixir >= 9.5, changed=False,
-                      elixir=world.elixir, reason='below_threshold')
-    if world.elixir < 9.5:
+    threshold = 7. if preparation else 9.5
+    diagnostic = dict(active=world.elixir >= threshold, changed=False,
+                      elixir=world.elixir, threshold=threshold, preparation=preparation, reason='below_threshold')
+    if world.elixir < threshold:
         return best, diagnostic
     diagnostic['reason'] = 'already_playing'
     if best['action']['card_id'] is not None:
@@ -51,7 +61,7 @@ def avoid_overflow(best, candidates, world, kb, reserve=3., score_key='score'):
     if safe:
         best = min(safe, key=lambda r: (kb.cards[r['action']['card_id']]['elixir'],
                                        -r.get(score_key, r['score']), loss(r)))
-        diagnostic.update(changed=True, reason='safe_immediate_development',
+        diagnostic.update(changed=True, reason='safe_preparation' if preparation else 'safe_immediate_development',
                           card_id=best['action']['card_id'])
     return best, diagnostic
 
