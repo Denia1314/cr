@@ -1,5 +1,8 @@
 import copy
 import unittest
+import json
+from pathlib import Path
+from PIL import Image, ImageDraw
 from dataclasses import asdict
 from unittest.mock import patch
 
@@ -7,10 +10,24 @@ from crbot.battle_simulation import SimAction
 from crbot.battle_world import Track
 from crbot.predictive_planner import PredictivePlanner
 from crbot.tactical_objective import avoid_overflow
+from crbot.vision import estimate_elixir
 from tests.test_prediction import knowledge, world
 
 
 class ElixirOverflowTests(unittest.TestCase):
+    def test_calibrated_meter_excludes_side_padding_at_full_and_half(self):
+        vision=json.loads((Path(__file__).resolve().parents[1]/'config.json').read_text(encoding='utf8'))['vision']
+        for fraction, expected in ((1,10),(.5,5)):
+            image=Image.new('RGB',(1080,1920),'black')
+            # Physical strip inside the wider battle-UI region; its left padding
+            # must not be treated as missing elixir.
+            ImageDraw.Draw(image).rectangle((290,1857,290+round(759*fraction)-1,1898),fill=(190,30,210))
+            value, confidence=estimate_elixir(image,vision['elixir_meter_roi'])
+            self.assertAlmostEqual(value,expected,delta=.15)
+            self.assertGreater(confidence,.8)
+            if fraction==1:
+                self.assertLess(estimate_elixir(image,vision['elixir_roi'])[0],9.5)
+
     def setUp(self):
         self.kb = knowledge()
         self.wait = self.row(None, 0)

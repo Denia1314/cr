@@ -68,5 +68,19 @@ class UrgentTowerDefenseTests(unittest.TestCase):
             self.p.refine_combinations(self.w,result,[],[(0,1,False)],8,1)
         self.assertEqual(selected,[self.play])
 
+    def test_nonurgent_search_does_not_timeout_at_half_budget(self):
+        elapsed=[0.];self.p.clock=lambda:elapsed[0]
+        def evaluate(w,a,scenarios,horizon,phase,deadline,*args):
+            elapsed[0]+=.055
+            if elapsed[0]>=deadline:raise TimeoutError()
+            return row(a,0,0 if a.card_id is None else 1)
+        with patch.object(self.p,'candidates',return_value=[self.wait,self.play]), \
+             patch.object(self.p,'evaluate_root',side_effect=evaluate), \
+             patch.object(self.p,'refine_combinations',return_value=[]):
+            result=self.p.plan(world(tracks=(),hand=((0,'knight'),),elixir=10))
+        self.assertFalse(result.compute['urgent_tower_defense'])
+        self.assertEqual(result.status,'ready')
+        self.assertGreater(result.elapsed_ms,80)
+
 
 if __name__=='__main__':unittest.main()

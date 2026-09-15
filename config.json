@@ -157,6 +157,7 @@
     "card_match_prewarm": true,
     "min_probe_score": 0.78,
     "motion_threshold": 0.045,
+    "elixir_meter_roi": [0.268, 0.967, 0.972, 0.989],
     "elixir_roi": [
       0.1,
       0.94,

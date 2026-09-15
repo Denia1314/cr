@@ -799,7 +799,7 @@ class BotEngine:
         match=next((m for m in matches if m.slot_index==decision.slot_index),None)
         if match is None or match.card_id != decision.card_id or match.confidence < float(getattr(self.policy,'policy',{}).get('hand_min_confidence',.4)):
             return current,'hand_changed_before_send'
-        elixir,confidence=estimate_elixir(current,self.config['vision']['elixir_roi'])
+        elixir,confidence=estimate_elixir(current,self.config['vision'].get('elixir_meter_roi',self.config['vision']['elixir_roi']))
         if confidence >= .08 and elixir is not None and elixir < (decision.card_cost or 0):
             return current,'elixir_changed_before_send'
         threats=self.policy._perceive_threats(current,image,time.monotonic())
@@ -857,7 +857,7 @@ class BotEngine:
             )
         else:
             pre_elixir, pre_elixir_confidence = estimate_elixir(
-                image, self.config["vision"]["elixir_roi"]
+                image, self.config["vision"].get("elixir_meter_roi", self.config["vision"]["elixir_roi"])
             )
         if pre_elixir is None or pre_elixir_confidence < 0.08:
             pre_elixir = float(decision.elixir)
@@ -954,7 +954,7 @@ class BotEngine:
                 except Exception:
                     post_matches = None
             post_elixir, post_elixir_confidence = estimate_elixir(
-                post_image, self.config["vision"]["elixir_roi"]
+                post_image, self.config["vision"].get("elixir_meter_roi", self.config["vision"]["elixir_roi"])
             )
             if post_elixir_confidence < 0.08:
                 post_elixir = None

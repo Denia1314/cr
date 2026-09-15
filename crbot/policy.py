@@ -525,7 +525,7 @@ class BattlePolicy:
             and self._last_elixir_estimate_value is not None
         ):
             return self._last_elixir_estimate_value, self._last_elixir_estimate_source
-        visual_elixir, confidence = estimate_elixir(current, self.vision["elixir_roi"])
+        visual_elixir, confidence = estimate_elixir(current, self.vision.get("elixir_meter_roi", self.vision["elixir_roi"]))
         minimum_confidence = float(self.policy.get("elixir_visual_min_confidence", 0.12))
         if visual_elixir is not None and confidence >= minimum_confidence:
             self._last_elixir_visual = float(visual_elixir)

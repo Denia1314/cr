@@ -179,7 +179,8 @@ class PredictivePlanner:
         if action_scorer is not None:
             reserve = max(0., min(.02, float(self.config.get("learning_budget_ms", 8)) / 1000))
             deadline -= min(reserve, (deadline - started) / 4)
-        coarse_deadline=started+(deadline-started)*.5 if fast and self.config.get("unified_tactics",False) else deadline
+        coarse_deadline=deadline
+        refinement_start=started+(deadline-started)*.5
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
                             "unavailable", knowledge_version=self.kb.version)
         if self.sim.grid_navigation:
@@ -266,6 +267,10 @@ class PredictivePlanner:
                         result.candidates = balanced
                         result.completed_depth = 1
                         published_round = completed_round
+                        if fast and self.config.get('unified_tactics',False) and not urgent and self.clock()>=refinement_start:
+                            break
+            if hasattr(rows,'close'):
+                rows.close()
             # Publish only a complete, equally evaluated layer. Refinements remain private until complete.
             result.candidates = coarse_rows
             result.completed_depth = 1
