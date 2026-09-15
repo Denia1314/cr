@@ -90,6 +90,8 @@ class UniversalHandRecognizer:
             self.gpu_matcher.counts(np.zeros((2,32),dtype=np.uint8),float(self.vision.get('card_match_ratio',.78)))
             self.gpu_matcher.warmup_calls=self.gpu_matcher.calls
             self.gpu_matcher.calls=0
+            self.gpu_matcher.slots=0
+            self.gpu_matcher.batches=0
             self.gpu_matcher.warming_up=False
 
     def compute_status(self) -> dict[str, Any]:
@@ -97,6 +99,10 @@ class UniversalHandRecognizer:
             "device": self.gpu_matcher.device if self.gpu_matcher is not None else "not_executed",
             "gpu_match_calls": self.gpu_matcher.calls if self.gpu_matcher is not None else 0,
             "unchanged_slot_cache_hits": getattr(self,"slot_cache_hits",0),
+            "gpu_matched_slots": getattr(self.gpu_matcher, "slots", 0),
+            "gpu_template_batches": getattr(self.gpu_matcher, "batches", 0),
+            "gpu_last_match_ms": round(getattr(self.gpu_matcher, "last_ms", 0.0), 3),
+            "gpu_last_batch_templates": getattr(self.gpu_matcher, "last_batch_templates", 0),
             "warmup_calls": getattr(self.gpu_matcher,"warmup_calls",0),
         }
 
@@ -124,7 +130,8 @@ class UniversalHandRecognizer:
         minimum_good = int(self.vision.get("card_match_min_good", 35))
         minimum_margin = float(self.vision.get("card_match_min_margin", 1.45))
         empty_keypoints = int(self.vision.get("card_empty_max_keypoints", 150))
-        matches: list[HandCardMatch] = []
+        matches = [None] * len(centers)
+        pending = []
         cache=getattr(self,"_slot_cache",{})
         keys=[]
         for slot_index, center in enumerate(centers):
@@ -132,23 +139,26 @@ class UniversalHandRecognizer:
             key=(observed.tobytes(),ratio,minimum_good,minimum_margin,empty_keypoints,id(self.templates),len(self.templates))
             keys.append(key)
             if slot_index in cache and cache[slot_index][0] == key:
-                matches.append(cache[slot_index][1])
+                matches[slot_index] = cache[slot_index][1]
                 self.slot_cache_hits=getattr(self,"slot_cache_hits",0)+1
                 continue
             keypoints, descriptors = self.orb.detectAndCompute(observed, None)
             keypoint_count = len(keypoints)
             if descriptors is None or keypoint_count <= empty_keypoints:
-                matches.append(
-                    HandCardMatch(slot_index, None, 1.0, 0, 0, keypoint_count, True)
-                )
+                matches[slot_index] = HandCardMatch(slot_index, None, 1.0, 0, 0, keypoint_count, True)
                 continue
 
+            pending.append((slot_index, keypoint_count, descriptors))
+
+        if pending:
             if self.gpu_matcher is None:
                 self.gpu_matcher = HandDescriptorMatcher(
                     [reference for _card, reference in self.templates.values()],
                     self.vision.get("card_match_device"),
                 )
-            gpu_counts = self.gpu_matcher.counts(descriptors, ratio)
+            batch_counts = self.gpu_matcher.counts_many([item[2] for item in pending], ratio)
+        for pending_index, (slot_index, keypoint_count, descriptors) in enumerate(pending):
+            gpu_counts = None if batch_counts is None else batch_counts[pending_index]
             best_by_card: dict[str, int] = {}
             for index, (_template_id, (card, reference)) in enumerate(self.templates.items()):
                 if gpu_counts is None:
@@ -166,16 +176,14 @@ class UniversalHandRecognizer:
             strength = min(1.0, best_good / max(1.0, minimum_good * 3.0))
             separation = min(1.0, max(0.0, (margin - 1.0) / 2.0))
             confidence = round(0.65 * strength + 0.35 * separation, 4)
-            matches.append(
-                HandCardMatch(
-                    slot_index=slot_index,
-                    card_id=best_id if accepted else None,
-                    confidence=confidence if accepted else min(0.49, confidence),
-                    good_matches=best_good,
-                    second_good_matches=second_good,
-                    keypoints=keypoint_count,
-                    empty=False,
-                )
+            matches[slot_index] = HandCardMatch(
+                slot_index=slot_index,
+                card_id=best_id if accepted else None,
+                confidence=confidence if accepted else min(0.49, confidence),
+                good_matches=best_good,
+                second_good_matches=second_good,
+                keypoints=keypoint_count,
+                empty=False,
             )
         self._slot_cache={i:(key,matches[i]) for i,key in enumerate(keys)}
         return matches

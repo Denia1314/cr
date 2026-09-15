@@ -112,6 +112,27 @@ class RevalidationTests(unittest.TestCase):
 
 
 class HandCacheTests(unittest.TestCase):
+    def test_changed_slots_share_gpu_submission_and_keep_slot_order(self):
+        import numpy as np
+        from crbot.battle_perception import UniversalHandRecognizer
+        h=object.__new__(UniversalHandRecognizer)
+        h.available=True
+        h.templates={'knight':(SimpleNamespace(card_id='knight'), np.zeros((2,32),dtype=np.uint8))}
+        h.vision={'card_slot_centers':[[0],[1],[2],[3]], 'card_empty_max_keypoints':0}
+        h.orb=SimpleNamespace(detectAndCompute=Mock(return_value=([1,2],np.zeros((2,32),dtype=np.uint8))))
+        h.gpu_matcher=SimpleNamespace(counts_many=Mock(side_effect=lambda queries,ratio:[[50] for q in queries]))
+        h._slot_image=lambda image,center:np.full((2,2),image.getpixel((center[0],0))[0],dtype=np.uint8)
+        image=Image.new('RGB',(4,2))
+        first=h.recognize(image)
+        self.assertEqual([m.slot_index for m in first],[0,1,2,3])
+        self.assertEqual(len(h.gpu_matcher.counts_many.call_args.args[0]),4)
+        self.assertEqual(h.recognize(image.copy()),first)
+        self.assertEqual(h.gpu_matcher.counts_many.call_count,1)
+        image.putpixel((2,0),(255,0,0))
+        self.assertEqual(h.recognize(image),first)
+        self.assertEqual(len(h.gpu_matcher.counts_many.call_args.args[0]),1)
+        self.assertEqual(h.gpu_matcher.counts_many.call_count,2)
+
     def test_exact_slot_cache_invalidates_only_changed_slot(self):
         import numpy as np
         from crbot.battle_perception import UniversalHandRecognizer

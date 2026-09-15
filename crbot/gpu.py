@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import weakref
 from collections import OrderedDict
 from functools import lru_cache
@@ -59,12 +60,28 @@ class HandDescriptorMatcher:
         self.references = references
         self.bank = None
         self.lengths = None
+        self.batches = 0
+        self.slots = 0
+        self.last_ms = 0.0
+        self.last_batch_templates = 0
 
     def counts(self, descriptors, ratio):
+        result = self.counts_many([descriptors], ratio)
+        return None if result is None else result[0]
+
+    def counts_many(self, descriptors, ratio):
+        """Match all changed slots with one upload and one result download.
+
+        Cap distance temporaries at approximately 64 MiB (including matmul
+        intermediates); query chunks also bound unusual large inputs.
+        """
         if self.device == "cpu":
             return None
-        if not self.references:
+        if not descriptors:
             return []
+        if not self.references:
+            return [[] for _ in descriptors]
+        started = time.perf_counter()
         import torch
         with torch.inference_mode():
             if self.bank is None:
@@ -77,23 +94,37 @@ class HandDescriptorMatcher:
                     bank[i, :len(reference)] = np.unpackbits(reference, axis=1).astype(np.float16) * 2 - 1
                 self.bank = torch.as_tensor(bank, device=self.device)
                 self.lengths = torch.as_tensor(lengths, device=self.device)
-            signs = np.unpackbits(descriptors, axis=1).astype(np.float16) * 2 - 1
+            sizes = [len(d) for d in descriptors]
+            joined = np.concatenate(descriptors, axis=0)
+            signs = np.unpackbits(joined, axis=1).astype(np.float16) * 2 - 1
             query = torch.as_tensor(signs, device=self.device)
-            counts = []
             columns = torch.arange(self.bank.shape[1], device=self.device)
-            # Eight templates per batch bounds the temporary distance matrix.
-            for start in range(0, len(self.references), 8):
-                bank = self.bank[start:start + 8]
-                distances = (query.shape[1] - torch.matmul(query, bank.transpose(1, 2))) * 0.5
-                padding = columns[None, :] >= self.lengths[start:start + 8, None]
-                distances.masked_fill_(padding[:, None, :], float("inf"))
-                nearest = distances.topk(2, dim=-1, largest=False).values.to(torch.float64)
-                counts.append((nearest[..., 0] < ratio * nearest[..., 1]).sum(dim=1))
-            result = torch.cat(counts).cpu().tolist()
+            result = torch.zeros((len(sizes), len(self.references)), dtype=torch.int64, device=self.device)
+            offsets = np.cumsum([0, *sizes])
+            for qstart in range(0, len(joined), 2048):
+                q = query[qstart:qstart + 2048]
+                batch = max(1, min(len(self.references), 64 * 1024 * 1024 // (max(1, len(q)) * self.bank.shape[1] * 8)))
+                self.last_batch_templates = batch
+                for start in range(0, len(self.references), batch):
+                    bank = self.bank[start:start + batch]
+                    distances = (q.shape[1] - torch.matmul(q, bank.transpose(1, 2))) * 0.5
+                    padding = columns[None, :] >= self.lengths[start:start + batch, None]
+                    distances.masked_fill_(padding[:, None, :], float("inf"))
+                    nearest = distances.topk(2, dim=-1, largest=False).values.to(torch.float64)
+                    good = nearest[..., 0] < ratio * nearest[..., 1]
+                    for slot, (lo, hi) in enumerate(zip(offsets[:-1], offsets[1:])):
+                        left, right = max(0, int(lo) - qstart), min(len(q), int(hi) - qstart)
+                        if left < right:
+                            result[slot, start:start + batch] += good[:, left:right].sum(dim=1)
+                    self.batches += 1
+            result = result.cpu().tolist()
             self.calls += 1
+            self.slots += len(sizes)
+            self.last_ms = (time.perf_counter() - started) * 1000
             if self.calls == 1 and not getattr(self,"warming_up",False):
-                print(f"[GPU] 手牌匹配已实际使用 {self.device}；模板={len(result)}")
+                print(f"[GPU] Batched hand matching: {self.device}; templates={len(self.references)}; slots={len(sizes)}")
             return result
+
 
 
 def _tensor(array, device):

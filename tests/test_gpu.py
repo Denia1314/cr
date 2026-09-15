@@ -72,6 +72,23 @@ class CudaParityTests(unittest.TestCase):
             self.assertEqual(matcher.counts(query, ratio), expected)
         self.assertEqual(matcher.calls, 3)
 
+    def test_multi_slot_counts_preserve_boundaries_and_chunk_results(self):
+        import cv2
+        rng = np.random.default_rng(91)
+        references = [rng.integers(0, 256, (n, 32), dtype=np.uint8) for n in (2, 29, 57)]
+        queries = [np.empty((0, 32), dtype=np.uint8), references[1][:19],
+                   np.tile(references[2], (37, 1)), references[2][:47]]
+        matcher = gpu.HandDescriptorMatcher(references, "cuda:0")
+        expected = [[sum(a.distance < .78 * b.distance for a, b in
+                         cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(q, r, k=2))
+                     for r in references] if len(q) else [0] * len(references) for q in queries]
+        self.assertEqual(matcher.counts_many(queries, .78), expected)
+        self.assertEqual(matcher.calls, 1)
+        self.assertEqual(matcher.slots, 4)
+        self.assertGreater(matcher.batches, 1)
+        self.assertEqual(matcher.counts_many([], .78), [])
+        self.assertIsNone(gpu.HandDescriptorMatcher([], "cpu").counts_many(queries, .78))
+
     def test_hand_match_cpu_fallback_is_explicit(self):
         matcher = gpu.HandDescriptorMatcher([], "cpu")
         self.assertIsNone(matcher.counts(None, 0.78))
