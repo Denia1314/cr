@@ -103,6 +103,25 @@ class PredictiveBattlePolicy(BattlePolicy):
                 uncertain.append("enemy_identity_unknown:" + lane)
                 if not layers or layers == {"ground", "air"}:
                     uncertain.append("enemy_layer_unknown:" + lane)
+        bars = []
+        if self.planning_config.get('unit_health_observation', True):
+            from .unit_health import detect_unit_health_bars
+            bars = detect_unit_health_bars(current, self.planner.sim.geometry.tower_points)
+            claimed = set()
+            for bar in bars:
+                candidates = [(math.hypot(d['x']-bar['x'],d['y']-bar['y']),i)
+                              for i,d in enumerate(detections) if i not in claimed and d['side']==bar['side']]
+                candidates.sort()
+                if candidates and candidates[0][0] <= .065 and (len(candidates)==1 or candidates[1][0]-candidates[0][0]>.015):
+                    index=candidates[0][1];claimed.add(index)
+                    if detections[index].get('hp_fraction') is None:
+                        detections[index].update({k:v for k,v in bar.items() if k.startswith('hp_')})
+                elif not candidates or candidates[0][0] > .065:
+                    lane='left' if bar['x']<.5 else 'right'
+                    hypotheses=('knight','minions','balloon') if bar['side']==-1 else ()
+                    detections.append(dict(bar,card_id=f"unknown:{lane}:health",confidence=.8,hypotheses=hypotheses))
+                    claimed.add(len(detections)-1)
+                    uncertain.append(('enemy' if bar['side']==-1 else 'ally')+'_identity_unknown:'+lane)
         matches = (self.hand_history.matches_for_decision(self.last_hand_matches, now)
                    if self.temporal_perception_enabled else self.last_hand_matches)
         hand = [(m.slot_index, m.card_id) for m in matches
@@ -134,6 +153,10 @@ class PredictiveBattlePolicy(BattlePolicy):
         result = self.planner.plan(snapshot, action_scorer=scorer, learning_status=learning)
         result.valid_until -= frame_age
         self.last_plan = result.to_dict()
+        self.last_plan['visible_health_bars'] = bars
+        self.last_plan['unit_health'] = [dict(track_id=t.track_id,card_id=t.card_id,side=t.side,
+            fraction=t.hp_fraction,observed_at=t.hp_observed_at,confidence=t.hp_confidence,
+            identity_known=not t.card_id.startswith('unknown:')) for t in snapshot.tracks]
         self.last_plan["frame_age_before_perception_s"] = round(frame_age, 4)
         self.last_plan["perception_mode"] = "exact_cards" if getattr(detector, "last_detection_succeeded", False) and not any(x.startswith("enemy_identity_unknown") for x in uncertain) else "lane_hypotheses"
         if self.decision_engine == "shadow":

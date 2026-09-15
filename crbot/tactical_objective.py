@@ -23,8 +23,10 @@ def score_action(score,parts,world,kb,action,phase,reserve=3.,geometry=None):
             tower = kb.unit('PrincessTower')
             reach = tower.reach if tower else 0.
             forward = min(1., max(0., (ty-py-reach*.5)/max(1., ty-16.-reach*.5)))
-            supported = any(t.side == 1 and not t.hypotheses and t.confidence >= .8
-                            and t.hp_fraction != 0 and world.at-t.last_seen <= .6
+            supported = any(t.side == 1 and not t.hypotheses and not t.card_id.startswith('unknown:') and t.confidence >= .8
+                            and t.hp_fraction is not None and t.hp_fraction >= .35
+                            and t.hp_observed_at is not None and world.at-t.hp_observed_at <= .6
+                            and world.at-t.last_seen <= .6
                             and abs(geometry.xy(t.x,t.y)[0]-px) <= 3
                             and 0 <= py-geometry.xy(t.x,t.y)[1] <= 5
                             for t in world.tracks)

@@ -50,7 +50,7 @@ class BridgeBiasTests(unittest.TestCase):
             self.assertGreater(rear, bridge)
             self.assertGreater(penalty, rear_penalty)
             x,y = geometry.screen(4,16)
-            ally = Track(2,'knight',1,x,y,99,100,.9,3)
+            ally = Track(2,'knight',1,x,y,99,100,.9,3,hp_fraction=.8,hp_observed_at=100,hp_confidence=.85)
             supported, _ = score(17, replace(snapshot, tracks=(ally,)))
             self.assertGreater(supported, bridge)
             stale, _ = score(17, replace(snapshot, tracks=(replace(ally,last_seen=98),)))

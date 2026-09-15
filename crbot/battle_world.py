@@ -22,6 +22,7 @@ class Track:
     vx: float = 0
     vy: float = 0
     hp_observed_at: float | None = None
+    hp_confidence: float = 0.
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ class BattleWorld:
                 hp = float(d["hp_fraction"])
                 if math.isfinite(hp) and 0 <= hp <= 1 and float(d.get("hp_confidence", 1)) >= .8:
                     t.hp_fraction, t.hp_observed_at = hp, now
+                    t.hp_confidence = float(d.get('hp_confidence',1))
             t.variant = str(d.get("variant", "unknown"))
             t.hypotheses = tuple(d.get("hypotheses", ()))
             if side == -1:
@@ -133,6 +135,7 @@ class BattleWorld:
         for track in self.tracks.values():
             if track.hp_observed_at is not None and now - track.hp_observed_at > .6:
                 track.hp_fraction = None
+                track.hp_confidence = 0.
         self.events = self.events[-128:]
         recent = tuple(e["card_id"] for e in self.events[-8:] if e["kind"] == "deployment")
         reasons = list(uncertain or [])

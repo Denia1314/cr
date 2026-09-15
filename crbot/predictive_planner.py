@@ -123,7 +123,8 @@ class PredictivePlanner:
             delay=min(.75,max(0,world.observation_delay_s))
             x, y = self.sim.xy(t.x+t.vx*delay,t.y+t.vy*delay)
             x,y=max(0,min(18,x)),max(0,min(32,y))
-            fraction = t.hp_fraction if t.hp_fraction is not None else (health if t.side == -1 else .7)
+            observed_hp = t.hp_fraction if t.hp_observed_at is None or world.at-t.hp_observed_at <= .6 else None
+            fraction = observed_hp if observed_hp is not None else (health if t.side == -1 else max(.25,1.35-health))
             card = self.kb.cards[cid]
             entity = self.sim.add(s, spec, t.side, x, y, hp_fraction=fraction,
                                  value=float(card.get("elixir") or 0) / max(1, sum(n for _, n in roster)))
@@ -166,7 +167,7 @@ class PredictivePlanner:
         if action_scorer is not None:
             reserve = max(0., min(.02, float(self.config.get("learning_budget_ms", 8)) / 1000))
             deadline -= min(reserve, (deadline - started) / 4)
-        coarse_deadline=started+(deadline-started)*.65 if fast and self.config.get("unified_tactics",False) else deadline
+        coarse_deadline=started+(deadline-started)*.5 if fast and self.config.get("unified_tactics",False) else deadline
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
                             "unavailable", knowledge_version=self.kb.version)
         result.learning = {**(learning_status or {}), "applied": False,
@@ -354,7 +355,7 @@ class PredictivePlanner:
             if result.combo_candidates:
                 result.reason += f"；条件式后续完整比较 {len(result.combo_candidates)} 个根动作（每牌最佳首步及等待）"
         if getattr(self.sim, "placement_batch", None):
-            result.compute = self.sim.placement_batch.status()
+            result.compute.update(self.sim.placement_batch.status())
         if self.combat_pool is not None:
             result.compute["parallel_combat"] = self.combat_pool.status()
             result.compute["parallel_combat"]['last_mode'] = combat_mode
@@ -433,52 +434,83 @@ class PredictivePlanner:
                                compared_rows=len(rows), reason="applied" if updates else "insufficient_support")
 
     def refine_combinations(self,world,result,roots,scenarios,horizon,deadline):
-        from .tactical_objective import score_action
-        shortlist=[];seen=set()
+        counts={};shortlist=[]
+        per_card=max(1,min(3,int(self.config.get('combo_root_positions',1))))
         for row in sorted(result.candidates,key=lambda c:c['score'],reverse=True):
             cid=row['action']['card_id']
-            if cid not in seen:shortlist.append(row);seen.add(cid)
-        completed=[]
-        for row in shortlist:
-            root=SimAction(**row['action']);outcomes=[];branches=[];costs=[]
-            for enemy_cost,hp,_ in scenarios:
+            if counts.get(cid,0)<(per_card if cid else 1):
+                shortlist.append(SimAction(**row['action']));counts[cid]=counts.get(cid,0)+1
+        result.compute['combination_search']=dict(root_positions=len(shortlist),complete=False,
+            followup_positions_per_card=max(1,min(4,int(self.config.get('combo_positions_per_card',2)))))
+        if self.combat_pool is not None and self.combat_pool.available:
+            from concurrent.futures import wait
+            wait(self.combat_pool.pending,timeout=min(.01,max(0,deadline-self.clock())))
+            if all(f.done() for f in self.combat_pool.pending):
+                result.compute['combination_search']['mode']='parallel'
+                rows=list(self.combat_pool.rows(world,shortlist,scenarios,horizon,result.tactical_phase,deadline,kind='combo'))
+            else:
+                raise TimeoutError()
+        else:
+            result.compute['combination_search']['mode']='serial'
+            rows=[self.evaluate_combination(world,root,scenarios,horizon,result.tactical_phase,deadline) for root in shortlist]
+        result.nodes += sum(row.pop('simulation_nodes',0) for row in rows)
+        result.compute['combination_search']['complete']=True
+        return rows
+
+    def evaluate_combination(self,world,root,scenarios,horizon,phase,deadline):
+        from .tactical_objective import score_action
+        self.sim.tactical_phase=phase
+        outcomes=[];branches=[];costs=[];nodes=0
+        positions=max(1,min(4,int(self.config.get('combo_positions_per_card',2))))
+        for enemy_cost,hp,_ in scenarios:
+            if self.clock()>=deadline:raise TimeoutError()
+            state=self.initial(world,enemy_cost,hp)
+            if not self.sim.apply(state,root,1):raise ValueError('invalid tactical root')
+            self.sim.advance(state,1.5,deadline=deadline,clock=self.clock)
+            response=self.attack_response(state) if phase in {'develop','counterpush'} and root.card_id else SimAction()
+            self.sim.apply(state,response,-1)
+            # Recompute locations from the actual simulated survivors, health and elixir.
+            followups=[SimAction()]
+            for slot,cid in state.hands[1]:
+                cost=self.kb.cards[cid].get('elixir')
+                if cost is None or cost>state.elixir[1]:continue
+                for x,y in placement_points(self.sim,state,cid,1,limit=positions):
+                    followups.append(SimAction(cid,slot,x,y))
+            best=None; alternatives=[]
+            for follow in followups:
                 if self.clock()>=deadline:raise TimeoutError()
-                state=self.initial(world,enemy_cost,hp)
-                if not self.sim.apply(state,root,1):raise ValueError('invalid tactical root')
-                self.sim.advance(state,1.5,deadline=deadline,clock=self.clock)
-                response=self.attack_response(state) if result.tactical_phase in {'develop','counterpush'} and root.card_id else SimAction()
-                self.sim.apply(state,response,-1)
-                followups=[SimAction()];cards=set()
-                for action in roots:
-                    if action.card_id and action.card_id not in cards and (action.slot,action.card_id) in state.hands[1]:
-                        if self.sim.legal_placement(state,action.card_id,1,action.x,action.y):
-                            followups.append(action);cards.add(action.card_id)
-                best=None
-                for follow in followups:
-                    trial=state.clone()
-                    if not self.sim.apply(trial,follow,1):continue
-                    second_response=SimAction()
-                    if follow.card_id and result.tactical_phase in {'develop','counterpush'}:
-                        second_response=self.attack_response(trial)
-                        self.sim.apply(trial,second_response,-1)
-                    self.sim.advance(trial,max(0,horizon-1.5),deadline=deadline,clock=self.clock)
-                    score,parts=self.sim.evaluate(trial)
-                    score=score_action(score,parts,world,self.kb,root,result.tactical_phase,float(self.config.get('attack_reserve',3)),self.sim.geometry)
-                    spent=sum(float(self.kb.cards[c]['elixir']) for c in (root.card_id,follow.card_id) if c)
-                    if result.tactical_phase!='defend':
-                        reserve=float(self.config.get('attack_reserve',3))
-                        root_cost=float(self.kb.cards[root.card_id]['elixir']) if root.card_id else 0
-                        score-=(max(0,reserve-world.elixir+spent)-max(0,reserve-world.elixir+root_cost))*1.5
-                    if best is None or score>best[0]:best=(score,parts,follow,spent,second_response)
-                    result.nodes+=1
-                score,parts,follow,spent,second_response=best
-                outcomes.append(score);costs.append(spent)
-                branches.append(dict(enemy_elixir_assumption=enemy_cost,enemy_response=response.label,
-                    own_followup=follow.label,followup_after_s=1.5,enemy_followup_response=second_response.label,score=round(score,4),**parts))
-            risk=float(self.config.get('downside_weight',.65))
-            completed.append(dict(action=asdict(root),label=root.label,score=round((1-risk)*sum(outcomes)/len(outcomes)+risk*min(outcomes),4),
-                                  branches=branches,planned_cost=max(costs),scope='best_root_per_card_conditional_followup'))
-        return completed
+                trial=state.clone()
+                if not self.sim.apply(trial,follow,1):continue
+                second_response=SimAction()
+                if follow.card_id and phase in {'develop','counterpush'}:
+                    second_response=self.attack_response(trial);self.sim.apply(trial,second_response,-1)
+                self.sim.advance(trial,max(0,horizon-1.5),deadline=deadline,clock=self.clock)
+                score,parts=self.sim.evaluate(trial)
+                score=score_action(score,parts,world,self.kb,root,phase,float(self.config.get('attack_reserve',3)),self.sim.geometry)
+                spent=sum(float(self.kb.cards[c]['elixir']) for c in (root.card_id,follow.card_id) if c)
+                if phase!='defend':
+                    reserve=float(self.config.get('attack_reserve',3))
+                    root_cost=float(self.kb.cards[root.card_id]['elixir']) if root.card_id else 0
+                    score-=(max(0,reserve-world.elixir+spent)-max(0,reserve-world.elixir+root_cost))*1.5
+                if best is None or score>best[0]:best=(score,parts,follow,spent,second_response)
+                alternatives.append((score,parts,follow,spent,second_response))
+                nodes+=1
+            if phase=='defend':
+                towers=sum(e.side==1 and e.tower for e in state.entities)
+                def damage(option):
+                    parts=option[1]
+                    return 100000*(towers-parts['own_towers_remaining'])+parts['own_tower_damage']+parts.get('imminent_tower_exposure',0)
+                least=min(map(damage,alternatives))
+                tolerance=float(self.config.get('defense_damage_tolerance',30))
+                best=min((option for option in alternatives if damage(option)<=least+tolerance),key=lambda option:(option[3],damage(option),-option[0]))
+            score,parts,follow,spent,second_response=best
+            outcomes.append(score);costs.append(spent)
+            branches.append(dict(enemy_elixir_assumption=enemy_cost,enemy_response=response.label,
+                own_followup=follow.label,followup_action=asdict(follow),followup_after_s=1.5,
+                followup_candidates=len(followups),enemy_followup_response=second_response.label,score=round(score,4),**parts))
+        risk=float(self.config.get('downside_weight',.65))
+        return dict(action=asdict(root),label=root.label,score=round((1-risk)*sum(outcomes)/len(outcomes)+risk*min(outcomes),4),
+                    branches=branches,planned_cost=max(costs),simulation_nodes=nodes,scope='conditional_two_card_dynamic_positions')
 
     def attack_response(self,s):
         targets=[e for e in s.entities if e.side==1 and not e.tower]

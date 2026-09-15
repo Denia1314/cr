@@ -33,14 +33,15 @@ def warm():
     return os.getpid()
 
 
-def evaluate_batch(revision, world, roots, scenarios, horizon, phase, deadline):
+def evaluate_batch(revision, world, roots, scenarios, horizon, phase, deadline, kind='root'):
     rows = []
     states = None
     if time.perf_counter() < deadline:
         states = [_planner.initial(world, cost, hp) for cost, hp, _ in scenarios]
     for root in roots:
         try:
-            rows.append(_planner.evaluate_root(world, root, scenarios, horizon, phase, deadline, states))
+            rows.append(_planner.evaluate_combination(world, root, scenarios, horizon, phase, deadline) if kind=='combo'
+                        else _planner.evaluate_root(world, root, scenarios, horizon, phase, deadline, states))
         except TimeoutError:
             return revision, rows, False, os.getpid()
     return revision, rows, True, os.getpid()
@@ -57,6 +58,7 @@ class CombatPool:
         self.executing_pids = set()
         self.logged = False
         self.completed = 0
+        self.completed_combinations = 0
         self.calls = 0
         self.timeouts = 0
         self.max_pending = 0
@@ -78,7 +80,7 @@ class CombatPool:
     def available(self):
         return self.executor is not None and not self.error
 
-    def rows(self, world, roots, scenarios, horizon, phase, deadline):
+    def rows(self, world, roots, scenarios, horizon, phase, deadline, kind='root'):
         self.calls += 1
         if any(not future.done() for future in self.pending):
             # Never queue a new frame behind obsolete work.
@@ -92,9 +94,9 @@ class CombatPool:
                 while offset < len(roots) and len(queue) < self.workers:
                     if time.perf_counter() >= deadline:
                         raise TimeoutError()
-                    batch = roots[offset:offset+self.batch_size]
+                    batch = roots[offset:offset+(1 if kind=='combo' else self.batch_size)]
                     offset += len(batch)
-                    future = self.executor.submit(evaluate_batch, world.revision, world, batch, scenarios, horizon, phase, deadline)
+                    future = self.executor.submit(evaluate_batch, world.revision, world, batch, scenarios, horizon, phase, deadline, kind)
                     queue.append(future)
                     self.pending.append(future)
                     self.max_pending = max(self.max_pending, len(queue))
@@ -105,7 +107,8 @@ class CombatPool:
                     raise ValueError('worker returned another observation revision')
                 self.pids.add(pid)
                 self.executing_pids.add(pid)
-                self.completed += sum(row is not None for row in rows)
+                if kind=='combo':self.completed_combinations += sum(row is not None for row in rows)
+                else:self.completed += sum(row is not None for row in rows)
                 if len(self.executing_pids) > 1 and not self.logged:
                     print(f'[并行推演] 已由 {len(self.executing_pids)} 个 CPU 工作进程返回详细战斗结果。')
                     self.logged = True
@@ -128,7 +131,8 @@ class CombatPool:
         return dict(enabled=True, available=self.available, workers=self.workers, batch_size=self.batch_size,
                     worker_pids=sorted(self.executing_pids), warmed_pids=sorted(self.pids), calls=self.calls, completed_roots=self.completed,
                     deadline_exits=self.timeouts, max_pending_batches=self.max_pending, error=self.error,
-                    scope='coarse_detailed_combat', refinement_device='parent_cpu')
+                    completed_combinations=self.completed_combinations,
+                    scope='coarse_and_two_card_detailed_combat', refinement_device='cpu_pool_when_available')
 
     def close(self):
         if self.executor is not None:

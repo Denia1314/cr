@@ -64,10 +64,11 @@ class BattleLabTests(unittest.TestCase):
         self.assertTrue(high.combo_candidates)
         self.assertEqual(high.completed_depth,2)
         for candidate in high.combo_candidates:
-            self.assertEqual(candidate['scope'],'best_root_per_card_conditional_followup')
+            self.assertEqual(candidate['scope'],'conditional_two_card_dynamic_positions')
             for branch in candidate['branches']:
                 self.assertEqual(branch['followup_after_s'],1.5)
                 self.assertIn('enemy_followup_response',branch)
+                self.assertIn('followup_action',branch)
         self.assertLessEqual(self.kb.cards[high.action.card_id]['elixir'],7)
 
     def test_trajectory_report_requires_future_matching_observation(self):

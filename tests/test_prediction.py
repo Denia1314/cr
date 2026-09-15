@@ -369,6 +369,19 @@ class RouterTests(unittest.TestCase):
         self.assertTrue(any(spec.air for spec in specs))
         self.assertTrue(any(not spec.air for spec in specs))
 
+    def test_team_health_without_card_identity_is_recorded_without_inventing_allied_strength(self):
+        self.p.learned_detector.observed_enemies=[]
+        bars=[dict(side=-1,x=.28,y=.5,hp_fraction=.25,hp_confidence=.85),
+              dict(side=1,x=.72,y=.65,hp_fraction=.8,hp_confidence=.85)]
+        with patch('crbot.unit_health.detect_unit_health_bars',return_value=bars), patch.object(self.p.planner,'plan',return_value=self.result()) as plan:
+            self.p.decide(self.image,None,now=100)
+        snapshot=plan.call_args.args[0]
+        self.assertEqual(next(t for t in snapshot.tracks if t.side==-1).hp_fraction,.25)
+        self.assertEqual(next(t for t in snapshot.tracks if t.side==1).hp_fraction,.8)
+        initial=self.p.planner.initial(snapshot,5,1)
+        self.assertFalse(any(e.side==1 and not e.tower for e in initial.entities))
+        self.assertEqual(len(self.p.last_plan['visible_health_bars']),2)
+
     def test_known_ground_unit_does_not_hide_unidentified_same_lane_enemy(self):
         threats = {lane: LaneThreat(lane, 0, 0, 0, "none", ()) for lane in ("left", "right")}
         threats["left"] = LaneThreat("left", .8, 2, .65, "heavy", ((.28, .5), (.28, .65)))
