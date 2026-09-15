@@ -338,6 +338,12 @@ class PredictivePlanner:
                                    key=lambda c: (expense(c), loss(c), -c.get("simulation_score", c["score"])))
                     result.placement_mode = "fast_defense_cost_and_tower_loss"
 
+            from .tactical_objective import avoid_overflow
+            best, overflow = avoid_overflow(best, result.candidates, world, self.kb,
+                                           float(self.config.get('attack_reserve', 3)))
+            baseline, _ = avoid_overflow(baseline, result.candidates, world, self.kb,
+                                        float(self.config.get('attack_reserve', 3)), 'simulation_score')
+            result.compute['elixir_overflow'] = overflow
             result.learning.update(changed_selection=best["action"] != baseline["action"],
                                    baseline_action=baseline["action"],
                                    selected_action_supported="learned_value" in best)
@@ -352,6 +358,8 @@ class PredictivePlanner:
             result.status = "wait" if result.action.card_id is None else "ready"
             responses = "; ".join(f"敌方 {b['enemy_response']} → 我方 {b['own_followup']}" for b in best["branches"])
             result.reason = f"首步比较 {len(result.candidates)} 个方案 / 深度 {result.completed_depth} / {horizon:g} 秒；{responses}"
+            if overflow['changed']:
+                result.reason += '；接近满费，执行安全低费发展'
             if result.combo_candidates:
                 result.reason += f"；条件式后续完整比较 {len(result.combo_candidates)} 个根动作（每牌最佳首步及等待）"
         if getattr(self.sim, "placement_batch", None):

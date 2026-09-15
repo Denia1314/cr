@@ -6,6 +6,56 @@ def phase_for(state):
     return 'develop'
 
 
+def avoid_overflow(best, candidates, world, kb, reserve=3., score_key='score'):
+    """Break repeated WAIT near cap using completed, conservative single-card roots.
+
+    A receding two-card plan cannot promise that its deferred play will execute.
+    Compare immediate roots instead; never fabricate a placement on timeout.
+    """
+    diagnostic = dict(active=world.elixir >= 9.5, changed=False,
+                      elixir=world.elixir, reason='below_threshold')
+    if world.elixir < 9.5:
+        return best, diagnostic
+    diagnostic['reason'] = 'already_playing'
+    if best['action']['card_id'] is not None:
+        return best, diagnostic
+    diagnostic['reason'] = 'no_safe_development'
+    waiting = next((r for r in candidates if r['action']['card_id'] is None), None)
+    if waiting is None or not waiting.get('branches'):
+        return best, diagnostic
+
+    def loss(row):
+        return max(-100000*b['own_towers_remaining'] + b['own_tower_damage']
+                   + b.get('imminent_tower_exposure', 0) for b in row['branches'])
+
+    # No extra tower damage is accepted just to spend elixir. Keep the safety
+    # result of both the immediate WAIT and the selected conditional plan.
+    ceiling = min(loss(waiting), loss(best))
+    safe = []
+    for row in candidates:
+        action = row['action']; cid = action['card_id']
+        if not cid or (action['slot'], cid) not in world.hand:
+            continue
+        card = kb.cards[cid]; cost = card.get('elixir')
+        if cost is None or cost > world.elixir-reserve or not kb.roster(cid) or card.get('kind') in {'spell', 'building'}:
+            continue
+        if not row.get('branches') or loss(row) > ceiling + 1e-6:
+            continue
+        if max(b.get('deployment_exposure_penalty', 0) for b in row['branches']) > .25:
+            continue
+        # Reject strongly losing developments even if they do not lose a tower
+        # inside this short simulation horizon.
+        if row.get(score_key, row['score']) < waiting.get(score_key, waiting['score'])-3.:
+            continue
+        safe.append(row)
+    if safe:
+        best = min(safe, key=lambda r: (kb.cards[r['action']['card_id']]['elixir'],
+                                       -r.get(score_key, r['score']), loss(r)))
+        diagnostic.update(changed=True, reason='safe_immediate_development',
+                          card_id=best['action']['card_id'])
+    return best, diagnostic
+
+
 def score_action(score,parts,world,kb,action,phase,reserve=3.,geometry=None):
     cost=float(kb.cards[action.card_id].get('elixir') or 0) if action.card_id else 0
     # A short horizon sees early bridge damage but misses the risk of committing
