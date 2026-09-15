@@ -36,6 +36,17 @@ class ParallelCombatTests(unittest.TestCase):
         self.assertEqual(len(self.pool.executing_pids), 2)
         self.assertLessEqual(self.pool.max_pending,2)
 
+    def test_first_hand_round_is_returned_without_waiting_for_a_batch(self):
+        planner=PredictivePlanner(self.kb,self.config)
+        snapshot=world()
+        roots=planner.candidates(planner.initial(snapshot,7,1),1,limit=9)
+        first_round=1+len({r.card_id for r in roots if r.card_id})
+        with patch.object(self.pool.executor,'submit',wraps=self.pool.executor.submit) as submit:
+            list(self.pool.rows(snapshot,roots,[(7,1,False)],4,'defend',time.perf_counter()+30))
+        sizes=[len(call.args[3]) for call in submit.call_args_list]
+        self.assertEqual(sizes[:first_round],[1]*first_round)
+        self.assertTrue(any(size>1 for size in sizes[first_round:]))
+
     def test_expired_batch_recovers_for_next_revision(self):
         planner = PredictivePlanner(self.kb,self.config)
         snapshot = world()

@@ -50,3 +50,40 @@ class DeploymentDomainTests(unittest.TestCase):
         self.assertGreater(result.compute['spatial_scored'],1000)
         self.assertFalse(result.compute['combat_complete'])
         self.assertGreater(result.compute['spatial_scored'],result.compute['combat_evaluated'])
+
+    def test_full_grid_keeps_first_fair_round_when_refinement_times_out(self):
+        from unittest.mock import patch
+        from crbot.battle_simulation import SimAction
+        from tests.test_urgent_tower_defense import row
+        p=PredictivePlanner(self.planner.kb,dict(all_placement_points=True,fast_defense=True,budget_ms=160))
+        p.clock=lambda:0
+        roots=[SimAction(),SimAction('knight',0,.3,.65),SimAction('musketeer',1,.3,.68),
+               SimAction('knight',0,.3,.7),SimAction('musketeer',1,.3,.72)]
+        calls=[]
+        def evaluate(w,a,*args):
+            calls.append(a)
+            if len(calls)>3:raise TimeoutError()
+            return row(a,253 if a.card_id is None else 0)
+        with patch.object(p,'candidates',return_value=roots),patch.object(p,'evaluate_root',side_effect=evaluate):
+            result=p.plan(world(hand=((0,'knight'),(1,'musketeer'))))
+        self.assertEqual(result.status,'ready')
+        self.assertTrue(result.budget_exhausted)
+        self.assertEqual(len(result.candidates),3)
+        self.assertEqual({r['action']['card_id'] for r in result.candidates},{None,'knight','musketeer'})
+        self.assertEqual(result.compute['completed_fair_rounds'],1)
+        self.assertFalse(result.compute['combat_complete'])
+
+    def test_incomplete_hand_comparison_cannot_be_called_usable(self):
+        from unittest.mock import patch
+        from crbot.battle_simulation import SimAction
+        from tests.test_urgent_tower_defense import row
+        p=PredictivePlanner(self.planner.kb,dict(all_placement_points=True,fast_defense=True))
+        p.clock=lambda:0
+        roots=[SimAction(),SimAction('knight',0,.3,.65),SimAction('musketeer',1,.3,.68)]
+        def evaluate(w,a,*args):
+            if a.card_id=='musketeer':raise TimeoutError()
+            return row(a,253 if a.card_id is None else 0)
+        with patch.object(p,'candidates',return_value=roots),patch.object(p,'evaluate_root',side_effect=evaluate):
+            result=p.plan(world(hand=((0,'knight'),(1,'musketeer'))))
+        self.assertEqual(result.status,'timeout')
+        self.assertFalse(result.compute['usable_comparison'])

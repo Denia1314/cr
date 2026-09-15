@@ -42,6 +42,26 @@ class UrgentTowerDefenseTests(unittest.TestCase):
             result = self.p.plan(self.w)
         self.assertEqual(result.action.card_id,'knight')
 
+    def test_execution_preference_selects_completed_play_even_if_wait_scores_higher(self):
+        self.p.config['prefer_immediate_play']=True
+        with patch.object(self.p,'candidates',return_value=[self.wait,self.play]), \
+             patch.object(self.p,'evaluate_root',side_effect=lambda w,a,*args:row(a,0,100 if a.card_id is None else 1)), \
+             patch.object(self.p,'refine_combinations',return_value=[]):
+            result=self.p.plan(self.w)
+        self.assertEqual(result.status,'ready')
+        self.assertEqual(result.action.card_id,'knight')
+        self.assertEqual(result.compute['execution_preference']['completed_play_options'],1)
+
+    def test_execution_preference_does_not_invent_unaffordable_actions(self):
+        self.p.config['prefer_immediate_play']=True
+        with patch.object(self.p,'candidates',return_value=[self.wait]), \
+             patch.object(self.p,'evaluate_root',return_value=row(self.wait,0)), \
+             patch.object(self.p,'refine_combinations',return_value=[]):
+            result=self.p.plan(world(elixir=0,hand=((0,'knight'),)))
+        self.assertEqual(result.status,'wait')
+        self.assertIsNone(result.action.card_id)
+        self.assertEqual(result.compute['execution_preference']['reason'],'no_completed_legal_play')
+
     def test_urgent_first_round_uses_remaining_budget(self):
         elapsed = [0.]
         self.p.clock = lambda: elapsed[0]

@@ -89,12 +89,15 @@ class CombatPool:
         self.pending = []
         queue = deque()
         offset = 0
+        # Return the baseline and one position per usable card independently.
+        # A slow refinement must not hide already completed first decisions.
+        first_round = 1 + len({root.card_id for root in roots if root.card_id})
         try:
             while offset < len(roots) or queue:
                 while offset < len(roots) and len(queue) < self.workers:
                     if time.perf_counter() >= deadline:
                         raise TimeoutError()
-                    batch = roots[offset:offset+(1 if kind=='combo' else self.batch_size)]
+                    batch = roots[offset:offset+(1 if kind=='combo' or offset < first_round else self.batch_size)]
                     offset += len(batch)
                     future = self.executor.submit(evaluate_batch, world.revision, world, batch, scenarios, horizon, phase, deadline, kind)
                     queue.append(future)

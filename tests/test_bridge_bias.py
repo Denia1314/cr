@@ -56,7 +56,7 @@ class BridgeBiasTests(unittest.TestCase):
             stale, _ = score(17, replace(snapshot, tracks=(replace(ally,last_seen=98),)))
             self.assertEqual(stale, bridge)
 
-    def test_timeout_before_spatial_comparison_does_not_publish_bridge_only_result(self):
+    def test_timeout_keeps_fair_first_round_without_claiming_full_spatial_comparison(self):
         elapsed = [0.]
         self.p.clock = lambda: elapsed[0]
         original = self.p.sim.evaluate
@@ -70,8 +70,19 @@ class BridgeBiasTests(unittest.TestCase):
             return value
         with patch.object(self.p.sim, 'evaluate', side_effect=evaluate):
             result = self.p.plan(world(tracks=()))
-        self.assertEqual(result.status, 'timeout')
-        self.assertEqual(result.candidates, [])
+        # The execution-first contract preserves this completed comparison;
+        # additional front/middle/rear rounds are refinements, not a prerequisite.
+        self.assertIn(result.status, ('ready', 'wait'))
+        self.assertEqual(len(result.candidates), 5)
+        self.assertEqual({r['action']['card_id'] for r in result.candidates},
+                         {None, 'knight', 'musketeer', 'cannon', 'fireball'})
+        self.assertEqual(result.compute['completed_fair_rounds'], 1)
+        self.assertFalse(result.compute['combat_complete'])
+        # Quiet-board troop/building shortlists still start away from the bridge.
+        for option in result.candidates:
+            action = option['action']
+            if action['card_id'] in {'knight', 'musketeer', 'cannon'}:
+                self.assertGreater(self.p.sim.xy(action['x'], action['y'])[1], 21)
 
     def test_tower_saving_defense_outweighs_unsupported_forward_penalty(self):
         snapshot = world()

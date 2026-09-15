@@ -180,6 +180,7 @@ class PredictivePlanner:
         if action_scorer is not None:
             reserve = max(0., min(.02, float(self.config.get("learning_budget_ms", 8)) / 1000))
             deadline -= min(reserve, (deadline - started) / 4)
+        published_round = 0
         coarse_deadline=deadline
         refinement_start=started+(deadline-started)*.5
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
@@ -242,7 +243,6 @@ class PredictivePlanner:
                     scenarios.insert(0, (world.enemy_elixir[0], .65, False))
                     scenarios.insert(1, (world.enemy_elixir_estimate, .85, False))
             coarse_rows = []
-            published_round = 0
             initial_scenarios = [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
             if (self.combat_pool is not None and self.combat_pool.available
                     and all(future.done() for future in self.combat_pool.pending)):
@@ -261,8 +261,8 @@ class PredictivePlanner:
                             entry['evaluated'] += 1
                             entry['status'] = 'complete' if entry['evaluated'] == entry['positions'] else 'partial'
                     active = [e for e in result.hand_evaluations if e['positions']]
-                    completed_round = min((e['evaluated'] for e in active if e['evaluated'] < e['positions']), default=positions)
-                    required_rounds = max((min(3, e['positions']) for e in active), default=1) if self.config.get('all_placement_points',False) else 1
+                    completed_round = min((e['evaluated'] for e in active), default=0)
+                    required_rounds = 1  # Commit a fair first decision before optional spatial refinement.
                     if active and completed_round >= required_rounds and completed_round > published_round:
                         # Commit equal spatial rounds across all usable cards. A timeout cannot
                         # prefer a card simply because its next location happened to finish first.
@@ -350,6 +350,20 @@ class PredictivePlanner:
             # a conditional future card is not an executed defensive action.
             selectable = result.candidates + [r for r in result.combo_candidates
                 if not (urgent and r['action']['card_id'] is None)]
+            prefer_play = bool(self.config.get('prefer_immediate_play', False))
+            if prefer_play:
+                playable = [r for r in selectable
+                            if (r['action']['slot'], r['action']['card_id']) in world.hand
+                            and self.kb.cards[r['action']['card_id']].get('elixir') is not None
+                            and self.kb.cards[r['action']['card_id']]['elixir'] <= world.elixir
+                            and self.sim.legal_placement(initial, r['action']['card_id'], 1,
+                                                        r['action']['x'], r['action']['y'])]
+                result.compute['execution_preference'] = {
+                    'enabled': True, 'completed_play_options': len(playable),
+                    'reason': 'choose_immediate_play' if playable else 'no_completed_legal_play',
+                }
+                if playable:
+                    selectable = playable
             baseline_selection = sorted(selectable,
                                         key=lambda c: c["score"], reverse=True)
             self.apply_learning(result, action_scorer, total_deadline)
@@ -363,7 +377,7 @@ class PredictivePlanner:
                                + b["own_tower_damage"] + b.get("imminent_tower_exposure", 0)
                                for b in row["branches"])
                 waiting = next((c for c in selection if c["action"]["card_id"] is None), None)
-                if waiting is not None:
+                if waiting is not None or prefer_play:
                     # Charge for real mitigation, not the residual value of an unnecessary troop.
                     best_loss = min(map(loss, selection))
                     tolerance = float(self.config.get("defense_damage_tolerance", 30))
@@ -415,6 +429,10 @@ class PredictivePlanner:
         result.compute["combat_complete"] = bool(result.hand_evaluations) and all(e["evaluated"] == e["positions"] for e in result.hand_evaluations)
         if self.config.get("all_placement_points",False):
             result.reason = f"格点评分 {result.compute['spatial_scored']}；战斗精算 {result.compute['combat_evaluated']}/{result.compute['spatial_scored']}；" + result.reason
+        result.compute['usable_comparison'] = bool(result.candidates)
+        result.compute['completed_fair_rounds'] = published_round
+        if result.status in {'ready', 'wait'}:
+            result.reason = f"选择 {result.action.label}；" + result.reason
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
 
