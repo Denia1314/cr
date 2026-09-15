@@ -26,13 +26,18 @@ if errorlevel 1 goto missing
 set "BOT_PY=py"
 :ready
 if /i not "%~2"=="deps" exit /b 0
+"%BOT_PY%" "%BOT_ROOT%tools\ensure_gpu.py"
+if errorlevel 1 exit /b 1
+if exist "%BOT_ROOT%.venv\Scripts\python.exe" set "BOT_PY=%BOT_ROOT%.venv\Scripts\python.exe"
+if exist "%BOT_ROOT%.venv\Scripts\pythonw.exe" set "BOT_PYW=%BOT_ROOT%.venv\Scripts\pythonw.exe"
 "%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
 if not errorlevel 1 exit /b 0
 echo Required Python packages are missing. Installing them now...
 "%BOT_PY%" -m pip install --disable-pip-version-check -r "%BOT_ROOT%requirements.txt"
 if errorlevel 1 goto dependency_failed
 "%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
-if not errorlevel 1 exit /b 0
+if errorlevel 1 goto dependency_failed
+exit /b 0
 :dependency_failed
 echo Python dependency installation failed. Check the error above and retry.
 exit /b 1

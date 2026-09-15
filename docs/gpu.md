@@ -1,6 +1,8 @@
 # GPU acceleration
 
-Run `setup_gpu.bat` once on each NVIDIA computer. It creates the project `.venv`, installs CUDA PyTorch and the visual training dependencies, checks dependency integrity, and runs GPU policy parity and YOLO forward/backward/inference tests. Restart Royal Lab afterward; the existing launchers prefer `.venv`. The CUDA wheel source follows [PyTorch's official installation instructions](https://pytorch.org/get-started/previous-versions/).
+Windows launchers that request dependency setup now detect NVIDIA through `nvidia-smi` and run `tools/ensure_gpu.py` before starting the application. A fresh checkout creates its own `.venv`; missing or CPU-only PyTorch is replaced with explicitly pinned CUDA wheels. Existing working CUDA installations are retained. Every launch checks a real CUDA matrix multiplication. Installation or CUDA verification errors stop launch visibly. No NVIDIA driver detected means CPU mode with a diagnostic message; AMD/Intel GPUs are not supported by this CUDA setup. `CRBOT_COMPUTE_DEVICE=cpu` skips automatic CUDA setup. Direct Python invocations bypass this bootstrap.
+
+Run `setup_gpu.bat` to force a manual setup/check on each NVIDIA computer. It creates the project `.venv`, installs CUDA PyTorch and the visual training dependencies, checks dependency integrity, and runs GPU policy parity and YOLO forward/backward/inference tests. Restart Royal Lab afterward; the existing launchers prefer `.venv`. The CUDA wheel source follows [PyTorch's official installation instructions](https://pytorch.org/get-started/previous-versions/).
 
 `training.device: "auto"` selects CUDA when a real kernel succeeds, otherwise logs a CPU fallback. It applies to YOLO training, validation, automatic labels and runtime detection. Set it to `cuda:0` to require the first GPU, or `cpu` to disable it.
 
