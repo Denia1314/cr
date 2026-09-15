@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import time
-import uuid
 from pathlib import Path
+
+from .atomic_file import atomic_write
 
 
 def digest(value) -> str:
@@ -22,17 +22,8 @@ def read_json(path: Path, default=None):
 
 
 def atomic_json(path: Path, value) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    try:
-        with temp.open("w", encoding="utf-8", newline="\n") as handle:
-            json.dump(value, handle, ensure_ascii=False, sort_keys=True, allow_nan=False)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        temp.replace(path)
-    finally:
-        temp.unlink(missing_ok=True)
+    data = json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n"
+    atomic_write(path, data.encode("utf-8"))
 
 
 class LearningStore:

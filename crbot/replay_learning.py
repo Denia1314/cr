@@ -14,6 +14,7 @@ from PIL import Image
 
 from .battle_perception import LaneThreat
 from .cards import CardCatalog, CardDefinition
+from .atomic_file import atomic_write
 from .gpu import compute_device, predict as gpu_predict
 from .training_sync import ReplaySync, replay_source_prefix, shared_training, registry_serialized
 from .imitation import (
@@ -65,13 +66,7 @@ def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    atomic_write(path, (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
 
 
 def _policy_version(row: dict[str, Any]) -> str:

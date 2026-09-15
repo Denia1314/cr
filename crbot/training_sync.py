@@ -17,6 +17,7 @@ from typing import Any, Callable
 from urllib.request import getproxies
 
 from . import __version__
+from .atomic_file import atomic_write
 
 
 DEFAULT_REPOSITORY = "Denia1314/cr-training-data"
@@ -47,16 +48,6 @@ def read_json(path: Path, default: Any = None) -> Any:
     if not path.is_file():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    try:
-        temporary.write_bytes(data)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def complete_rows(path: Path) -> list[dict[str, Any]]:
