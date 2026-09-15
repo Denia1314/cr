@@ -49,6 +49,12 @@ class PredictivePlanner:
             self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")),trajectory=bool(config.get("gpu_trajectory_screening",False)))
         self.sim.placement_grid_step = float(config.get("placement_grid_step", 1.))
         self.clock = time.perf_counter
+        self.combat_pool = None
+
+    def warm_pool(self):
+        if self.config.get('parallel_combat', False) and self.combat_pool is None:
+            from .parallel_combat import CombatPool
+            self.combat_pool = CombatPool(self.kb.payload, self.config)
 
     def candidates(self, s: SimState, side: int, *, limit=12) -> list[SimAction]:
         result = [SimAction(wait_s=.4)]
@@ -151,6 +157,8 @@ class PredictivePlanner:
         return s
 
     def plan(self, world: WorldSnapshot, *, action_scorer=None, learning_status=None) -> PlanResult:
+        self.warm_pool()
+        combat_mode = 'serial'
         fast = bool(self.config.get("fast_defense", False))
         started = self.clock()
         deadline = started + max(.01, min(2., float(self.config.get("budget_ms", 180)) / 1000))
@@ -205,28 +213,18 @@ class PredictivePlanner:
             coarse_rows = []
             published_round = 0
             initial_scenarios = [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
-            for root in roots:
-                outcomes, branches = [], []
-                for index, (enemy_cost, hp, responds) in enumerate(scenarios):
-                    s = initial_scenarios[index].clone()
-                    if not self.sim.apply(s, root, 1):
-                        continue
-                    self.sim.advance(s, 1.5, deadline=coarse_deadline, clock=self.clock)
-                    response = (self.attack_response(s) if fast and result.tactical_phase in {"develop","counterpush"} and root.card_id else self.prior_response(s) if responds else SimAction())
-                    self.sim.apply(s, response, -1)
-                    self.sim.advance(s, horizon - 1.5, deadline=coarse_deadline, clock=self.clock)
-                    score, parts = self.sim.evaluate(s)
-                    if result.tactical_phase != "legacy":
-                        score=score_action(score,parts,world,self.kb,root,result.tactical_phase,float(self.config.get("attack_reserve",3)),self.sim.geometry)
-                    result.nodes += 1
-                    outcomes.append(score)
-                    branches.append({"enemy_elixir_assumption": enemy_cost, "enemy_response": response.label,
-                                     "own_followup": "WAIT", "score": round(score, 4), **parts})
-                if len(outcomes) == len(scenarios):
-                    risk = float(self.config.get("downside_weight", .65))
-                    score = (1-risk) * sum(outcomes) / len(outcomes) + risk * min(outcomes)
-                    coarse_rows.append({"action": asdict(root), "label": root.label,
-                                        "score": round(score, 4), "branches": branches})
+            if (self.combat_pool is not None and self.combat_pool.available
+                    and all(future.done() for future in self.combat_pool.pending)):
+                combat_mode = 'parallel'
+                rows = self.combat_pool.rows(world, roots, scenarios, horizon, result.tactical_phase, coarse_deadline)
+            else:
+                rows = (self.evaluate_root(world, root, scenarios, horizon, result.tactical_phase,
+                                           coarse_deadline, initial_scenarios) for root in roots)
+            for row in rows:
+                if row is not None:
+                    root = SimAction(**row['action'])
+                    result.nodes += len(row['branches'])
+                    coarse_rows.append(row)
                     for entry in result.hand_evaluations:
                         if entry['card_id'] == root.card_id:
                             entry['evaluated'] += 1
@@ -357,6 +355,9 @@ class PredictivePlanner:
                 result.reason += f"；条件式后续完整比较 {len(result.combo_candidates)} 个根动作（每牌最佳首步及等待）"
         if getattr(self.sim, "placement_batch", None):
             result.compute = self.sim.placement_batch.status()
+        if self.combat_pool is not None:
+            result.compute["parallel_combat"] = self.combat_pool.status()
+            result.compute["parallel_combat"]['last_mode'] = combat_mode
         result.compute["arena_geometry"]=asdict(self.sim.geometry)
         result.compute["grid_step_tiles"] = self.sim.placement_grid_step
         result.compute["all_placement_points"] = bool(self.config.get("all_placement_points",False))
@@ -367,6 +368,39 @@ class PredictivePlanner:
             result.reason = f"格点评分 {result.compute['spatial_scored']}；战斗精算 {result.compute['combat_evaluated']}/{result.compute['spatial_scored']}；" + result.reason
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
+
+    def evaluate_root(self, world, root, scenarios, horizon, phase, deadline, initial_scenarios=None):
+        """Identical detailed simulation for serial and process workers."""
+        from .tactical_objective import score_action
+        self.sim.tactical_phase = phase
+        initial_scenarios = initial_scenarios or [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
+        outcomes, branches = [], []
+        fast = bool(self.config.get('fast_defense', False))
+        for index, (enemy_cost, hp, responds) in enumerate(scenarios):
+            if self.clock() >= deadline:
+                raise TimeoutError()
+            state = initial_scenarios[index].clone()
+            if not self.sim.apply(state, root, 1):
+                return None
+            self.sim.advance(state, 1.5, deadline=deadline, clock=self.clock)
+            response = (self.attack_response(state) if fast and phase in {'develop','counterpush'} and root.card_id
+                        else self.prior_response(state) if responds else SimAction())
+            self.sim.apply(state, response, -1)
+            self.sim.advance(state, horizon-1.5, deadline=deadline, clock=self.clock)
+            score, parts = self.sim.evaluate(state)
+            if phase != 'legacy':
+                score = score_action(score, parts, world, self.kb, root, phase,
+                                     float(self.config.get('attack_reserve',3)), self.sim.geometry)
+            outcomes.append(score)
+            branches.append(dict(enemy_elixir_assumption=enemy_cost, enemy_response=response.label,
+                                 own_followup='WAIT', score=round(score,4), **parts))
+        risk = float(self.config.get('downside_weight',.65))
+        score = (1-risk)*sum(outcomes)/len(outcomes)+risk*min(outcomes)
+        return dict(action=asdict(root), label=root.label, score=round(score,4), branches=branches)
+
+    def close(self):
+        if self.combat_pool is not None:
+            self.combat_pool.close()
 
     def apply_learning(self, result, scorer, deadline):
         """Atomically adjust completed rows; preserve tower and cost selection guards."""

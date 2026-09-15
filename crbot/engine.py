@@ -1049,6 +1049,14 @@ class BotEngine:
         )
 
     def run(self) -> None:
+        try:
+            self._run_session()
+        finally:
+            planner = getattr(getattr(self, 'policy', None), 'planner', None)
+            if planner is not None:
+                planner.close()
+
+    def _run_session(self) -> None:
         if self._stop_requested():
             print("[停止] 启动已取消，未打开游戏。")
             return
@@ -1059,6 +1067,9 @@ class BotEngine:
             raise DeviceError(f"标定不完整，缺少：{missing}。请先运行 calibrate.bat")
 
         package = self.config["game"]["package"]
+        planner = getattr(getattr(self, 'policy', None), 'planner', None)
+        if planner is not None:
+            planner.warm_pool()
         if self._stop_requested():
             print("[停止] 启动已取消，未打开游戏。")
             return
