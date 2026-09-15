@@ -106,3 +106,72 @@ def score_action(score,parts,world,kb,action,phase,reserve=3.,geometry=None):
         if phase=='develop' and world.elixir<reserve+cost and parts.get('enemy_tower_damage',0)<100:
             score-=2
     return score
+
+
+def guard_development_reserve(candidates, world, kb, phase, reserve=3., *, urgent=False, level=11, immediate_candidates=None):
+    """Reserve the cost of a remaining defense, unless this play mitigates tower loss."""
+    diagnostic = dict(active=False, blocked=0, reserve=reserve, reason='wait_comparison_unavailable',
+                      phase=phase, urgent=urgent, future_draw_assumed=False, options=[])
+    immediate = candidates if immediate_candidates is None else immediate_candidates
+    def action_key(row):
+        a = row['action']
+        return a['slot'], a['card_id'], a['x'], a['y']
+    immediate_by_action = {action_key(r): r for r in immediate}
+    waiting = next((r for r in immediate if r['action']['card_id'] is None), None)
+    if waiting is None or not waiting.get('branches'):
+        return candidates, diagnostic
+
+    def tower_loss(row):
+        return max(-100000*b.get('own_towers_remaining', 2)
+                   + b.get('own_tower_damage', 0) + b.get('imminent_tower_exposure', 0)
+                   for b in row['branches'])
+
+    # A disposable cycle card is not a substitute for a sustained defender.
+    # This is a conservative capability proxy, not a guarantee of winning a fight.
+    defenders = []
+    for slot, cid in world.hand:
+        cost = kb.cards[cid].get('elixir')
+        if cost is None:
+            continue
+        roster = [(spec, count) for spec, count in kb.roster(cid, level)
+                  if not spec.building_only and spec.damage > 0 and spec.period > 0]
+        layers = {layer for layer in ('ground', 'air')
+                  if sum((spec.hp+spec.shield)*count for spec,count in roster
+                         if layer in spec.targets) >= 300}
+        if layers:
+            defenders.append((slot, cid, float(cost), layers))
+
+    required_by_slot = {}
+    for played_slot, _ in world.hand:
+        remaining = [d for d in defenders if d[0] != played_slot]
+        coverable = set().union(*(d[3] for d in remaining)) if remaining else set()
+        combinations = []
+        for mask in range(1, 1 << len(remaining)):
+            selected = [d for i,d in enumerate(remaining) if mask & (1 << i)]
+            if set().union(*(d[3] for d in selected)) >= coverable:
+                combinations.append((sum(d[2] for d in selected), [d[1] for d in selected]))
+        cost, cards = min(combinations, default=(0., []), key=lambda item:item[0])
+        required_by_slot[played_slot] = (max(reserve, cost), cards, sorted({'ground','air'}-coverable))
+
+    waiting_loss = tower_loss(waiting)
+    allowed = []
+    for row in candidates:
+        action = row['action']; cid = action['card_id']
+        if not cid:
+            allowed.append(row)
+            continue
+        cost = kb.cards[cid].get('elixir')
+        required, cards, missing = required_by_slot.get(action['slot'], (reserve, [], ['ground','air']))
+        after = world.elixir-cost if cost is not None else -1
+        proof = immediate_by_action.get(action_key(row))
+        # A promised future combo is not proof that spending the reserve now is safe.
+        mitigation = bool(proof and proof.get('branches')) and tower_loss(proof) < waiting_loss-30
+        accepted = after >= required or mitigation
+        if accepted:
+            allowed.append(row)
+        diagnostic['options'].append(dict(card_id=cid, slot=action['slot'], x=action['x'], y=action['y'],
+            elixir_after=round(after,3), required=required, retained_defenders=cards,
+            uncovered_layers=missing, tower_mitigation_override=mitigation, accepted=accepted))
+    diagnostic.update(active=True, blocked=len(candidates)-len(allowed),
+                      reason='reserve_next_defense' if len(allowed)<len(candidates) else 'reserve_satisfied')
+    return allowed, diagnostic

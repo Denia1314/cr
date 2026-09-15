@@ -350,6 +350,11 @@ class PredictivePlanner:
             # a conditional future card is not an executed defensive action.
             selectable = result.candidates + [r for r in result.combo_candidates
                 if not (urgent and r['action']['card_id'] is None)]
+            if self.config.get('development_reserve_gate', False):
+                from .tactical_objective import guard_development_reserve
+                selectable, result.compute['development_reserve'] = guard_development_reserve(
+                    selectable, world, self.kb, result.tactical_phase,
+                    float(self.config.get('attack_reserve', 3)), urgent=urgent, level=self.sim.level, immediate_candidates=result.candidates)
             prefer_play = bool(self.config.get('prefer_immediate_play', False))
             if prefer_play:
                 playable = [r for r in selectable
@@ -393,9 +398,11 @@ class PredictivePlanner:
             from .tactical_objective import avoid_overflow
             preparation = result.tactical_phase == 'prepare' and not any(
                 e.side == 1 and not e.tower and e.hp > 0 for e in initial.entities)
-            best, overflow = avoid_overflow(best, result.candidates, world, self.kb,
+            eligible_ids = {id(row) for row in selectable}
+            overflow_candidates = [row for row in result.candidates if id(row) in eligible_ids]
+            best, overflow = avoid_overflow(best, overflow_candidates, world, self.kb,
                                            float(self.config.get('attack_reserve', 3)), 'score', preparation)
-            baseline, _ = avoid_overflow(baseline, result.candidates, world, self.kb,
+            baseline, _ = avoid_overflow(baseline, overflow_candidates, world, self.kb,
                                         float(self.config.get('attack_reserve', 3)), 'simulation_score', preparation)
             result.compute['elixir_overflow'] = overflow
             result.learning.update(changed_selection=best["action"] != baseline["action"],
@@ -433,6 +440,11 @@ class PredictivePlanner:
         result.compute['completed_fair_rounds'] = published_round
         if result.status in {'ready', 'wait'}:
             result.reason = f"选择 {result.action.label}；" + result.reason
+            reserve_audit = result.compute.get('development_reserve', {})
+            if result.status == 'wait' and reserve_audit.get('blocked'):
+                requirements = [o['required'] for o in reserve_audit.get('options', []) if not o['accepted']]
+                needed = min(requirements, default=float(self.config.get('attack_reserve',3)))
+                result.reason += f"；留费防下一波：出牌后需保留至少 {needed:g} 费"
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
 
