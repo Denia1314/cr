@@ -16,4 +16,8 @@ def deployment_domain(sim, state, card_id, side, *, step=.5, image_size=None):
             raise ValueError("placement grid step must be between .125 and 1 tile")
         xs = [sim.screen(min(18,i*step),0)[0] for i in range(math.ceil(18/step)+1)]
         ys = [sim.screen(0,min(32,i*step))[1] for i in range(math.ceil(32/step)+1)]
-    return [(x,y) for x in xs for y in ys if sim.legal_placement(state,card_id,side,x,y)]
+    points = [(x,y) for x in xs for y in ys]
+    batch = getattr(sim, "placement_batch", None)
+    if batch is not None and hasattr(batch, "legal_points"):
+        return batch.legal_points(sim,state,card_id,side,points)
+    return [p for p in points if sim.legal_placement(state,card_id,side,*p)]

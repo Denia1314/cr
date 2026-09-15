@@ -34,6 +34,8 @@ def placement_points(sim, state, card_id, side, *, limit=12):
     enemies.sort(key=lambda e: min((math.hypot(e.x-t.x, e.y-t.y) for t in towers), default=0))
     enemies = enemies[:24 if getattr(sim, "placement_batch", None) else 8]
     if spell:
+        if not spell.get('friendly'):
+            enemies += [e for e in state.entities if e.side != side and e.tower and e.hp > 0]
         if spell.get('friendly'):
             enemies = [e for e in state.entities if e.side == side and not e.tower and not e.spec.building and e.hp>0][:8]
         # Center on groups as well as individuals; project through spell arrival delay.
@@ -44,7 +46,7 @@ def placement_points(sim, state, card_id, side, *, limit=12):
                 if math.dist(a, b) <= 2 * spell['radius']:
                     points.append(((a[0]+b[0])/2, (a[1]+b[1])/2))
         def value(p):
-            return sum((e.spec.damage if spell.get('friendly') else min(e.hp, spell['damage'])) * (1 + e.value) for e, q in zip(enemies, projected)
+            return sum((e.spec.damage if spell.get('friendly') else min(e.hp + e.shield, spell['damage'] * (spell.get('tower_multiplier',1.) if e.tower else 1.))) * (1 + e.value) for e, q in zip(enemies, projected)
                        if (not e.spec.air or spell['air']) and math.dist(p, q) <= spell['radius'] + e.spec.radius)
     elif roster:
         spec = roster[0][0]
@@ -55,15 +57,11 @@ def placement_points(sim, state, card_id, side, *, limit=12):
         projected = []
         for enemy in enemies:
             tower = min(towers, key=lambda t: math.hypot(enemy.x-t.x, enemy.y-t.y), default=None)
-            tx, ty = (tower.x, tower.y) if tower else (enemy.x, 32 if side == 1 else 0)
-            distance = max(.01, math.hypot(tx-enemy.x, ty-enemy.y))
-            travel = min(distance, enemy.spec.speed * (spec.deploy + spec.first_hit))
-            q = (enemy.x + (tx-enemy.x)*travel/distance, enemy.y + (ty-enemy.y)*travel/distance)
-            if enemy.observed_vx or enemy.observed_vy:
-                window=min(.75,spec.deploy+spec.first_hit)
-                portion=window/max(.1,spec.deploy+spec.first_hit)
-                q=(max(0,min(18,q[0]+(enemy.observed_vx*window-(q[0]-enemy.x)*portion)*.5)),
-                   max(0,min(32,q[1]+(enemy.observed_vy*window-(q[1]-enemy.y)*portion)*.5)))
+            if tower is not None:
+                from .defense_timing import project_approach
+                q=project_approach(sim,state,enemy,tower,spec.deploy+getattr(sim,'defense_pipeline_s',.35))
+            else:
+                q=(enemy.x,enemy.y)
             projected.append((enemy, q))
             # Continuous offsets around the predicted contact point enable precise interceptions.
             for radius in (1., 2.5, max(1., spec.reach)):
@@ -75,9 +73,13 @@ def placement_points(sim, state, card_id, side, *, limit=12):
         def value(p):
             total = 0.
             for enemy, q in projected:
-                can_hit = ('air' if enemy.spec.air else 'ground') in spec.targets
+                can_hit = (not spec.building_only or enemy.spec.building) and ('air' if enemy.spec.air else 'ground') in spec.targets
                 can_pull = (not enemy.spec.building_only or spec.building) and ('air' if spec.air else 'ground') in enemy.spec.targets
                 distance = math.dist(p, q)
+                if spec.building and enemy.spec.building_only:
+                    edge=distance-spec.radius-enemy.spec.radius
+                    tower_gap=min((math.dist(q,(t.x,t.y))-t.spec.radius-enemy.spec.radius for t in towers),default=32.)
+                    can_pull=can_pull and edge<=enemy.spec.sight and edge<tower_gap
                 gap = max(0, distance - spec.reach - spec.radius - enemy.spec.radius)
                 contact = gap / max(.5, spec.speed + (enemy.spec.speed if can_pull else 0))
                 urgency = 1 / (1 + min((max(0, math.dist(q, (t.x,t.y))-enemy.spec.reach-t.spec.radius) for t in towers), default=12)/5)
@@ -85,7 +87,7 @@ def placement_points(sim, state, card_id, side, *, limit=12):
                 # A pulled target moves toward the defender; use that contact location for tower cover.
                 fight = ((p[0]+q[0])/2, (p[1]+q[1])/2) if can_pull else q
                 tower_dps = sum(t.spec.damage/max(.1,t.spec.period) for t in towers
-                    if ('air' if enemy.spec.air else 'ground') in t.spec.targets
+                    if t.active and ('air' if enemy.spec.air else 'ground') in t.spec.targets
                     and math.dist(fight, (t.x,t.y)) <= t.spec.reach+t.spec.radius+enemy.spec.radius)
                 interception = math.exp(-contact/2)
                 total += threat * interception * ((2 if can_hit else 0) + (1 if can_pull else 0) + tower_dps/100)
@@ -112,12 +114,20 @@ def placement_points(sim, state, card_id, side, *, limit=12):
         if limit is None:
             x, y = round(x,12), round(y,12)
         key = (round(x, 4), round(y, 4))
-        if key in seen or not sim.legal_placement(state, card_id, side, x, y):
+        if key in seen or (limit is not None and not sim.legal_placement(state, card_id, side, x, y)):
             continue
         seen.add(key)
         ranked.append((0., point, (x,y)))
     batch = getattr(sim, "placement_batch", None)
-    values = batch.score([r[1] for r in ranked], spec, projected, towers) if batch and roster and not spell and ranked else None
+    values = None
+    if batch and ranked:
+        positions = [r[1] for r in ranked]
+        if spell and hasattr(batch, 'spell_score'):
+            values = batch.spell_score(positions,enemies,projected,spell)
+        elif roster and not enemies and hasattr(batch, 'quiet_score'):
+            values = batch.quiet_score(positions,towers,side)
+        elif roster:
+            values = batch.score(positions,spec,projected,towers)
     ranked = [(values[i] if values is not None else value(point), point, normalized)
               for i, (_, point, normalized) in enumerate(ranked)]
     ranked.sort(key=lambda r: r[0], reverse=True)

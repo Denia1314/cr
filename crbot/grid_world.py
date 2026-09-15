@@ -19,6 +19,14 @@ def target_for(sim, state, entity):
     sight=max(entity.spec.sight,entity.spec.reach) if entity.tower else entity.spec.sight
     locked=next((t for t in enemies if t.uid==entity.target and sim.distance(entity,t)<=sight),None)
     nearby=[t for t in enemies if sim.distance(entity,t)<=sight]
+    # A building seeker marching toward a tower can still be intercepted by a
+    # nearer defensive building. Preserve a tower attack already in range.
+    if (locked is not None and locked.tower and not entity.tower and entity.spec.building_only
+            and sim.distance(entity,locked)>entity.spec.reach and entity.winding_target is None):
+        interceptors=[t for t in nearby if t.spec.building and not t.tower
+                      and sim.distance(entity,t)<sim.distance(entity,locked)]
+        if interceptors:
+            return min(interceptors,key=lambda t:sim.distance(entity,t))
     return locked or min(nearby or [t for t in enemies if t.tower],key=lambda t:sim.distance(entity,t),default=None)
 
 

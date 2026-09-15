@@ -83,7 +83,7 @@ class CardEffectTests(unittest.TestCase):
         result=planner.plan(world(hand=((0,'knight'),(1,'musketeer'),(2,'cannon'),(3,'poison'))))
         self.assertEqual(len(result.hand_evaluations),4)
         self.assertTrue(all(r['evaluated']==r['positions'] and r['evaluated']>0 for r in result.hand_evaluations))
-        self.assertTrue(all(r['positions']==12 for r in result.hand_evaluations[:3]))
+        self.assertTrue(all(r['positions']==16 for r in result.hand_evaluations[:3]))
 
     def test_early_sighting_gets_a_forecast_even_on_enemy_half(self):
         result=PredictivePlanner(self.kb,{'budget_ms':2000}).plan(world(

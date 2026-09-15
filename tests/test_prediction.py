@@ -261,7 +261,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(len([e for e in s.entities if not e.tower]), 1)
 
     def test_timeout_after_complete_layer_keeps_fair_comparison(self):
-        planner = PredictivePlanner(knowledge(), {"budget_ms": 100})
+        planner = PredictivePlanner(knowledge(), {"budget_ms": 100, "positions_per_card": 12})
         timer, calls = [0.], [0]
         planner.clock = lambda: timer[0]
         original = planner.sim.evaluate

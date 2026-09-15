@@ -47,7 +47,8 @@ class PredictivePlanner:
         self.sim.grid_navigation = bool(config.get('grid_world', True))
         if config.get("gpu_placement", False):
             from .gpu_placement import PlacementBatch
-            self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")),trajectory=bool(config.get("gpu_trajectory_screening",False)))
+            self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")),trajectory=bool(config.get("gpu_trajectory_screening",False)),trajectory_step=float(config.get("gpu_trajectory_step_s",.25)))
+        self.sim.defense_pipeline_s=float(config.get("defense_pipeline_s",.35))
         self.sim.placement_grid_step = float(config.get("placement_grid_step", 1.))
         self.clock = time.perf_counter
         self.combat_pool = None
@@ -66,7 +67,7 @@ class PredictivePlanner:
                 continue
             if not self.kb.roster(cid, self.sim.level) and not self.kb.spell(cid, self.sim.level):
                 continue
-            positions = max(2,min(24,int(self.config.get('positions_per_card',12))))
+            positions = max(2,min(24,int(self.config.get('positions_per_card',16))))
             points = placement_points(self.sim, s, cid, side,
                                       limit=None if self.config.get("all_placement_points",False) else positions)
             for x, y in points:
@@ -192,17 +193,25 @@ class PredictivePlanner:
             from .tactical_objective import phase_for,score_action
             result.tactical_phase=phase_for(initial) if self.config.get("unified_tactics",False) else "legacy"
             self.sim.tactical_phase=result.tactical_phase
-            for enemy in (e for e in initial.entities if e.side == -1 and not e.tower):
-                tower = min((t for t in initial.entities if t.side == 1 and t.tower),
-                            key=lambda t: self.sim.distance(enemy,t), default=None)
-                if tower is not None:
-                    eta=max(0,self.sim.distance(enemy,tower)-enemy.spec.reach)/max(.1,enemy.spec.speed)
-                    result.enemy_forecast.append(dict(unit=enemy.spec.name, track_id=enemy.track_id, x=enemy.x, y=enemy.y,
-                        linear_samples=[dict(dt=dt,x=enemy.x+enemy.observed_vx*dt,y=enemy.y+enemy.observed_vy*dt) for dt in (.5,1.,2.)],
-                        target_x=tower.x,target_y=tower.y,unopposed_tower_eta_s=round(eta,2),
-                        observed_velocity=[enemy.observed_vx,enemy.observed_vy], status='hypothesis'))
+            from .defense_timing import forecast
+            result.enemy_forecast=forecast(self.sim,initial,world.hand,float(self.config.get('defense_pipeline_s',.35)))
+            urgent=any(f['intervention_slack_s']<=3 for f in result.enemy_forecast)
+            if urgent and result.tactical_phase=='prepare':
+                result.tactical_phase='defend'
+                self.sim.tactical_phase='defend'
+            dense=sum(not e.tower for e in initial.entities)>16
+            self.sim.placement_grid_step=float(self.config.get('placement_grid_step',1.))
+            if dense and self.config.get('adaptive_defense_budget',False):
+                self.sim.placement_grid_step=max(1.,self.sim.placement_grid_step)
+                deadline=started+max(.01,min(.24,float(self.config.get('dense_defense_budget_ms',240))/1000))
+                total_deadline=deadline
+                coarse_deadline=deadline
+                refinement_start=started+(deadline-started)*.5
+            result.compute['defense_timing']=dict(urgent=urgent,dense=dense,budget_ms=round((deadline-started)*1000),
+                enemy_elixir_interval=list(world.enemy_elixir),enemy_elixir_estimate=world.enemy_elixir_estimate,
+                enemy_hand_observed=False)
             # Every legal hand card receives its full spatial shortlist before refinement.
-            positions = max(2,min(24,int(self.config.get('positions_per_card',12))))
+            positions = max(2,min(24,int(self.config.get('positions_per_card',16))))
             roots = self.candidates(initial, 1, limit=None if self.config.get("all_placement_points",False) else 1 + positions * len(initial.hands[1]))
             for slot, cid in initial.hands[1]:
                 card = self.kb.cards.get(cid, {})
@@ -216,7 +225,7 @@ class PredictivePlanner:
             horizon = max(4, min(15, float(self.config.get("horizon_s", 8))))
             if result.enemy_forecast:
                 horizon=max(horizon,min(24,min(f['unopposed_tower_eta_s'] for f in result.enemy_forecast)+3))
-            urgent = any(f['unopposed_tower_eta_s'] <= 3 for f in result.enemy_forecast)
+            urgent = any(f['intervention_slack_s'] <= 3 for f in result.enemy_forecast)
             if urgent:
                 # Do not reserve half the budget for optional combinations while
                 # the first defensive comparison is still unfinished.
@@ -267,7 +276,7 @@ class PredictivePlanner:
                         result.candidates = balanced
                         result.completed_depth = 1
                         published_round = completed_round
-                        if fast and self.config.get('unified_tactics',False) and not urgent and self.clock()>=refinement_start:
+                        if fast and self.config.get('unified_tactics',False) and self.clock()>=refinement_start:
                             break
             if hasattr(rows,'close'):
                 rows.close()
@@ -420,20 +429,22 @@ class PredictivePlanner:
             if self.clock() >= deadline:
                 raise TimeoutError()
             state = initial_scenarios[index].clone()
+            pipeline=max(0.,min(1.,float(self.config.get('defense_pipeline_s',0))))
+            if pipeline:self.sim.advance(state,pipeline,deadline=deadline,clock=self.clock)
             if not self.sim.apply(state, root, 1):
                 return None
             self.sim.advance(state, 1.5, deadline=deadline, clock=self.clock)
             response = (self.attack_response(state) if fast and phase in {'develop','counterpush','prepare'} and root.card_id
                         else self.prior_response(state) if responds else SimAction())
             self.sim.apply(state, response, -1)
-            self.sim.advance(state, horizon-1.5, deadline=deadline, clock=self.clock)
+            self.sim.advance(state, horizon-1.5-pipeline, deadline=deadline, clock=self.clock)
             score, parts = self.sim.evaluate(state)
             if phase != 'legacy':
                 score = score_action(score, parts, world, self.kb, root, phase,
                                      float(self.config.get('attack_reserve',3)), self.sim.geometry)
             outcomes.append(score)
             branches.append(dict(enemy_elixir_assumption=enemy_cost, enemy_response=response.label,
-                                 own_followup='WAIT', score=round(score,4), **parts))
+                                 own_followup='WAIT', pipeline_delay_s=pipeline, score=round(score,4), **parts))
         risk = float(self.config.get('downside_weight',.65))
         score = (1-risk)*sum(outcomes)/len(outcomes)+risk*min(outcomes)
         return dict(action=asdict(root), label=root.label, score=round(score,4), branches=branches)
@@ -491,14 +502,23 @@ class PredictivePlanner:
             wait(self.combat_pool.pending,timeout=min(.01,max(0,deadline-self.clock())))
             if all(f.done() for f in self.combat_pool.pending):
                 result.compute['combination_search']['mode']='parallel'
-                rows=list(self.combat_pool.rows(world,shortlist,scenarios,horizon,result.tactical_phase,deadline,kind='combo'))
+                source=self.combat_pool.rows(world,shortlist,scenarios,horizon,result.tactical_phase,deadline,kind='combo')
             else:
                 raise TimeoutError()
         else:
             result.compute['combination_search']['mode']='serial'
-            rows=[self.evaluate_combination(world,root,scenarios,horizon,result.tactical_phase,deadline) for root in shortlist]
+            source=(self.evaluate_combination(world,root,scenarios,horizon,result.tactical_phase,deadline) for root in shortlist)
+        rows=[]
+        try:
+            for row in source:
+                if row is not None:rows.append(row)
+        except TimeoutError:
+            result.budget_exhausted=True
+        finally:
+            if hasattr(source,'close'):source.close()
         result.nodes += sum(row.pop('simulation_nodes',0) for row in rows)
-        result.compute['combination_search']['complete']=True
+        result.compute['combination_search']['completed_roots']=len(rows)
+        result.compute['combination_search']['complete']=len(rows)==len(shortlist)
         return rows
 
     def evaluate_combination(self,world,root,scenarios,horizon,phase,deadline):
@@ -509,6 +529,8 @@ class PredictivePlanner:
         for enemy_cost,hp,_ in scenarios:
             if self.clock()>=deadline:raise TimeoutError()
             state=self.initial(world,enemy_cost,hp)
+            pipeline=max(0.,min(1.,float(self.config.get('defense_pipeline_s',0))))
+            if pipeline:self.sim.advance(state,pipeline,deadline=deadline,clock=self.clock)
             if not self.sim.apply(state,root,1):raise ValueError('invalid tactical root')
             self.sim.advance(state,1.5,deadline=deadline,clock=self.clock)
             response=self.attack_response(state) if phase in {'develop','counterpush','prepare'} and root.card_id else SimAction()
@@ -550,7 +572,7 @@ class PredictivePlanner:
             score,parts,follow,spent,second_response=best
             outcomes.append(score);costs.append(spent)
             branches.append(dict(enemy_elixir_assumption=enemy_cost,enemy_response=response.label,
-                own_followup=follow.label,followup_action=asdict(follow),followup_after_s=1.5,
+                own_followup=follow.label,followup_action=asdict(follow),followup_after_s=1.5+pipeline,pipeline_delay_s=pipeline,
                 followup_candidates=len(followups),enemy_followup_response=second_response.label,score=round(score,4),**parts))
         risk=float(self.config.get('downside_weight',.65))
         return dict(action=asdict(root),label=root.label,score=round((1-risk)*sum(outcomes)/len(outcomes)+risk*min(outcomes),4),

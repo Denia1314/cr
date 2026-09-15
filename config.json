@@ -316,6 +316,9 @@
     "attack_reserve": 3,
     "assumed_level": 11,
     "budget_ms": 160,
+    "adaptive_defense_budget": true,
+    "dense_defense_budget_ms": 240,
+    "defense_pipeline_s": 0.35,
     "parallel_combat": true,
     "combat_workers": 4,
     "combat_batch_size": 4,
@@ -327,7 +330,7 @@
     "learned_action_value": true,
     "learning_budget_ms": 8,
     "all_placement_points": true,
-    "placement_grid_step": 1.0,
+    "placement_grid_step": 0.5,
     "horizon_s": 8,
     "max_plan_age_s": 2.5,
     "action_cooldown_s": 0.65,
@@ -337,6 +340,7 @@
     "defense_damage_tolerance": 5,
     "gpu_placement": true,
     "gpu_trajectory_screening": true,
+    "gpu_trajectory_step_s": 0.125,
     "compute_device": "auto"
   },
   "training": {

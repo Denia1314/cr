@@ -20,7 +20,7 @@ def initialize(payload, config, barrier):
         # Enemy-response shortlists retain the same batched ranking semantics,
         # without creating a CUDA context in each CPU worker.
         from .gpu_placement import PlacementBatch
-        _planner.sim.placement_batch = PlacementBatch('cpu', trajectory=bool(config.get('gpu_trajectory_screening',False)))
+        _planner.sim.placement_batch = PlacementBatch('cpu', trajectory=bool(config.get('gpu_trajectory_screening',False)),trajectory_step=float(config.get('gpu_trajectory_step_s',.25)))
     # Populate immutable mechanics caches before any frame deadline starts.
     for name in _planner.kb.units:
         _planner.kb.unit(name, _planner.sim.level)
