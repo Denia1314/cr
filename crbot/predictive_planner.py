@@ -44,6 +44,7 @@ class PredictivePlanner:
         self.sim = Simulator(kb, int(config.get("assumed_level", 11)))
         from .arena_geometry import ArenaGeometry
         self.sim.geometry=ArenaGeometry.from_config(config.get("arena_geometry"))
+        self.sim.grid_navigation = bool(config.get('grid_world', True))
         if config.get("gpu_placement", False):
             from .gpu_placement import PlacementBatch
             self.sim.placement_batch = PlacementBatch(str(config.get("compute_device", "auto")),trajectory=bool(config.get("gpu_trajectory_screening",False)))
@@ -102,6 +103,17 @@ class PredictivePlanner:
             fraction=world.tower_health[i]
             if fraction is None or fraction>0:
                 self.sim.add(s,tower,side,px,py,tower=True,hp_fraction=1 if fraction is None else fraction)
+        if self.config.get('king_towers', False):
+            king = self.kb.unit('KingTower', self.sim.level)
+            if king is not None:
+                for i,side in enumerate((1,-1)):
+                    points = self.config.get('king_tower_points')
+                    px,py = self.sim.xy(*points[i]) if points else (9.,30.5 if side==1 else 1.5)
+                    fraction = world.tower_health[4+i] if len(world.tower_health)>4+i else None
+                    if fraction is None or fraction > 0:
+                        entity=self.sim.add(s,king,side,px,py,tower=True,hp_fraction=fraction if fraction is not None else 1)
+                        entity.tower_kind='king';entity.active=fraction is not None and fraction < 1
+                s.uncertainties.add('king_activation_and_unobserved_health_estimated')
         for t in world.tracks:
             if world.at - t.last_seen > 1.5:
                 s.uncertainties.add("occluded_entity")
@@ -120,7 +132,7 @@ class PredictivePlanner:
             spec = roster[0][0]  # one detected box represents one entity, not another full deployment
             if sum(n for _, n in roster) != 1:
                 s.uncertainties.add("group_identity:" + t.card_id)
-            delay=min(.75,max(0,world.observation_delay_s))
+            delay=min(.75,max(0,world.observation_delay_s)+max(0,world.at-t.last_seen))
             x, y = self.sim.xy(t.x+t.vx*delay,t.y+t.vy*delay)
             x,y=max(0,min(18,x)),max(0,min(32,y))
             observed_hp = t.hp_fraction if t.hp_observed_at is None or world.at-t.hp_observed_at <= .6 else None
@@ -170,6 +182,8 @@ class PredictivePlanner:
         coarse_deadline=started+(deadline-started)*.5 if fast and self.config.get("unified_tactics",False) else deadline
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
                             "unavailable", knowledge_version=self.kb.version)
+        if self.sim.grid_navigation:
+            result.simulation_version = 'spatial_v5_grid_navigation'
         result.learning = {**(learning_status or {}), "applied": False,
                            "selected_for_execution": False, "changed_selection": False}
         try:

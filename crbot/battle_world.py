@@ -23,6 +23,7 @@ class Track:
     vy: float = 0
     hp_observed_at: float | None = None
     hp_confidence: float = 0.
+    identity_observed_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -82,11 +83,16 @@ class BattleWorld:
             x, y, confidence = float(d["x"]), float(d["y"]), float(d.get("confidence", 0))
             if not all(math.isfinite(v) for v in (x, y, confidence)) or confidence < .45:
                 continue
-            options = [t for t in self.tracks.values() if t.track_id not in claimed and t.card_id == cid
+            def identity_matches(t):
+                return t.card_id == cid or t.card_id.startswith('unknown:') or cid.startswith('unknown:')
+            def separation(t):
+                age=min(.75,max(0,now-t.last_seen))
+                return math.hypot(t.x+t.vx*age-x,t.y+t.vy*age-y)
+            options = [t for t in self.tracks.values() if t.track_id not in claimed and identity_matches(t)
                        and t.side == side and now - t.last_seen <= 3
-                       and math.hypot(t.x - x, t.y - y) <= .07 + min(.18, dt * .06)]
+                       and separation(t) <= .07 + min(.18, dt * .06)]
             if options:
-                t = min(options, key=lambda t: math.hypot(t.x - x, t.y - y))
+                t = min(options, key=lambda t: (separation(t),t.card_id != cid))
                 age = now - t.last_seen
                 if .05 <= age <= 1.5:
                     t.vx = max(-.3, min(.3, (x-t.x)/age))
@@ -95,18 +101,25 @@ class BattleWorld:
                     t.vx = t.vy = 0
                 t.x, t.y, t.last_seen, t.confidence = x, y, now, confidence
                 t.observations += 1
+                if not cid.startswith('unknown:'):
+                    t.card_id=cid
             else:
                 t = Track(self.next_id, cid, side, x, y, now, now, confidence)
                 self.tracks[t.track_id] = t
                 self.next_id += 1
             claimed.add(t.track_id)
+            if not cid.startswith('unknown:'):
+                t.identity_observed_at=now
+            elif not t.card_id.startswith('unknown:') and t.identity_observed_at is not None and now-t.identity_observed_at > 2:
+                t.card_id=cid
             if d.get("hp_fraction") is not None:
                 hp = float(d["hp_fraction"])
                 if math.isfinite(hp) and 0 <= hp <= 1 and float(d.get("hp_confidence", 1)) >= .8:
                     t.hp_fraction, t.hp_observed_at = hp, now
                     t.hp_confidence = float(d.get('hp_confidence',1))
-            t.variant = str(d.get("variant", "unknown"))
-            t.hypotheses = tuple(d.get("hypotheses", ()))
+            if cid == t.card_id or not cid.startswith('unknown:'):
+                t.variant = str(d.get("variant", "unknown"))
+                t.hypotheses = tuple(d.get("hypotheses", ()))
             if side == -1:
                 if not cid.startswith("unknown:"):
                     self.enemy_seen[cid] = now

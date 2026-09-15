@@ -24,6 +24,9 @@ class PredictiveBattlePolicy(BattlePolicy):
         self.last_execution_engine = "none"
         self.fallback_count = 0
         self._proposed_prediction = None
+        from .grid_world import GridWorldAudit
+        self.grid_audit = GridWorldAudit()
+        self.grid_frame = None
         root = config_path.parent if config_path else Path.cwd()
         path = root / self.planning_config.get("knowledge_path", "data/battle_knowledge.json")
         try:
@@ -40,6 +43,9 @@ class PredictiveBattlePolicy(BattlePolicy):
         self.last_plan = None
         self.last_execution_engine = "none"
         self._proposed_prediction = None
+        from .grid_world import GridWorldAudit
+        self.grid_audit = GridWorldAudit()
+        self.grid_frame = None
 
     def prediction_status(self):
         return {"selected_engine": self.decision_engine, "actual_engine": self.last_execution_engine,
@@ -154,6 +160,14 @@ class PredictiveBattlePolicy(BattlePolicy):
         result.valid_until -= frame_age
         self.last_plan = result.to_dict()
         self.last_plan['visible_health_bars'] = bars
+        if self.planning_config.get('grid_world', True):
+            try:
+                state=self.planner.initial(snapshot,snapshot.enemy_elixir_estimate,1.)
+                packet=self.grid_audit.update(snapshot,state,self.planner.sim,result)
+                self.last_plan['grid_world']=packet
+                self.grid_frame=(current,packet)
+            except (ValueError,KeyError,TypeError) as exc:
+                self.last_plan['grid_world_error']=str(exc)
         self.last_plan['unit_health'] = [dict(track_id=t.track_id,card_id=t.card_id,side=t.side,
             fraction=t.hp_fraction,observed_at=t.hp_observed_at,confidence=t.hp_confidence,
             identity_known=not t.card_id.startswith('unknown:')) for t in snapshot.tracks]

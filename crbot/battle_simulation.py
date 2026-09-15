@@ -50,6 +50,8 @@ class Entity:
     track_id: int | None = None
     active_at: float = 0.
     winding_target: int | None = None
+    tower_kind: str = ''
+    active: bool = True
 
 
 @dataclass
@@ -229,20 +231,15 @@ class Simulator:
                             if e.cloned:
                                 child.shield=1 if spec.shield else 0
                     e.spawn_at = s.time + max(1, e.spec.spawn_period)
-                enemies = [t for t in s.entities if t.side != e.side and t.hp > 0
-                           and ("air" if t.spec.air else "ground") in e.spec.targets
-                           and (not e.spec.building_only or t.spec.building or t.tower)]
-                if e.tower:
-                    enemies = [t for t in enemies if self.distance(e, t) <= e.spec.reach]
-                sight = max(e.spec.sight, e.spec.reach) if e.tower else e.spec.sight
-                target = next((t for t in enemies if t.uid == e.target and self.distance(e, t) <= sight), None)
-                if target is None:
-                    nearby = [t for t in enemies if self.distance(e, t) <= sight]
-                    towers = [t for t in enemies if t.tower]
-                    target = min(nearby or towers, key=lambda t: self.distance(e, t), default=None)
-                    if target and target.uid != e.target:
-                        e.target = target.uid
-                        e.winding_target=None
+                if e.tower_kind == 'king' and not e.active:
+                    e.active = e.hp < e.spec.hp or sum(t.tower and t.side == e.side and t.tower_kind != 'king' for t in s.entities) < 2
+                    if not e.active:
+                        continue
+                from .grid_world import target_for
+                target = target_for(self,s,e)
+                if target and target.uid != e.target:
+                    e.target=target.uid
+                    e.winding_target=None
                 if target is None:
                     continue
                 if self.distance(e, target) <= e.spec.reach:
@@ -270,6 +267,12 @@ class Simulator:
                         s.tower_shots[e.side] += 1
                 elif e.spec.speed > 0 and not e.tower:
                     e.winding_target=None
+                    if getattr(self, 'grid_navigation', False):
+                        from .grid_navigation import move
+                        multiplier = e.spec.charge_multiplier if e.spec.charge_distance and e.walked >= e.spec.charge_distance else 1
+                        speed_factor=(e.haste if s.time < e.haste_until else 1)*(e.slow if s.time < e.slow_until else 1)
+                        e.walked += move(s,e,target,self.geometry,e.spec.speed*multiplier*speed_factor*dt)
+                        continue
                     tx, ty = target.x, target.y
                     if not e.spec.air and (e.y - 16) * (ty - 16) < 0:
                         # Ground units cross on a bridge before heading for the target.

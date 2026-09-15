@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from PIL import Image, ImageTk
 
-from . import implemented_stages_label, release_label
+from . import IMPLEMENTED_STAGES, implemented_stages_label, release_label
 from .adb import MumuDevice
 from .annotate import AnnotationWindow
 from .calibrate import CalibrationWindow
@@ -219,7 +219,7 @@ class RoyalTrainerApp:
         )
         self.release_heading.pack(anchor="w")
         tk.Label(
-            brand, text=implemented_stages_label(), font=(FONT, 8),
+            brand, text='已接入：'+' · '.join(stage for stage,_ in IMPLEMENTED_STAGES), font=(FONT, 8),
             foreground=Palette.MUTED, background=Palette.SURFACE,
         ).pack(anchor="w", pady=(3, 0))
 
@@ -363,6 +363,9 @@ class RoyalTrainerApp:
             background=Palette.CARD,
         )
         self.preview_state.pack(side="left", padx=12)
+        HoverButton(top,text='方格战场',command=self.show_grid_world,
+                    background=Palette.CARD_ALT,foreground=Palette.MUTED,
+                    hover='#26314B',padx=8,pady=6).pack(side='right',padx=4)
         HoverButton(
             top,
             text="刷新",
@@ -1415,6 +1418,14 @@ class RoyalTrainerApp:
             missing = payload.get("missing") or []
             calibration_text = "标定完整" if not missing else "缺少标定：" + ", ".join(missing)
             self._append_log(f"环境检测完成：{installed_text} · {calibration_text}", "success" if not missing and payload.get("installed") else "warning")
+
+    def show_grid_world(self) -> None:
+        from .grid_world_view import GridWorldWindow
+        existing=getattr(self,'grid_inspector',None)
+        if existing is not None and existing.window.winfo_exists():
+            existing.window.lift();return
+        self.grid_inspector=GridWorldWindow(self.root,lambda: getattr(
+            getattr(self.engine,'policy',None),'grid_frame',None) if self.engine else None)
 
     def _show_image(self, image: Image.Image) -> None:
         self.current_image = image.copy()

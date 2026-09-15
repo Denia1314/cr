@@ -318,6 +318,8 @@
     "parallel_combat": true,
     "combat_workers": 4,
     "combat_batch_size": 4,
+    "grid_world": true,
+    "king_towers": true,
     "unit_health_observation": true,
     "combo_positions_per_card": 2,
     "combo_root_positions": 1,
