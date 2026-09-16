@@ -13,7 +13,7 @@ def approach_speed(entity, target):
 
 def forecast(sim, state, hand, pipeline_s=.35):
     from .grid_navigation import route
-    towers=[t for t in state.entities if t.side==1 and t.tower and t.hp>0 and t.tower_kind!='king']
+    towers=[t for t in state.entities if t.side==1 and t.tower and t.hp>0]
     result=[]
     for enemy in (e for e in state.entities if e.side==-1 and not e.tower and e.hp>0):
         tower=min(towers,key=lambda t:sim.distance(enemy,t),default=None)

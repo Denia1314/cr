@@ -52,13 +52,14 @@ class PredictivePlanner:
         self.sim.placement_grid_step = float(config.get("placement_grid_step", 1.))
         self.clock = time.perf_counter
         self.combat_pool = None
+        self._urgent_recovery = False
 
     def warm_pool(self):
         if self.config.get('parallel_combat', False) and self.combat_pool is None:
             from .parallel_combat import CombatPool
             self.combat_pool = CombatPool(self.kb.payload, self.config)
 
-    def candidates(self, s: SimState, side: int, *, limit=12) -> list[SimAction]:
+    def candidates(self, s: SimState, side: int, *, limit=12, bounded=False) -> list[SimAction]:
         result = [SimAction(wait_s=.4)]
         for slot, cid in s.hands[side]:
             card = self.kb.cards.get(cid, {})
@@ -69,7 +70,8 @@ class PredictivePlanner:
                 continue
             positions = max(2,min(24,int(self.config.get('positions_per_card',16))))
             points = placement_points(self.sim, s, cid, side,
-                                      limit=None if self.config.get("all_placement_points",False) else positions)
+                                      limit=2 if bounded else (None if self.config.get("all_placement_points",False) else positions),
+                                      quick=bounded)
             for x, y in points:
                 result.append(SimAction(cid, slot, x, y))
         # Round-robin by card avoids exhausting the budget on the first hand slot.
@@ -192,8 +194,18 @@ class PredictivePlanner:
                            "selected_for_execution": False, "changed_selection": False}
         stage_started = time.perf_counter()
         result.compute['stage_ms'] = {}
+        initial = None
+        bounded_recovery = self._urgent_recovery
         try:
             initial = self.initial(world, world.enemy_elixir[1], 1.)
+            # After a failed search, the next frame must not pay for the same
+            # thousands of grid points before it can defend a tower again.
+            if self._urgent_recovery:
+                self._urgent_recovery = False
+                if self.recover_tower_defense(result, initial):
+                    result.compute['fresh_frame_recovery'] = True
+                    result.elapsed_ms = round((self.clock()-started)*1000, 2)
+                    return result
             from .tactical_objective import phase_for,score_action
             result.tactical_phase=phase_for(initial) if self.config.get("unified_tactics",False) else "legacy"
             self.sim.tactical_phase=result.tactical_phase
@@ -218,7 +230,9 @@ class PredictivePlanner:
             stage_started = time.perf_counter()
             # Every legal hand card receives its full spatial shortlist before refinement.
             positions = max(2,min(24,int(self.config.get('positions_per_card',16))))
-            roots = self.candidates(initial, 1, limit=None if self.config.get("all_placement_points",False) else 1 + positions * len(initial.hands[1]))
+            roots = self.candidates(initial, 1, limit=None if self.config.get("all_placement_points",False) else 1 + positions * len(initial.hands[1]),
+                                    bounded=bounded_recovery)
+            result.compute['bounded_timeout_recovery'] = bounded_recovery
             from .card_matchup import card_evidence
             observed_enemies = [e for e in initial.entities if e.side == -1 and not e.tower and e.hp > 0]
             for slot, cid in initial.hands[1]:
@@ -230,7 +244,7 @@ class PredictivePlanner:
                 result.hand_evaluations.append(dict(slot=slot, card_id=cid, positions=positions,
                                                     evaluated=0, status=reason, spatial_scored=positions,
                                                     database_comparison=card_evidence(self.kb, cid, self.sim.level, observed_enemies),
-                                                    full_domain=bool(self.config.get("all_placement_points",False))))
+                                                    full_domain=bool(self.config.get("all_placement_points",False)) and not bounded_recovery))
             result.compute['stage_ms']['spatial_ranking'] = round((time.perf_counter()-stage_started)*1000, 2)
             stage_started = time.perf_counter()
             horizon = max(4, min(15, float(self.config.get("horizon_s", 8))))
@@ -379,6 +393,11 @@ class PredictivePlanner:
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             result.status, result.reason = "unavailable", f"world_model_error: {exc}"
             result.candidates = []
+        if result.status == 'timeout' and not result.candidates and initial is not None:
+            # No incomplete simulation row is promoted. This separate, audited
+            # estimate needs only current entities, legal slots and database stats.
+            self._urgent_recovery = True
+            self.recover_tower_defense(result, initial)
         result.compute['stage_ms']['first_comparison'] = round((time.perf_counter()-stage_started)*1000, 2)
         if result.candidates and fast and self.config.get("unified_tactics",False):
             try:
@@ -499,7 +518,7 @@ class PredictivePlanner:
             result.compute["parallel_combat"]['last_mode'] = combat_mode
         result.compute["arena_geometry"]=asdict(self.sim.geometry)
         result.compute["grid_step_tiles"] = self.sim.placement_grid_step
-        result.compute["all_placement_points"] = bool(self.config.get("all_placement_points",False))
+        result.compute["all_placement_points"] = bool(self.config.get("all_placement_points",False)) and not bounded_recovery
         result.compute["spatial_scored"] = sum(e["spatial_scored"] for e in result.hand_evaluations)
         result.compute["combat_evaluated"] = sum(e["evaluated"] for e in result.hand_evaluations)
         result.compute["combat_complete"] = bool(result.hand_evaluations) and all(e["evaluated"] == e["positions"] for e in result.hand_evaluations)
@@ -519,6 +538,20 @@ class PredictivePlanner:
                 result.reason += f"；留费防下一波：出牌后需保留至少 {needed:g} 费"
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
+
+    def recover_tower_defense(self, result, initial):
+        from .emergency_defense import emergency_defense
+        action, audit = emergency_defense(self.sim, initial)
+        result.compute['timeout_tower_defense'] = audit
+        if action is None:
+            return False
+        result.action = action
+        result.status = 'ready'
+        result.tactical_phase = 'defend'
+        result.placement_mode = 'database_emergency_estimate'
+        result.reason = '精算未完成；敌军已接近皇家塔，按数据库属性执行应急防守（非完整战斗比较）'
+        result.learning.update(applied=False, selected_for_execution=False, changed_selection=False)
+        return True
 
     def evaluate_root(self, world, root, scenarios, horizon, phase, deadline, initial_scenarios=None):
         """Identical detailed simulation for serial and process workers."""

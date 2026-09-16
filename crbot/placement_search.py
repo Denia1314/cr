@@ -25,7 +25,7 @@ def spatial_rounds(ranked, side):
     return result
 
 
-def placement_points(sim, state, card_id, side, *, limit=12):
+def placement_points(sim, state, card_id, side, *, limit=12, quick=False):
     card = sim.kb.cards[card_id]
     roster = sim.kb.roster(card_id, sim.level)
     spell = sim.kb.spell(card_id, sim.level)
@@ -50,9 +50,10 @@ def placement_points(sim, state, card_id, side, *, limit=12):
                        if (not e.spec.air or spell['air']) and math.dist(p, q) <= spell['radius'] + e.spec.radius)
     elif roster:
         # Cover the full conservative home deployment region, not a list of lane anchors.
+        step = 4 if quick else (1 if getattr(sim, "placement_batch", None) else 2)
         points = [(float(x), float(y if side == 1 else 32-y))
-                  for x in range(1, 18, 1 if getattr(sim, "placement_batch", None) else 2)
-                  for y in range(17, 30, 1 if getattr(sim, "placement_batch", None) else 2)]
+                  for x in range(1, 18, step)
+                  for y in range(17, 30, step)]
         projected = []
         for enemy in enemies:
             tower = min(towers, key=lambda t: math.hypot(enemy.x-t.x, enemy.y-t.y), default=None)
