@@ -38,7 +38,20 @@
 
 代码在 EXE 内，更新代码后必须重新构建并替换 EXE。旧版“小启动器”不能升级为独立程序，需使用新版文件。当前产物未签名。
 
-## 验证与诊断
+## 一键清理构建产物
+
+双击根目录的 `一键清理多余文件.bat`，无需 Python 或管理员权限。清理直接删除文件，不进入回收站；结束后窗口保留结果，明细写入 `reports/artifact-cleanup-时间.json`。命令行运行 `一键清理多余文件.bat -Preview` 只列出计划，不删除文件。
+
+- 清理 `build` 的 `standalone-runtime`、`standalone`、`standalone-resources`、`exe`，以及名称形如 `*-release-3.12.6` 的源码快照内部 `build`。源码快照本身保留，下次打包重新生成缓存。
+- 清理 `dist` 内旧式 `fast`、`grid-embedded`、`release`、`standalone`、`standalone-final` 分发目录，以及两份已知的旧程序备份。未知目录和版本号命名的分发目录保留，不凭名称猜测是否已交付。
+- 清理 `reports/gpu_setup` 及其子目录的 `.whl`、`.part`、`.bin` 安装缓存，保留诊断脚本与日志。
+- 根目录存在 `RoyalLab.exe` 时，保留它及版本号最高的一份 `RoyalLab-x.y.z.exe`，删除其余版本化 EXE；正在运行的 EXE 跳过。主程序不存在时不删除任何根目录版本化 EXE。
+- 保留 `.venv`、模型、训练数据、对战截图、演示、同步身份、配置、Git 和用户目录下的运行缓存。旧截图清理仍由原来的独立脚本处理。
+- 检测到打包、依赖安装/下载进程，或从 `build/dist/reports` 启动的程序时暂停整个清理，完成后再双击；进程查询失败也不会继续。拒绝跟随目录链接或 junction。请勿在清理过程中启动新打包任务。
+
+此工具随源码 3.12.7 提供，保持 V1 阶段，不重新生成数 GB 的 EXE；现有 EXE 仍显示其自身内置版本。
+
+## 验证与诊断命令
 
 - `RoyalLab.exe --self-test --report "D:\package-check.json"` 验证资源、功能模块、CPU/CUDA 运算与训练梯度、YOLO 无下载推理、多进程推演入口、学习子进程和同步工具；结果写入 JSON。
 - `RoyalLab.exe --smoke-ui --report "D:\ui-check.json"` 打开真实界面后自动关闭，不启动设备检测、同步或战斗，记录版本选项与窗口尺寸。
