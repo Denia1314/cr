@@ -15,7 +15,7 @@
   },
   "automation": {
     "latest_frame_capture": true,
-    "continuous_perception": true,
+    "continuous_perception": false,
     "mumu_ipc_capture": true,
     "chest_screen_enabled": true,
     "chest_screen_tap_interval_s": 0.8,
