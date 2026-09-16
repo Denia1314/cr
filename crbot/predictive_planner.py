@@ -443,6 +443,18 @@ class PredictivePlanner:
             baseline, _ = avoid_overflow(baseline, overflow_candidates, world, self.kb,
                                         float(self.config.get('attack_reserve', 3)), 'simulation_score', preparation)
             result.compute['elixir_overflow'] = overflow
+            # Apply in preparation as well as contact defense. A deferred combo
+            # cannot justify WAIT when a completed immediate play protects towers.
+            from .tactical_objective import protect_towers_before_wait
+            best, tower_wait = protect_towers_before_wait(
+                best, overflow_candidates, world, self.kb,
+                self.config.get('defense_damage_tolerance', 30),
+                self.config.get('tower_wait_minimum_mitigation', 30))
+            baseline, _ = protect_towers_before_wait(
+                baseline, overflow_candidates, world, self.kb,
+                self.config.get('defense_damage_tolerance', 30),
+                self.config.get('tower_wait_minimum_mitigation', 30))
+            result.compute['tower_wait_guard'] = tower_wait
             result.learning.update(changed_selection=best["action"] != baseline["action"],
                                    baseline_action=baseline["action"],
                                    selected_action_supported="learned_value" in best)
@@ -459,6 +471,12 @@ class PredictivePlanner:
             result.reason = f"首步比较 {len(result.candidates)} 个方案 / 深度 {result.completed_depth} / {horizon:g} 秒；{responses}"
             if overflow['changed']:
                 result.reason += '；敌方沉底，提前安全展开' if preparation else '；接近满费，执行安全低费发展'
+            if tower_wait['changed']:
+                result.reason += f"；等待将增加皇家塔受伤风险，提前防守（预计减少伤害及暴露 {tower_wait['prevented_damage_and_exposure']:g}）"
+            elif best['action']['card_id'] is None and 'wait_damage_and_exposure' in tower_wait:
+                result.reason += f"；立即等待预计塔伤及暴露 {tower_wait['wait_damage_and_exposure']:g}"
+                if tower_wait['reason'] == 'no_completed_effective_defense':
+                    result.reason += '，已完成方案中暂无可支付且有效减伤的立即防守'
             if result.combo_candidates:
                 result.reason += f"；条件式后续完整比较 {len(result.combo_candidates)} 个根动作（每牌最佳首步及等待）"
         if getattr(self.sim, "placement_batch", None):

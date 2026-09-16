@@ -1,5 +1,45 @@
 """Shared attack/defense objective with explicit reserve and response hypotheses."""
 
+def protect_towers_before_wait(best, candidates, world, kb, tolerance=30., minimum_mitigation=30.):
+    """Veto a dangerous WAIT using completed immediate-action comparisons only."""
+    tolerance = max(0., float(tolerance))
+    minimum_mitigation = max(0., float(minimum_mitigation))
+    audit = dict(changed=False, reason='already_playing', tolerance=tolerance,
+                 minimum_mitigation=minimum_mitigation)
+    if best['action']['card_id'] is not None:
+        return best, audit
+    waiting = next((r for r in candidates if r['action']['card_id'] is None and r.get('branches')), None)
+    if waiting is None:
+        audit['reason'] = 'immediate_wait_unavailable'
+        return best, audit
+
+    def loss(row):
+        return max(-100000*b.get('own_towers_remaining', 2)
+                   + b.get('own_tower_damage', 0) + b.get('imminent_tower_exposure', 0)
+                   for b in row['branches'])
+
+    wait_loss = loss(waiting)
+    audit['wait_damage_and_exposure'] = max(b.get('own_tower_damage', 0)
+        + b.get('imminent_tower_exposure', 0) for b in waiting['branches'])
+    effective = [r for r in candidates if r['action']['card_id']
+                 and (r['action']['slot'], r['action']['card_id']) in world.hand
+                 and kb.cards[r['action']['card_id']].get('elixir') is not None
+                 and kb.cards[r['action']['card_id']]['elixir'] <= world.elixir
+                 and r.get('branches') and wait_loss-loss(r) > minimum_mitigation]
+    if not effective:
+        audit['reason'] = ('no_completed_effective_defense' if audit['wait_damage_and_exposure'] > minimum_mitigation
+                           else 'wait_tower_risk_within_tolerance')
+        return best, audit
+    minimum = min(map(loss, effective))
+    sufficient = [r for r in effective if loss(r) <= minimum+tolerance]
+    chosen = min(sufficient, key=lambda r: (kb.cards[r['action']['card_id']]['elixir'],
+                                           loss(r), -r['score']))
+    audit.update(changed=True, reason='prevent_predicted_tower_damage',
+                 prevented_damage_and_exposure=wait_loss-loss(chosen),
+                 card_id=chosen['action']['card_id'])
+    return chosen, audit
+
+
 def phase_for(state):
     enemies = [e for e in state.entities if e.side == -1 and not e.tower and e.hp > 0]
     if enemies:

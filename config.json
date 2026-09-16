@@ -346,6 +346,7 @@
     "unknown_response_cards": ["knight", "musketeer", "fireball"],
     "fast_defense": true,
     "defense_damage_tolerance": 5,
+    "tower_wait_minimum_mitigation": 30,
     "gpu_placement": true,
     "gpu_trajectory_screening": true,
     "gpu_trajectory_step_s": 0.125,

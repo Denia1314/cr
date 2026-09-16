@@ -28,6 +28,38 @@ class DefenseReserveTests(unittest.TestCase):
         choices, _ = guard_development_reserve([waiting,play],self.scenario(7),self.kb,'develop')
         self.assertIn(play,choices)
 
+    def test_preparation_wait_yields_to_immediate_tower_protection(self):
+        for damage, exposure, expected in ((400,0,'ready'), (0,400,'ready'), (0,0,'wait')):
+            with self.subTest(damage=damage, exposure=exposure):
+                p=PredictivePlanner(self.kb,dict(fast_defense=True,unified_tactics=True,development_reserve_gate=True))
+                p.clock=lambda:0
+                roots=[SimAction(),SimAction('knight',0,.3,.72)]
+                def evaluate(w,a,*args):
+                    result=row(a,0 if a.card_id else damage,-100 if a.card_id else 100)
+                    result['branches'][0]['imminent_tower_exposure']=0 if a.card_id else exposure
+                    return result
+                # A high scoring conditional WAIT must not hide the damage of
+                # actually doing nothing. No future follow-up is yet executed.
+                combo=row(SimAction(),0,1000)
+                with patch('crbot.tactical_objective.phase_for',return_value='prepare'), \
+                     patch.object(p,'candidates',return_value=roots), \
+                     patch.object(p,'evaluate_root',side_effect=evaluate), \
+                     patch.object(p,'refine_combinations',return_value=[combo]):
+                    result=p.plan(self.scenario(3))
+                self.assertEqual(result.status,expected)
+                self.assertEqual(result.compute['tower_wait_guard']['changed'],expected=='ready')
+
+    def test_tower_wait_guard_requires_real_affordable_mitigation(self):
+        from crbot.tactical_objective import protect_towers_before_wait
+        waiting=row(SimAction(),400,100)
+        ineffective=row(SimAction('knight',0,.3,.72),390)
+        effective=row(SimAction('musketeer',1,.3,.72),0)
+        chosen,audit=protect_towers_before_wait(waiting,[waiting,ineffective,effective],self.scenario(3),self.kb)
+        self.assertIs(chosen,waiting)
+        self.assertFalse(audit['changed'])
+        chosen,_=protect_towers_before_wait(waiting,[waiting,ineffective,effective],self.scenario(4),self.kb)
+        self.assertIs(chosen,effective)
+
     def test_played_card_is_not_counted_as_still_in_hand(self):
         waiting = row(SimAction(),0)
         play = row(SimAction('musketeer',1,.3,.72),0)
