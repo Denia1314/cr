@@ -55,6 +55,21 @@ class FreshBattleFrameTests(unittest.TestCase):
 
 
 class PlanDeliveryTests(unittest.TestCase):
+    def test_real_enemy_at_recent_friendly_deployment_remains_visible(self):
+        from tests.battlefield_fixtures import scene_with_badge
+        from crbot.battle_perception import detect_lane_threats
+        image = scene_with_badge(x=.3, y=.65)
+        self.assertEqual(detect_lane_threats(image, ignore_points=((.3, .65),))['left'].unit_count, 0)
+        policy = object.__new__(BattlePolicy)
+        policy._observed_image = None
+        policy._threat_observed_at = -1000.
+        policy.last_deploy_point = (.3, .65)
+        policy.last_deploy_at = 99.9
+        policy.policy = {'own_deploy_indicator_s': 2.8}
+        policy.learned_detector = None
+        threats = policy._perceive_threats(image, None, 100.)
+        self.assertEqual(threats['left'].unit_count, 1)
+
     def test_final_lane_guard_reuses_badges_without_detector_or_track_mutation(self):
         policy = object.__new__(BattlePolicy)
         image, previous = Image.new('RGB', (20, 20)), Image.new('RGB', (20, 20))

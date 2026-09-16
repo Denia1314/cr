@@ -1227,10 +1227,8 @@ class BattlePolicy:
         if current is self._observed_image and now == self._observed_at:
             return self._observed_threats
         ignore_points = ()
-        if self.last_deploy_point is not None and now - self.last_deploy_at <= float(
-            self.policy.get("own_deploy_indicator_s", 2.8)
-        ):
-            ignore_points = (self.last_deploy_point,)
+        # Team-colored level badges already exclude the purple deployment cost.
+        # A friendly deployment must not erase real enemies at the same position.
         frame_dt_s: float | None = None
         if self._threat_observed_at > -999.0:
             frame_dt_s = max(0.05, now - self._threat_observed_at)

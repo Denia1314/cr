@@ -29,6 +29,20 @@ def cached_text(image,position,text,*,size,fill):
     image.paste(tile,tuple(round(v) for v in position),tile)
 
 
+def current_entities(packet):
+    """Keep history in the audit packet, not in the current-observation layer."""
+    for entity in packet.get('entities', []):
+        if entity.get('tower'):
+            yield entity
+            continue
+        if entity.get('source') in {'occluded', 'deployment_hypothesis'}:
+            continue
+        age = entity.get('age_s')
+        if packet.get('status') != 'live_tracking' and age is not None and age >= .05:
+            continue
+        yield entity
+
+
 def render_grid(packet, size=(450,700)):
     image=Image.new('RGB',size,'#101a2a');draw=ImageDraw.Draw(image)
     w,h=size;compact=h<280
@@ -38,14 +52,17 @@ def render_grid(packet, size=(450,700)):
     elixir_text='未知' if elixir is None else f'{elixir:.1f}'
     cached_text(image,(8,5 if compact else 10),f"方格战场 · 圣水 {elixir_text}",size=10 if compact else 14,fill='#eef4ff')
     live=packet.get('status')=='live_tracking'
-    if not compact:cached_text(image,(12,32),'实时位置跟踪 · 兵种非逐帧重识别' if live else '蓝=我方  红=敌方  问号=估计',size=12,fill='#9fb2cb')
+    if not compact:cached_text(image,(12,32),'实时位置跟踪 · 兵种非逐帧重识别' if live else '当前观测：蓝=我方 红=敌方 黄框=身份未知',size=12,fill='#9fb2cb')
     draw.rectangle((*point(0,15),*point(18,17)),fill='#154567')
     for bridge in packet.get('bridges',[]):draw.rectangle((*point(bridge-1,15),*point(bridge+1,17)),fill='#967a50')
     for x in range(19):draw.line((*point(x,0),*point(x,32)),fill='#25344a')
     for y in range(33):draw.line((*point(0,y),*point(18,y)),fill='#25344a')
     boxes=[]
-    for e in packet.get('entities',[]):
+    visible = list(current_entities(packet))
+    hidden = len(packet.get('entities', [])) - len(visible)
+    for e in visible:
         x,y=point(e['x'],e['y']);color='#5daaff' if e['side']==1 else '#ff707d'
+        if e.get('identity_estimated') and not e.get('tower'):color='#e7bd62'
         path=e.get('path') or []
         if len(path)>1:draw.line([point(*p) for p in path],fill=color,width=1)
         radius=max(4,scale*(.65 if e.get('tower') else .30))
@@ -72,7 +89,7 @@ def render_grid(packet, size=(450,700)):
         draw.ellipse((x-9,y-9,x+9,y+9),outline='#ffe37e',width=3)
     error=packet.get('calibration',{}).get('mean_position_error_tiles')
     if not compact:cached_text(image,(12,h-44),f"兵种快照年龄：{packet.get('model_age_s',0):.1f} 秒" if live else f"位置预测误差：{error if error is not None else '等待可比观测'} 格",size=12,fill='#b9c6da')
-    cached_text(image,(8,h-19),'蓝=我方 红=敌方 · 点击查看' if compact or live else '路线为模型预测；点击方块查看属性',size=10 if compact else 12,fill='#b9c6da')
+    cached_text(image,(8,h-19),f'历史/部署假设 {hidden} 项未画入当前观测' if hidden else '路线为模型预测；黄框身份未知，点击查看',size=10 if compact else 12,fill='#b9c6da')
     return image,boxes
 
 

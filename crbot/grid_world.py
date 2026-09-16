@@ -81,7 +81,7 @@ class GridWorldAudit:
             x,y=sim.xy(t.x,t.y)
             rows.append(dict(id=f'track:{t.track_id}',track_id=t.track_id,uid=None,side=t.side,x=x,y=y,
                 cell=[int(x),int(y)],card_id=t.card_id,hp=None,hp_fraction=t.hp_fraction,hp_estimated=t.hp_fraction is None,
-                identity_estimated=True,source='unmodeled_observation',confidence=t.confidence,age_s=world.at-t.last_seen,
+                identity_estimated=t.card_id.startswith('unknown:'),source='unmodeled_observation' if world.at-t.last_seen<.05 else 'occluded',confidence=t.confidence,age_s=world.at-t.last_seen,
                 level=t.level,side_evidence=t.side_evidence,
                 hypotheses=list(t.hypotheses),attributes=None,tower=False,active=None,target_uid=None,path=[]))
         # Destroyed anchors remain inspectable, but never re-enter simulation.

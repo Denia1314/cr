@@ -7,13 +7,28 @@ from crbot.battle_world import BattleWorld, Track
 from crbot.battle_simulation import SimState, SimAction
 from crbot.grid_navigation import route, cell, passable, obstacles
 from crbot.grid_world import GridWorldAudit, target_for, along
-from crbot.grid_world_view import render_grid
+from crbot.grid_world_view import render_grid, current_entities
 from crbot.parallel_combat import CombatPool
 from crbot.predictive_planner import PredictivePlanner, PlanResult
 from tests.test_prediction import knowledge, world
 
 
 class GridWorldTests(unittest.TestCase):
+    def test_current_view_excludes_stale_unknown_and_deployment_predictions(self):
+        snapshot = world(tracks=(Track(7,'unknown:left:single',-1,.2,.22,97,98.016,.5),
+                                Track(9,'unknown:right:single',-1,.7,.6,100,100,.5)))
+        audit = GridWorldAudit()
+        packet = audit.update(snapshot,self.p.initial(snapshot,7,1),self.p.sim,PlanResult(1,100,101,'wait'))
+        stale = next(e for e in packet['entities'] if e.get('track_id')==7)
+        self.assertEqual(stale['source'], 'occluded')
+        self.assertAlmostEqual(stale['age_s'], 1.984)
+        packet['entities'].append(dict(id='predicted',side=1,x=4,y=20,source='deployment_hypothesis'))
+        visible = list(current_entities(packet))
+        self.assertFalse(any(e.get('track_id')==7 or e.get('id')=='predicted' for e in visible))
+        self.assertTrue(any(e.get('track_id')==9 for e in visible))
+        _, boxes = render_grid(packet,(450,700))
+        self.assertEqual([e['id'] for _,e in boxes],[e['id'] for e in visible])
+
     def setUp(self):
         self.kb=knowledge();self.p=PredictivePlanner(self.kb,dict(grid_world=True,fast_defense=True))
 
