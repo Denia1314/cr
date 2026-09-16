@@ -196,7 +196,7 @@ class UniversalHandRecognizer:
         return matches
 
 
-def _level_badge_candidates(image: Image.Image) -> list[tuple[float, float, int]]:
+def _level_badge_candidates(image: Image.Image, *, pixel_scale=1.) -> list[tuple[float, float, int]]:
     """Find red enemy level badges across the playable arena."""
     if cv2 is None:
         return []
@@ -228,20 +228,21 @@ def _level_badge_candidates(image: Image.Image) -> list[tuple[float, float, int]
     mask = cv2.morphologyEx(
         mask,
         cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3)),
+        cv2.getStructuringElement(cv2.MORPH_RECT, (max(1,round(5*pixel_scale)), max(1,round(3*pixel_scale)))),
     )
     _count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask)
     detected: list[tuple[float, float, int]] = []
     for x, y, component_width, component_height, area in stats[1:]:
         if not (
-            18 <= component_width <= 110
-            and 10 <= component_height <= 45
-            and area >= 80
+            18*pixel_scale <= component_width <= 110*pixel_scale
+            and 10*pixel_scale <= component_height <= 45*pixel_scale
+            and area >= 80*pixel_scale**2
         ):
             continue
-        x1, y1 = max(0, x - 5), max(0, y - 5)
-        x2 = min(width, x + component_width + 5)
-        y2 = min(height, y + component_height + 5)
+        padding=max(1,round(5*pixel_scale))
+        x1, y1 = max(0, x - padding), max(0, y - padding)
+        x2 = min(width, x + component_width + padding)
+        y2 = min(height, y + component_height + padding)
         patch = rgb[y1:y2, x1:x2]
         white_ratio = float(np.mean(np.all(patch > 180, axis=2)))
         if white_ratio < 0.04:

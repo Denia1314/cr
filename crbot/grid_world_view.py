@@ -3,7 +3,9 @@ import json
 import tkinter as tk
 import time
 import math
+import gc
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 
@@ -32,8 +34,11 @@ def render_grid(packet, size=(450,700)):
     w,h=size;compact=h<280
     scale=max(.1,min((w-24)/18,(h-(50 if compact else 120))/32));ox=(w-18*scale)/2;oy=26 if compact else 60
     def point(x,y):return ox+x*scale,oy+y*scale
-    cached_text(image,(8,5 if compact else 10),f"方格战场 · 圣水 {packet.get('elixir',0):.1f}",size=10 if compact else 14,fill='#eef4ff')
-    if not compact:cached_text(image,(12,32),'蓝=我方  红=敌方  问号=估计',size=12,fill='#9fb2cb')
+    elixir=packet.get('elixir')
+    elixir_text='未知' if elixir is None else f'{elixir:.1f}'
+    cached_text(image,(8,5 if compact else 10),f"方格战场 · 圣水 {elixir_text}",size=10 if compact else 14,fill='#eef4ff')
+    live=packet.get('status')=='live_tracking'
+    if not compact:cached_text(image,(12,32),'实时位置跟踪 · 兵种非逐帧重识别' if live else '蓝=我方  红=敌方  问号=估计',size=12,fill='#9fb2cb')
     draw.rectangle((*point(0,15),*point(18,17)),fill='#154567')
     for bridge in packet.get('bridges',[]):draw.rectangle((*point(bridge-1,15),*point(bridge+1,17)),fill='#967a50')
     for x in range(19):draw.line((*point(x,0),*point(x,32)),fill='#25344a')
@@ -60,9 +65,32 @@ def render_grid(packet, size=(450,700)):
         geo=packet['geometry'];l,t,r,b=geo['bounds'];x,y=point((action['x']-l)/(r-l)*18,(action['y']-t)/(b-t)*32)
         draw.ellipse((x-9,y-9,x+9,y+9),outline='#ffe37e',width=3)
     error=packet.get('calibration',{}).get('mean_position_error_tiles')
-    if not compact:cached_text(image,(12,h-44),f"位置预测误差：{error if error is not None else '等待可比观测'} 格",size=12,fill='#b9c6da')
-    cached_text(image,(8,h-19),'蓝=我方 红=敌方 · 点击查看' if compact else '路线为模型预测；点击方块查看属性',size=10 if compact else 12,fill='#b9c6da')
+    if not compact:cached_text(image,(12,h-44),f"兵种快照年龄：{packet.get('model_age_s',0):.1f} 秒" if live else f"位置预测误差：{error if error is not None else '等待可比观测'} 格",size=12,fill='#b9c6da')
+    cached_text(image,(8,h-19),'蓝=我方 红=敌方 · 点击查看' if compact or live else '路线为模型预测；点击方块查看属性',size=10 if compact else 12,fill='#b9c6da')
     return image,boxes
+
+
+def compose_frame(screenshot,packet,w,h,mode):
+    half=w//2 if mode=='compare' else 0
+    layers=[];boxes=[]
+    if half and screenshot is not None:
+        scale=min(1.,half/screenshot.width,h/screenshot.height)
+        shot=screenshot.resize((max(1,round(screenshot.width*scale)),max(1,round(screenshot.height*scale))),Image.Resampling.BILINEAR)
+        layers.append(((half-shot.width)//2,(h-shot.height)//2,shot))
+    if packet is not None:
+        # Upload the actual portrait field, not wide empty side margins.
+        grid_width=min(w-half,max(240,round(h*18/32)+64))
+        left=half+(w-half-grid_width)//2
+        grid,boxes=render_grid(packet,(grid_width,h))
+        layers.append((left,0,grid))
+        boxes=[((b[0]+left,b[1],b[2]+left,b[3]),e) for b,e in boxes]
+    else:
+        waiting=Image.new('RGB',(w-half,h),'#0c1321')
+        draw=ImageDraw.Draw(waiting)
+        draw.multiline_text(((w-half)//2,h//2),'等待 P1 战场数据\n进入对局后显示',font=font(11),
+                            fill='#8195b0',anchor='mm',align='center',spacing=6)
+        layers.append((half,0,waiting))
+    return layers,boxes
 
 
 class GridWorldWindow:
@@ -77,6 +105,13 @@ class GridWorldWindow:
         self.updated_frames=0
         self.source_fps=0.
         self.packet=None
+        # Collect previously closed Tk windows on their owning UI thread,
+        # before allocating images on a worker can trigger cyclic collection.
+        gc.collect()
+        self.renderer=ThreadPoolExecutor(max_workers=1,thread_name_prefix="grid-render")
+        self.pending_render=None
+        self.ready_render=None
+        self.present_after=self.next_tick
         self.window=tk.Frame(parent,bg='#0c1321') if embedded else tk.Toplevel(parent)
         if not embedded:self.window.title('方格战场 · 实时模型检查')
         self.timer_api=None
@@ -107,7 +142,9 @@ class GridWorldWindow:
 
     def tick(self):
         if not self.window.winfo_exists():return
-        if not getattr(self,'embedded',False) or self.window.winfo_ismapped():self.refresh()
+        if not getattr(self,'embedded',False) or self.window.winfo_ismapped():
+            if hasattr(self,'renderer'):self.refresh_async()
+            else:self.refresh()
         now=time.perf_counter()
         elapsed=now-self.meter_started
         if elapsed >= 1:
@@ -115,10 +152,46 @@ class GridWorldWindow:
             self.updated_frames=0
             self.meter_started=now
             self.update_label()
+        if hasattr(self,'renderer'):
+            # Poll readiness separately from presentation. Waiting a whole
+            # 33 ms for a just-finished render otherwise halves live FPS when
+            # capture and UI clocks fall on opposite sides of a frame boundary.
+            self.after_id=self.window.after(4,self.tick)
+            return
         self.next_tick += self.period
         if self.next_tick < now-self.period:
             self.next_tick=now
         self.after_id=self.window.after(max(1,math.ceil((self.next_tick-now)*1000)),self.tick)
+
+    def refresh_async(self):
+        # Prepare the next image before uploading this one to Tk, so CPU
+        # rendering overlaps the UI upload. Keep only one pending job.
+        dimensions=(self.canvas.winfo_width(),self.canvas.winfo_height(),self.mode)
+        ready=getattr(self,'ready_render',None)
+        if self.pending_render is not None:
+            future,key,packet=self.pending_render
+            if future.done():
+                self.pending_render=None
+                combined,boxes=future.result()
+                if key[2:]==dimensions:
+                    ready=(key,packet,combined,boxes)
+        if ready is not None and ready[0][2:]!=dimensions:ready=None
+        if self.pending_render is None:
+            screenshot,packet=self.source() or (None,None)
+            key=(id(packet),id(screenshot),*dimensions)
+            displayed=ready[0] if ready else self.last
+            if key!=displayed:
+                w,h=max(80,dimensions[0]),max(80,dimensions[1])
+                future=self.renderer.submit(compose_frame,screenshot,packet,w,h,self.mode)
+                self.pending_render=(future,key,packet)
+        now=time.perf_counter()
+        if ready and now>=getattr(self,'present_after',0):
+            key,packet,combined,boxes=ready
+            changed=packet is not None and (self.last is None or key[:2]!=self.last[:2])
+            self.present(key,packet,combined,boxes,changed)
+            self.present_after=max(getattr(self,'present_after',now)+self.period,now)
+            ready=None
+        self.ready_render=ready
 
     def refresh(self,force=False):
         source=self.source()
@@ -128,35 +201,43 @@ class GridWorldWindow:
         if key==self.last and not force:return
         new_packet=packet is not None and (self.last is None or key[:2]!=self.last[:2])
         self.last=key;w=max(80,key[2]);h=max(80,key[3]);half=w//2 if self.mode=='compare' else 0
-        combined=Image.new('RGB',(w,h),'#0c1321')
-        if half and screenshot is not None:
-            shot=screenshot.copy();shot.thumbnail((half,h),Image.Resampling.BILINEAR);combined.paste(shot,((half-shot.width)//2,(h-shot.height)//2))
-        boxes=[]
-        if packet is not None:
-            grid,boxes=render_grid(packet,(w-half,h));combined.paste(grid,(half,0))
-        else:
-            draw=ImageDraw.Draw(combined)
-            draw.multiline_text((half+(w-half)//2,h//2),'等待 P1 战场数据\n进入对局后显示',font=font(11),
-                                fill='#8195b0',anchor='mm',align='center',spacing=6)
-        self.photo=ImageTk.PhotoImage(combined)
-        if self.image_item is None:
-            self.image_item=self.canvas.create_image(0,0,anchor='nw',image=self.photo)
-        else:
-            self.canvas.itemconfigure(self.image_item,image=self.photo)
-        self.boxes=[((b[0]+half,b[1],b[2]+half,b[3]),e) for b,e in boxes]
+        combined,boxes=compose_frame(screenshot,packet,w,h,self.mode)
+        self.present(key,packet,combined,boxes,new_packet)
+
+    def present(self,key,packet,combined,boxes,new_packet):
+        self.last=key
+        photos=getattr(self,'photos',[])
+        items=getattr(self,'image_items',[])
+        while len(items)>len(combined):self.canvas.delete(items.pop());photos.pop()
+        for index,(x,y,image) in enumerate(combined):
+            if index<len(photos) and (photos[index].width(),photos[index].height())==image.size:
+                photos[index].paste(image)
+            else:
+                photo=ImageTk.PhotoImage(image,master=self.canvas)
+                if index<len(photos):photos[index]=photo
+                else:photos.append(photo)
+            if index==len(items):items.append(self.canvas.create_image(x,y,anchor='nw',image=photos[index]))
+            else:
+                self.canvas.coords(items[index],x,y)
+                self.canvas.itemconfigure(items[index],image=photos[index])
+        self.photos,self.image_items=photos,items
+        self.photo=photos[0];self.image_item=items[0]
+        self.boxes=boxes
         self.updated_frames += int(new_packet)
         self.packet=packet
         self.update_label()
         if self.selected_id is not None:
             hit=next((e for _,e in self.boxes if e.get('id')==self.selected_id),None)
             if hit is None:
+                self.details_content=None
                 self.details.delete('1.0','end');self.details.insert('end','选中单位已不在当前战场记录中')
             else:
                 self.show_details(hit)
 
     def update_label(self):
+        self.label_packet=self.packet
         if self.packet is not None:
-            self.label.configure(text=f"数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型" +
+            self.label.configure(text=f"目标 30 FPS · 新数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型" +
                 ('' if self.embedded else '\n'+self.packet.get('decision','')[:65]),wraplength=max(80,self.canvas.winfo_width()))
         else:self.label.configure(text='等待 P1 战场数据 · 游戏画面可独立查看')
 
@@ -166,6 +247,7 @@ class GridWorldWindow:
 
     def release_timer(self,event):
         if event.widget is self.window:
+            self.renderer.shutdown(wait=True,cancel_futures=True)
             if getattr(self,'after_id',None) is not None:
                 self.window.after_cancel(self.after_id)
                 self.after_id=None
@@ -192,4 +274,7 @@ class GridWorldWindow:
             if isinstance(v,list):return [translate(x) for x in v]
             if isinstance(v,float):return round(v,4)
             return v
-        self.details.delete('1.0','end');self.details.insert('end',json.dumps(translate(hit),ensure_ascii=False,indent=2))
+        content=json.dumps(translate(hit),ensure_ascii=False,indent=2)
+        if content!=getattr(self,'details_content',None):
+            self.details_content=content
+            self.details.delete('1.0','end');self.details.insert('end',content)

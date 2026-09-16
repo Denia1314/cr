@@ -70,9 +70,10 @@ class MumuCapture:
                 if code == 0 and (width.value, height.value) == self.size:
                     # Copy bottom-up RGBA pixels; later captures must not mutate
                     # an image that recognition or recording is still using.
-                    return Image.frombytes("RGBA", self.size, self.buffer.raw).transpose(
-                        Image.Transpose.FLIP_TOP_BOTTOM,
-                    ).convert("RGB")
+                    # Decode bottom-up RGBA directly into owned RGB storage.
+                    # Avoid allocating/flipping two full RGBA images per frame.
+                    return Image.frombytes("RGB", self.size, self.buffer,
+                                           "raw", "RGBX", 0, -1)
                 self.buffer = None
             raise OSError("MuMu capture failed or resolution changed repeatedly")
 

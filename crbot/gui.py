@@ -6,6 +6,8 @@ import os
 import queue
 import sys
 import threading
+import time
+import math
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -405,7 +407,7 @@ class RoyalTrainerApp:
         self.preview_state.pack(side="left", padx=12)
         self.preview_mode=tk.StringVar(value='同帧对照')
         self.preview_mode_combo=ttk.Combobox(top,textvariable=self.preview_mode,
-            values=('游戏画面','方格战场','同帧对照'),state='readonly',width=9,
+            values=('游戏画面','方格战场','同帧对照','推演快照'),state='readonly',width=9,
             style='Model.TCombobox',font=(FONT,8))
         self.preview_mode_combo.pack(side='right',padx=4)
         self.preview_mode_combo.bind('<<ComboboxSelected>>',lambda _event:self._set_preview_mode())
@@ -1496,6 +1498,9 @@ class RoyalTrainerApp:
         self._set_preview_mode()
 
     def _grid_preview_source(self):
+        stream=getattr(self.engine,'live_grid_stream',None) if self.engine else None
+        if stream is not None and self.preview_mode.get()!='推演快照':
+            return stream.latest() or (self.current_image,None)
         paired=getattr(getattr(self.engine,'policy',None),'grid_frame',None) if self.engine else None
         # Model views always use the screenshot that produced the packet.
         return paired if paired is not None else (self.current_image,None)
@@ -1523,11 +1528,15 @@ class RoyalTrainerApp:
             self.expand_preview_button.configure(text='放大')
 
     def _show_image(self, image: Image.Image) -> None:
-        self.current_image = image.copy()
-        self.preview_state.configure(
-            text=f"●  {image.width} × {image.height}",
-            foreground=Palette.GREEN,
-        )
+        # Capture frames are immutable snapshots. Keep their reference instead
+        # of copying full-resolution pixels even when this view is hidden.
+        self.current_image = image
+        if getattr(self,'_preview_dimensions',None)!=image.size:
+            self._preview_dimensions=image.size
+            self.preview_state.configure(
+                text=f"●  {image.width} × {image.height}",
+                foreground=Palette.GREEN,
+            )
         self._render_preview()
 
     def _draw_preview_placeholder(self) -> None:
@@ -1568,8 +1577,13 @@ class RoyalTrainerApp:
     def _poll_messages(self) -> None:
         if self.closing:
             return
+        started=time.perf_counter()
         try:
-            while True:
+            # Logs and status share Tk with the embedded 30 FPS renderer.
+            # Leave excess messages queued for the next tick, without dropping.
+            for _ in range(32):
+                if time.perf_counter()-started >= .004:
+                    break
                 kind, payload = self.messages.get_nowait()
                 if kind == "log":
                     self._append_log(str(payload))
@@ -1619,7 +1633,7 @@ class RoyalTrainerApp:
                 self.last_frame_identity = id(frame)
                 self._show_image(frame)
 
-        self.root.after(33, self._poll_messages)
+        self.root.after(max(1,math.ceil((1/30-(time.perf_counter()-started))*1000)), self._poll_messages)
 
     def _finish_bot(self, error: str | None) -> None:
         self.sync_worker.wake.set()

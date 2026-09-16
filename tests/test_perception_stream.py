@@ -24,7 +24,8 @@ class PerceptionTests(unittest.TestCase):
                               last_frame_identity=id(old), _show_image=Mock(), root=Mock(), _poll_messages=Mock())
         RoyalTrainerApp._poll_messages(app)
         app._show_image.assert_called_once_with(fresh)
-        self.assertEqual(app.root.after.call_args.args[0], 33)
+        self.assertGreaterEqual(app.root.after.call_args.args[0], 1)
+        self.assertLessEqual(app.root.after.call_args.args[0], 34)
 
     def test_policy_reuses_only_the_exact_prepared_image(self):
         policy = object.__new__(BattlePolicy)

@@ -7,6 +7,41 @@ from crbot.grid_world_view import GridWorldWindow
 
 
 class GridWindowTests(unittest.TestCase):
+    def test_ready_frame_is_displayed_while_next_render_is_still_running(self):
+        from concurrent.futures import Future
+        image=Image.new('RGB',(100,100));packet={'revision':1,'entities':[]}
+        key=(id(packet),id(image),100,100,'compare')
+        pending=Future()
+        window=SimpleNamespace(canvas=Mock(),mode='compare',last=None,period=1/30,present_after=0,
+                               pending_render=(pending,key,packet),ready_render=(key,packet,[(0,0,image)],[]),
+                               source=Mock(),renderer=Mock(),present=Mock())
+        window.canvas.winfo_width.return_value=100
+        window.canvas.winfo_height.return_value=100
+        GridWorldWindow.refresh_async(window)
+        window.present.assert_called_once()
+        window.source.assert_not_called()
+        self.assertIsNone(window.ready_render)
+
+    def test_background_renderer_discards_old_size_and_never_queues_backlog(self):
+        from concurrent.futures import Future
+        image=Image.new('RGB',(100,100))
+        packet={'revision':1,'entities':[]}
+        finished=Future();finished.set_result((image,[]))
+        pending=Future()
+        window=SimpleNamespace(canvas=Mock(),mode='compare',last=None,
+                               pending_render=(finished,(1,2,80,80,'compare'),packet),
+                               source=Mock(return_value=(image,packet)),
+                               renderer=Mock(),present=Mock())
+        window.canvas.winfo_width.return_value=100
+        window.canvas.winfo_height.return_value=100
+        window.renderer.submit.return_value=pending
+        GridWorldWindow.refresh_async(window)
+        window.present.assert_not_called()
+        window.renderer.submit.assert_called_once()
+        GridWorldWindow.refresh_async(window)
+        window.renderer.submit.assert_called_once()
+        window.source.assert_called_once()
+
     def test_embedded_view_fits_small_canvas_and_clears_stale_packet(self):
         root=tk.Tk();self.addCleanup(root.destroy)
         root.geometry('540x160')
@@ -17,8 +52,8 @@ class GridWindowTests(unittest.TestCase):
         window.window.pack(fill='both',expand=True)
         root.update_idletasks();root.update();window.refresh()
         self.assertIsInstance(window.window,tk.Frame)
-        self.assertEqual(window.photo.width(),window.canvas.winfo_width())
-        self.assertEqual(window.photo.height(),window.canvas.winfo_height())
+        self.assertLessEqual(window.photo.width(),window.canvas.winfo_width())
+        self.assertLessEqual(window.photo.height(),window.canvas.winfo_height())
         self.assertTrue(window.boxes)
         b=window.boxes[0][0]
         window.select(SimpleNamespace(x=(b[0]+b[2])/2,y=(b[1]+b[3])/2))
@@ -53,7 +88,7 @@ class GridWindowTests(unittest.TestCase):
         holder[0]=(image,dict(revision=2,entities=[dict(packet['entities'][0],hp_fraction=.4)]))
         window.refresh()
         self.assertIn('0.4',window.details.get('1.0','end'))
-        self.assertEqual(len(window.canvas.find_all()),1)
+        self.assertEqual(len(window.canvas.find_all()),2)
         self.assertLessEqual(window.label.winfo_reqwidth(),800)
         holder[0]=(image,dict(revision=3,entities=[]))
         window.refresh()

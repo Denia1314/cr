@@ -49,7 +49,7 @@
   },
   "timing": {
     "poll_interval_s": 0.7,
-    "capture_interval_s": 0.03333333333333333,
+    "capture_interval_s": 0.025,
     "battle_poll_interval_s": 0.0,
     "navigation_delay_s": 2.2,
     "battle_action_cooldown_s": [
@@ -158,6 +158,7 @@
     "maximum_confirmation_rate_drop_vs_baseline": 0.05
   },
   "vision": {
+    "opencv_threads": 1,
     "card_match_prewarm": true,
     "min_probe_score": 0.78,
     "motion_threshold": 0.045,

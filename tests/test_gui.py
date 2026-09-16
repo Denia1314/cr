@@ -39,6 +39,18 @@ class RunWorkerTests(unittest.TestCase):
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_live_grid_is_independent_of_slow_planner_but_snapshot_remains_available(self):
+        from types import SimpleNamespace
+        from PIL import Image
+        old=(Image.new('RGB',(20,40)),{'revision':1,'entities':[]})
+        live=(Image.new('RGB',(20,40)),{'revision':10,'entities':[]})
+        self.app.engine=SimpleNamespace(policy=SimpleNamespace(grid_frame=old),
+                                       live_grid_stream=SimpleNamespace(latest=lambda:live))
+        self.assertIs(self.app._grid_preview_source(),live)
+        self.app.preview_mode.set('推演快照')
+        self.assertIs(self.app._grid_preview_source(),old)
+        self.app.engine=None
+
     def test_grid_is_embedded_and_switching_preserves_same_frame_pair(self):
         from types import SimpleNamespace
         from PIL import Image

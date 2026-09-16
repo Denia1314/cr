@@ -50,6 +50,10 @@ class BotEngine:
         config = apply_decision_engine(config, config.get("policy", {}).get("decision_engine", "legacy"))
         self.device = device
         self.config = config
+        # Small, frequent vision jobs should not fan out over every CPU core
+        # while capture, UI, inference and combat workers are also active.
+        import cv2
+        cv2.setNumThreads(max(1,int(config.get('vision',{}).get('opencv_threads',1))))
         self.config_path = config_path
         self.project_root = config_path.parent
         self.dry_run = dry_run
@@ -206,6 +210,7 @@ class BotEngine:
             "prediction": self.policy.prediction_status() if hasattr(self.policy, "prediction_status") else {"selected_engine": "legacy", "actual_engine": "legacy"},
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "hand_matching": hand_status,
+            "live_grid": self.live_grid_stream.status() if getattr(self,'live_grid_stream',None) else {"enabled":False},
             "battlefield_recognition": self.policy.learned_detector.status() if getattr(self.policy, "learned_detector", None) is not None else {"loaded": False},
             "perception_stream": self.perception_stream.status() if getattr(self, "perception_stream", None) else {"enabled": False},
             "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown"),"ipc_error":getattr(self.device,"capture_ipc_error","")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
@@ -1117,16 +1122,23 @@ class BotEngine:
         print("离线安全门已启用；可随时从控制台安全停止。")
         self.frame_stream=None
         self.perception_stream=None
+        self.live_grid_stream=None
         if self.config.get('automation',{}).get('latest_frame_capture',False):
             from .frame_stream import LatestFrameStream
             self.frame_stream=LatestFrameStream(getattr(self.device,'screenshot_fast',self.device.screenshot),
-                interval=float(self.config.get('timing',{}).get('capture_interval_s',1/30))).start()
+                interval=float(self.config.get('timing',{}).get('capture_interval_s',1/40))).start()
         try:
+            if self.frame_stream is not None and self.config.get('automation',{}).get('continuous_perception',False):
+                from .live_grid import LiveGridStream
+                self.live_grid_stream=LiveGridStream(self.frame_stream,
+                    lambda:getattr(self.policy,'grid_frame',None) if self.in_battle else None,
+                    self.config['vision']).start()
             if self.frame_stream is not None and self.config.get('automation', {}).get('continuous_perception', False):
                 from .perception_stream import PerceptionStream
                 self.perception_stream = PerceptionStream(self.frame_stream, self.policy.hand_recognizer).start()
             self._run_single_marker(package)
         finally:
+            if self.live_grid_stream is not None:self.live_grid_stream.close()
             if self.perception_stream is not None:
                 self.perception_stream.close()
             if getattr(self, "auto_trial", None) is not None:
