@@ -20,7 +20,9 @@ def run(args, *, capture=False):
     return subprocess.run(args, cwd=ROOT, text=True,
                           stdout=subprocess.PIPE if capture else None,
                           stderr=subprocess.STDOUT if capture else None,
-                          timeout=60 if capture else None)
+                          timeout=60 if capture else None,
+                          creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                                         if os.environ.get('CRBOT_NO_CONSOLE') == '1' else 0))
 
 
 def has_nvidia():

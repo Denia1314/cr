@@ -1586,10 +1586,12 @@ def enable_windows_dpi_awareness() -> None:
         pass
 
 
-def main() -> None:
+def main(on_ready: Callable[[], None] | None = None) -> None:
     enable_windows_dpi_awareness()
     root = tk.Tk()
     RoyalTrainerApp(root)
+    if on_ready is not None:
+        root.after_idle(on_ready)
     root.mainloop()
 
 

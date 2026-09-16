@@ -5,6 +5,11 @@ from tools import ensure_gpu as boot
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_gui_launch_hides_nested_gpu_checks(self):
+        with patch.dict(boot.os.environ, CRBOT_NO_CONSOLE='1'), patch.object(boot.subprocess, 'run') as run:
+            boot.run(['python', '-c', 'print(1)'], capture=True)
+            self.assertEqual(run.call_args.kwargs['creationflags'], boot.subprocess.CREATE_NO_WINDOW)
+
     def result(self, code=0):
         return Mock(returncode=code, stdout='diagnostic')
 
