@@ -73,6 +73,15 @@ class TimeoutDefenseTests(unittest.TestCase):
         self.assertLessEqual(len(options), 1+2*len(self.w.hand))
         self.assertEqual({a.card_id for a in options if a.card_id}, {cid for _, cid in self.w.hand})
 
+    def test_recovery_budget_uses_only_remaining_lifetime_and_reserves_send_time(self):
+        self.p.config['max_plan_age_s'] = 2.5
+        for delay, expected in ((.2, 600), (1.8, 200), (2.2, 10)):
+            self.p._urgent_recovery = True
+            with patch.object(self.p, 'candidates', side_effect=TimeoutError):
+                result = self.p.plan(replace(self.w, tracks=(), observation_delay_s=delay))
+            self.assertAlmostEqual(result.compute['recovery_budget_ms'], expected, delta=1)
+            self.assertEqual(result.valid_until, self.w.at+2.5)
+
 
 class TimeoutRouterTests(unittest.TestCase):
     setUp = RouterTests.setUp

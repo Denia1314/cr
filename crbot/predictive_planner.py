@@ -178,6 +178,14 @@ class PredictivePlanner:
         fast = bool(self.config.get("fast_defense", False))
         started = self.clock()
         deadline = started + max(.01, min(2., float(self.config.get("budget_ms", 180)) / 1000))
+        bounded_recovery = self._urgent_recovery
+        if bounded_recovery:
+            # A reduced shortlist is useless if even its WAIT baseline cannot
+            # finish. Borrow only unused observation lifetime, reserving time
+            # for final checks and taps; never extend the plan expiry itself.
+            remaining = float(self.config.get('max_plan_age_s', 1.0)) - world.observation_delay_s - .5
+            recovery_budget = max(.01, min(.6, remaining))
+            deadline = started + min(max(deadline-started, recovery_budget), max(.01, remaining))
         total_deadline = deadline
         if action_scorer is not None:
             reserve = max(0., min(.02, float(self.config.get("learning_budget_ms", 8)) / 1000))
@@ -195,7 +203,7 @@ class PredictivePlanner:
         stage_started = time.perf_counter()
         result.compute['stage_ms'] = {}
         initial = None
-        bounded_recovery = self._urgent_recovery
+        result.compute['recovery_budget_ms'] = round((deadline-started)*1000, 2) if bounded_recovery else None
         try:
             initial = self.initial(world, world.enemy_elixir[1], 1.)
             # After a failed search, the next frame must not pay for the same
@@ -217,7 +225,7 @@ class PredictivePlanner:
                 self.sim.tactical_phase='defend'
             dense=sum(not e.tower for e in initial.entities)>16
             self.sim.placement_grid_step=float(self.config.get('placement_grid_step',1.))
-            if dense and self.config.get('adaptive_defense_budget',False):
+            if dense and not bounded_recovery and self.config.get('adaptive_defense_budget',False):
                 self.sim.placement_grid_step=max(1.,self.sim.placement_grid_step)
                 deadline=started+max(.01,min(.24,float(self.config.get('dense_defense_budget_ms',240))/1000))
                 total_deadline=deadline
