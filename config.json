@@ -335,6 +335,8 @@
     "all_placement_points": true,
     "placement_grid_step": 0.5,
     "horizon_s": 8,
+    "decision_horizon_cap_s": 6,
+    "allow_partial_comparison": true,
     "max_plan_age_s": 2.5,
     "action_cooldown_s": 0.65,
     "wait_recheck_s": 0.1,

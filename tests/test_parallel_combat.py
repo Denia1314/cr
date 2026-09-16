@@ -47,6 +47,55 @@ class ParallelCombatTests(unittest.TestCase):
         self.assertEqual(sizes[:first_round],[1]*first_round)
         self.assertTrue(any(size>1 for size in sizes[first_round:]))
 
+    def test_completion_order_does_not_wait_for_slow_first_future(self):
+        from unittest.mock import Mock
+        from crbot.battle_simulation import SimAction
+        slow, fast = Future(), Future()
+        fast.set_result((1, [{'label':'finished'}], True, 999))
+        pool=object.__new__(CombatPool)
+        pool.__dict__.update(workers=2,batch_size=4,pending=[],calls=0,timeouts=0,
+                             completed=0,completed_combinations=0,max_pending=0,
+                             pids=set(),executing_pids=set(),logged=True,error='')
+        pool.executor=Mock()
+        pool.executor.submit.side_effect=[slow,fast]
+        stream=pool.rows(world(),[SimAction(),SimAction('knight',0,.3,.7)],[(7,1,False)],6,
+                         'defend',time.perf_counter()+2,completion_order=True)
+        try:
+            self.assertEqual(next(stream),{'label':'finished'})
+            self.assertFalse(slow.done())
+        finally:
+            stream.close()
+        self.assertTrue(slow.cancelled())
+
+    def test_completed_work_is_drained_even_after_another_job_times_out(self):
+        from unittest.mock import Mock
+        from crbot.battle_simulation import SimAction
+        failed, finished=Future(),Future()
+        failed.set_result((1,[],False,998))
+        finished.set_result((1,[{'label':'usable'}],True,999))
+        pool=object.__new__(CombatPool)
+        pool.__dict__.update(workers=2,batch_size=4,pending=[],calls=0,timeouts=0,
+                             completed=0,completed_combinations=0,max_pending=0,
+                             pids=set(),executing_pids=set(),logged=True,error='')
+        pool.executor=Mock()
+        pool.executor.submit.side_effect=[failed,finished]
+        collected=[]
+        with patch('crbot.parallel_combat.time.perf_counter',side_effect=[99,99,101,101,101,101]):
+            with self.assertRaises(TimeoutError):
+                for item in pool.rows(world(),[SimAction(),SimAction('knight',0,.3,.7)],[],6,'defend',100,completion_order=True):
+                    collected.append(item)
+        self.assertEqual(collected,[{'label':'usable'}])
+
+    def test_unordered_real_workers_preserve_serial_values(self):
+        planner=PredictivePlanner(self.kb,self.config)
+        snapshot=world()
+        roots=planner.candidates(planner.initial(snapshot,7,1),1,limit=9)
+        scenarios=[(7,1,False)]
+        serial=[planner.evaluate_root(snapshot,r,scenarios,6,'defend',time.perf_counter()+30) for r in roots]
+        parallel=list(self.pool.rows(snapshot,roots,scenarios,6,'defend',time.perf_counter()+30,completion_order=True))
+        key=lambda r:(r['action']['slot'],r['action']['x'],r['action']['y'])
+        self.assertEqual(sorted(serial,key=key),sorted(parallel,key=key))
+
     def test_expired_batch_recovers_for_next_revision(self):
         planner = PredictivePlanner(self.kb,self.config)
         snapshot = world()

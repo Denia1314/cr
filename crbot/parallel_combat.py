@@ -5,7 +5,7 @@ import os
 import time
 import multiprocessing
 from collections import deque
-from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeout, wait, FIRST_COMPLETED
 from concurrent.futures.process import BrokenProcessPool
 
 _planner = None
@@ -80,7 +80,7 @@ class CombatPool:
     def available(self):
         return self.executor is not None and not self.error
 
-    def rows(self, world, roots, scenarios, horizon, phase, deadline, kind='root'):
+    def rows(self, world, roots, scenarios, horizon, phase, deadline, kind='root', *, completion_order=False):
         self.calls += 1
         if any(not future.done() for future in self.pending):
             # Never queue a new frame behind obsolete work.
@@ -89,22 +89,34 @@ class CombatPool:
         self.pending = []
         queue = deque()
         offset = 0
+        incomplete = False
         # Return the baseline and one position per usable card independently.
         # A slow refinement must not hide already completed first decisions.
         first_round = 1 + len({root.card_id for root in roots if root.card_id})
         try:
             while offset < len(roots) or queue:
-                while offset < len(roots) and len(queue) < self.workers:
+                while offset < len(roots) and len(queue) < self.workers and not incomplete:
                     if time.perf_counter() >= deadline:
-                        raise TimeoutError()
+                        break  # Drain already completed work before reporting expiry.
                     batch = roots[offset:offset+(1 if kind=='combo' or offset < first_round else self.batch_size)]
                     offset += len(batch)
                     future = self.executor.submit(evaluate_batch, world.revision, world, batch, scenarios, horizon, phase, deadline, kind)
                     queue.append(future)
                     self.pending.append(future)
                     self.max_pending = max(self.max_pending, len(queue))
-                # Submission order preserves the serial prefix and spatial/card fairness.
-                future = queue.popleft()
+                if not queue:
+                    if incomplete or offset < len(roots):
+                        raise TimeoutError()
+                    break
+                if completion_order:
+                    done, _ = wait(queue, timeout=max(0, deadline-time.perf_counter()),
+                                   return_when=FIRST_COMPLETED)
+                    if not done:
+                        raise FutureTimeout()
+                    future = next(f for f in queue if f in done)
+                    queue.remove(future)
+                else:
+                    future = queue.popleft()
                 revision, rows, complete, pid = future.result(timeout=max(0, deadline-time.perf_counter()))
                 if revision != world.revision:
                     raise ValueError('worker returned another observation revision')
@@ -117,7 +129,11 @@ class CombatPool:
                     self.logged = True
                 yield from rows
                 if not complete:
-                    raise TimeoutError()
+                    if not completion_order:
+                        raise TimeoutError()
+                    incomplete = True
+            if incomplete:
+                raise TimeoutError()
         except FutureTimeout:
             self.timeouts += 1
             raise TimeoutError('parallel combat deadline') from None

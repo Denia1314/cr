@@ -87,3 +87,71 @@ class DeploymentDomainTests(unittest.TestCase):
             result=p.plan(world(hand=((0,'knight'),(1,'musketeer'))))
         self.assertEqual(result.status,'timeout')
         self.assertFalse(result.compute['usable_comparison'])
+
+    def test_partial_mode_uses_completed_wait_and_play_without_claiming_other_cards(self):
+        from unittest.mock import patch
+        from crbot.battle_simulation import SimAction
+        from tests.test_urgent_tower_defense import row
+        p=PredictivePlanner(self.planner.kb,dict(all_placement_points=True,fast_defense=True,
+                            allow_partial_comparison=True,development_reserve_gate=True))
+        p.clock=lambda:0
+        roots=[SimAction(),SimAction('knight',0,.3,.65),SimAction('musketeer',1,.3,.68)]
+        def evaluate(w,a,*args):
+            if a.card_id=='musketeer':raise TimeoutError()
+            return row(a,253 if a.card_id is None else 0,0 if a.card_id is None else 10)
+        with patch.object(p,'candidates',return_value=roots),patch.object(p,'evaluate_root',side_effect=evaluate):
+            result=p.plan(world(elixir=6,hand=((0,'knight'),(1,'musketeer'))))
+        self.assertEqual(result.status,'ready')
+        self.assertEqual(result.action.card_id,'knight')
+        self.assertEqual(result.compute['partial_hand_comparison']['missing'],['musketeer'])
+        self.assertEqual(result.compute['completed_fair_rounds'],0)
+        self.assertFalse(result.compute['partial_hand_comparison']['global_best_claimed'])
+        self.assertTrue(result.compute['development_reserve']['options'][0]['tower_mitigation_override'])
+
+    def test_partial_mode_without_wait_baseline_cannot_execute(self):
+        from unittest.mock import patch
+        from crbot.battle_simulation import SimAction
+        from tests.test_urgent_tower_defense import row
+        p=PredictivePlanner(self.planner.kb,dict(fast_defense=True,allow_partial_comparison=True))
+        p.clock=lambda:0
+        roots=[SimAction('knight',0,.3,.65),SimAction()]
+        def evaluate(w,a,*args):
+            if a.card_id is None:raise TimeoutError()
+            return row(a,0,10)
+        with patch.object(p,'candidates',return_value=roots),patch.object(p,'evaluate_root',side_effect=evaluate):
+            result=p.plan(world(hand=((0,'knight'),)))
+        self.assertEqual(result.status,'timeout')
+        self.assertEqual(result.candidates,[])
+
+    def test_bounded_horizon_is_identical_for_all_compared_actions(self):
+        from unittest.mock import patch
+        from crbot.battle_simulation import SimAction
+        from tests.test_urgent_tower_defense import row
+        p=PredictivePlanner(self.planner.kb,dict(fast_defense=True,horizon_s=15,decision_horizon_cap_s=6))
+        p.clock=lambda:0
+        seen=[]
+        def evaluate(w,a,scenarios,horizon,*args):
+            seen.append(horizon)
+            return row(a,0)
+        with patch.object(p,'candidates',return_value=[SimAction(),SimAction('knight',0,.3,.65)]), \
+             patch.object(p,'evaluate_root',side_effect=evaluate):
+            result=p.plan(world(hand=((0,'knight'),)))
+        self.assertEqual(seen,[6,6])
+        self.assertTrue(result.compute['decision_horizon']['bounded'])
+
+    def test_partial_result_still_reserves_cost_of_unfinished_defensive_card(self):
+        from unittest.mock import patch
+        from crbot.battle_simulation import SimAction
+        from tests.test_urgent_tower_defense import row
+        p=PredictivePlanner(self.planner.kb,dict(fast_defense=True,allow_partial_comparison=True,
+                            development_reserve_gate=True))
+        p.clock=lambda:0
+        roots=[SimAction(),SimAction('knight',0,.3,.7),SimAction('musketeer',1,.3,.7)]
+        def evaluate(w,a,*args):
+            if a.card_id=='musketeer':raise TimeoutError()
+            return row(a,0,10 if a.card_id else 0)
+        with patch.object(p,'candidates',return_value=roots),patch.object(p,'evaluate_root',side_effect=evaluate):
+            result=p.plan(world(elixir=6,hand=((0,'knight'),(1,'musketeer'))))
+        self.assertEqual(result.status,'wait')
+        self.assertEqual(result.compute['development_reserve']['blocked'],1)
+        self.assertTrue(result.compute['partial_hand_comparison'])

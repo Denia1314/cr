@@ -181,6 +181,7 @@ class PredictivePlanner:
             reserve = max(0., min(.02, float(self.config.get("learning_budget_ms", 8)) / 1000))
             deadline -= min(reserve, (deadline - started) / 4)
         published_round = 0
+        coarse_rows = []
         coarse_deadline=deadline
         refinement_start=started+(deadline-started)*.5
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
@@ -189,6 +190,8 @@ class PredictivePlanner:
             result.simulation_version = 'spatial_v5_grid_navigation'
         result.learning = {**(learning_status or {}), "applied": False,
                            "selected_for_execution": False, "changed_selection": False}
+        stage_started = time.perf_counter()
+        result.compute['stage_ms'] = {}
         try:
             initial = self.initial(world, world.enemy_elixir[1], 1.)
             from .tactical_objective import phase_for,score_action
@@ -211,6 +214,8 @@ class PredictivePlanner:
             result.compute['defense_timing']=dict(urgent=urgent,dense=dense,budget_ms=round((deadline-started)*1000),
                 enemy_elixir_interval=list(world.enemy_elixir),enemy_elixir_estimate=world.enemy_elixir_estimate,
                 enemy_hand_observed=False)
+            result.compute['stage_ms']['world_and_forecast'] = round((time.perf_counter()-stage_started)*1000, 2)
+            stage_started = time.perf_counter()
             # Every legal hand card receives its full spatial shortlist before refinement.
             positions = max(2,min(24,int(self.config.get('positions_per_card',16))))
             roots = self.candidates(initial, 1, limit=None if self.config.get("all_placement_points",False) else 1 + positions * len(initial.hands[1]))
@@ -223,9 +228,16 @@ class PredictivePlanner:
                 result.hand_evaluations.append(dict(slot=slot, card_id=cid, positions=positions,
                                                     evaluated=0, status=reason, spatial_scored=positions,
                                                     full_domain=bool(self.config.get("all_placement_points",False))))
+            result.compute['stage_ms']['spatial_ranking'] = round((time.perf_counter()-stage_started)*1000, 2)
+            stage_started = time.perf_counter()
             horizon = max(4, min(15, float(self.config.get("horizon_s", 8))))
             if result.enemy_forecast:
                 horizon=max(horizon,min(24,min(f['unopposed_tower_eta_s'] for f in result.enemy_forecast)+3))
+            requested_horizon = horizon
+            if fast and self.config.get('decision_horizon_cap_s') is not None:
+                horizon = min(horizon, max(4., float(self.config['decision_horizon_cap_s'])))
+            result.compute['decision_horizon'] = dict(requested_s=requested_horizon, simulated_s=horizon,
+                                                      bounded=horizon < requested_horizon)
             urgent = any(f['intervention_slack_s'] <= 3 for f in result.enemy_forecast)
             if urgent:
                 # Do not reserve half the budget for optional combinations while
@@ -247,7 +259,7 @@ class PredictivePlanner:
             if (self.combat_pool is not None and self.combat_pool.available
                     and all(future.done() for future in self.combat_pool.pending)):
                 combat_mode = 'parallel'
-                rows = self.combat_pool.rows(world, roots, scenarios, horizon, result.tactical_phase, coarse_deadline)
+                rows = self.combat_pool.rows(world, roots, scenarios, horizon, result.tactical_phase, coarse_deadline, completion_order=True)
             else:
                 rows = (self.evaluate_root(world, root, scenarios, horizon, result.tactical_phase,
                                            coarse_deadline, initial_scenarios) for root in roots)
@@ -263,9 +275,12 @@ class PredictivePlanner:
                     active = [e for e in result.hand_evaluations if e['positions']]
                     completed_round = min((e['evaluated'] for e in active), default=0)
                     required_rounds = 1  # Commit a fair first decision before optional spatial refinement.
-                    if active and completed_round >= required_rounds and completed_round > published_round:
+                    if (active and completed_round >= required_rounds and completed_round > published_round
+                            and any(r['action']['card_id'] is None for r in coarse_rows)):
                         # Commit equal spatial rounds across all usable cards. A timeout cannot
                         # prefer a card simply because its next location happened to finish first.
+                        order = {(a.slot,a.card_id,a.x,a.y): i for i,a in enumerate(roots)}
+                        coarse_rows.sort(key=lambda r: order[(r['action']['slot'],r['action']['card_id'],r['action']['x'],r['action']['y'])])
                         counts = {}
                         balanced = []
                         for row in coarse_rows:
@@ -281,7 +296,8 @@ class PredictivePlanner:
             if hasattr(rows,'close'):
                 rows.close()
             # Publish only a complete, equally evaluated layer. Refinements remain private until complete.
-            result.candidates = coarse_rows
+            if not result.candidates or not fast:
+                result.candidates = coarse_rows
             result.completed_depth = 1
             refined_rows = []
             for root in ([] if fast else roots):
@@ -334,11 +350,33 @@ class PredictivePlanner:
                 result.completed_depth = 2
         except TimeoutError:
             result.budget_exhausted = True
+            if not result.candidates and self.config.get('allow_partial_comparison', False):
+                waiting = next((r for r in coarse_rows if r['action']['card_id'] is None), None)
+                # Only complete same-frame, same-scenario rows are eligible.
+                # The WAIT baseline is mandatory for tower and reserve checks.
+                if waiting is not None:
+                    order = {(a.slot,a.card_id,a.x,a.y): i for i,a in enumerate(roots)}
+                    complete = sorted((r for r in coarse_rows if r['action']['card_id']),
+                        key=lambda r: order[(r['action']['slot'],r['action']['card_id'],r['action']['x'],r['action']['y'])])
+                    compared = set()
+                    subset = [waiting]
+                    for row in complete:
+                        if row['action']['card_id'] not in compared:
+                            subset.append(row)
+                            compared.add(row['action']['card_id'])
+                    if compared:
+                        result.candidates = subset
+                        result.completed_depth = 1
+                        result.compute['partial_hand_comparison'] = dict(
+                            compared=sorted(compared), missing=[e['card_id'] for e in result.hand_evaluations
+                                                               if e['positions'] and e['card_id'] not in compared],
+                            global_best_claimed=False)
             if not result.candidates:
                 result.status, result.reason = "timeout", "incomplete_search_fallback"
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             result.status, result.reason = "unavailable", f"world_model_error: {exc}"
             result.candidates = []
+        result.compute['stage_ms']['first_comparison'] = round((time.perf_counter()-stage_started)*1000, 2)
         if result.candidates and fast and self.config.get("unified_tactics",False):
             try:
                 result.combo_candidates=self.refine_combinations(world,result,roots,scenarios,horizon,deadline)
@@ -440,6 +478,9 @@ class PredictivePlanner:
         result.compute['completed_fair_rounds'] = published_round
         if result.status in {'ready', 'wait'}:
             result.reason = f"选择 {result.action.label}；" + result.reason
+            if result.compute.get('partial_hand_comparison'):
+                missing = ','.join(result.compute['partial_hand_comparison']['missing'])
+                result.reason += f"；使用完整子集比较，未完成手牌：{missing}"
             reserve_audit = result.compute.get('development_reserve', {})
             if result.status == 'wait' and reserve_audit.get('blocked'):
                 requirements = [o['required'] for o in reserve_audit.get('options', []) if not o['accepted']]
