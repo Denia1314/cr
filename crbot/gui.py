@@ -1530,11 +1530,15 @@ class RoyalTrainerApp:
             else:
                 self.battle_note.configure(text="等待识别")
             frame = self.engine.latest_frame
+            stream = getattr(self.engine, 'frame_stream', None)
+            captured = stream.latest() if stream is not None else None
+            if captured is not None:
+                frame = captured.image
             if frame is not None and id(frame) != self.last_frame_identity:
                 self.last_frame_identity = id(frame)
                 self._show_image(frame)
 
-        self.root.after(100, self._poll_messages)
+        self.root.after(33, self._poll_messages)
 
     def _finish_bot(self, error: str | None) -> None:
         self.sync_worker.wake.set()

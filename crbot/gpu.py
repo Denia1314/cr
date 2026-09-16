@@ -103,14 +103,18 @@ class HandDescriptorMatcher:
             offsets = np.cumsum([0, *sizes])
             for qstart in range(0, len(joined), 2048):
                 q = query[qstart:qstart + 2048]
-                batch = max(1, min(len(self.references), 64 * 1024 * 1024 // (max(1, len(q)) * self.bank.shape[1] * 8)))
+                batch = max(1, min(len(self.references), 64 * 1024 * 1024 // (max(1, len(q)) * self.bank.shape[1] * 4)))
                 self.last_batch_templates = batch
                 for start in range(0, len(self.references), batch):
                     bank = self.bank[start:start + batch]
-                    distances = (q.shape[1] - torch.matmul(q, bank.transpose(1, 2))) * 0.5
+                    similarities = torch.matmul(q, bank.transpose(1, 2))
                     padding = columns[None, :] >= self.lengths[start:start + batch, None]
-                    distances.masked_fill_(padding[:, None, :], float("inf"))
-                    nearest = distances.topk(2, dim=-1, largest=False).values.to(torch.float64)
+                    similarities.masked_fill_(padding[:, None, :], float("-inf"))
+                    # Hamming distance decreases monotonically with this exact
+                    # integer dot product. Convert only the two winners, not
+                    # the entire query x template matrix; retain float64 ratio
+                    # comparison for OpenCV boundary parity.
+                    nearest = (q.shape[1] - similarities.topk(2, dim=-1).values.to(torch.float64)) * 0.5
                     good = nearest[..., 0] < ratio * nearest[..., 1]
                     for slot, (lo, hi) in enumerate(zip(offsets[:-1], offsets[1:])):
                         left, right = max(0, int(lo) - qstart), min(len(q), int(hi) - qstart)

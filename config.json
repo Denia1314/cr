@@ -15,6 +15,7 @@
   },
   "automation": {
     "latest_frame_capture": true,
+    "continuous_perception": true,
     "mumu_ipc_capture": true,
     "chest_screen_enabled": true,
     "chest_screen_tap_interval_s": 0.8,
@@ -48,7 +49,7 @@
   },
   "timing": {
     "poll_interval_s": 0.7,
-    "capture_interval_s": 0.05,
+    "capture_interval_s": 0.03333333333333333,
     "battle_poll_interval_s": 0.0,
     "navigation_delay_s": 2.2,
     "battle_action_cooldown_s": [

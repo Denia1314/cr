@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from threading import RLock
 
 import numpy as np
 from PIL import Image
@@ -56,6 +57,7 @@ class UniversalHandRecognizer:
 
     def __init__(self, catalog: CardCatalog, vision_config: dict[str, Any]):
         self.catalog = catalog
+        self._recognition_lock = RLock()
         self.vision = vision_config
         self.available = cv2 is not None
         self.templates: dict[str, tuple[CardDefinition, Any]] = {}
@@ -119,6 +121,11 @@ class UniversalHandRecognizer:
         return cv2.resize(crop, (180, 220), interpolation=cv2.INTER_AREA)
 
     def recognize(self, image: Image.Image) -> list[HandCardMatch]:
+        # Background preprocessing and action confirmation share ORB/CUDA state.
+        with getattr(self, "_recognition_lock", RLock()):
+            return self._recognize(image)
+
+    def _recognize(self, image: Image.Image) -> list[HandCardMatch]:
         centers = self.vision["card_slot_centers"]
         if not self.available or not self.templates:
             return [
@@ -253,6 +260,7 @@ def detect_lane_threats(
     previous: Image.Image | None = None,
     ignore_points: tuple[tuple[float, float], ...] = (),
     frame_dt_s: float | None = None,
+    *, candidates=None,
 ) -> dict[str, LaneThreat]:
     """Detect enemy lanes early and estimate whether units are approaching.
 
@@ -269,7 +277,7 @@ def detect_lane_threats(
             "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
         }
 
-    detected = _level_badge_candidates(image)
+    detected = list(candidates) if candidates is not None else _level_badge_candidates(image)
     # A frame-rate independent speed is more useful than the raw pixel delta.
     # ``None`` preserves the historical one-frame interpretation for callers
     # that do not have timestamps.

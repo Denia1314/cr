@@ -1027,7 +1027,9 @@ class BattlePolicy:
         if self.hand_recognizer is None:
             return []
         try:
-            observed = list(self.hand_recognizer.recognize(current))
+            prepared = getattr(self, "prepared_frame", None)
+            observed = list(prepared.hand if prepared is not None and prepared.frame.image is current
+                            else self.hand_recognizer.recognize(current))
         except Exception as exc:  # perception failure must fail closed
             self.perception_error = f"手牌识别失败：{exc}"
             return []
@@ -1221,11 +1223,14 @@ class BattlePolicy:
         if self._threat_observed_at > -999.0:
             frame_dt_s = max(0.05, now - self._threat_observed_at)
         try:
+            prepared = getattr(self, "prepared_frame", None)
+            prepared_args = {"candidates": prepared.badges} if prepared is not None and prepared.frame.image is current else {}
             threats = detect_lane_threats(
                 current,
                 previous,
                 ignore_points,
                 frame_dt_s=frame_dt_s,
+                **prepared_args,
             )
         except TypeError:
             # Third-party/test detectors written against the M1 signature are

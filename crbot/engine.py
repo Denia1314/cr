@@ -200,6 +200,7 @@ class BotEngine:
             "prediction": self.policy.prediction_status() if hasattr(self.policy, "prediction_status") else {"selected_engine": "legacy", "actual_engine": "legacy"},
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "hand_matching": hand_status,
+            "perception_stream": self.perception_stream.status() if getattr(self, "perception_stream", None) else {"enabled": False},
             "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown"),"ipc_error":getattr(self.device,"capture_ipc_error","")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
             "replay_model": {
                 "loaded_sha256": getattr(replay_model, "loaded_model_sha256", None),
@@ -242,7 +243,13 @@ class BotEngine:
             image=self.device.screenshot()
             finished=time.monotonic()
         else:
-            frame=stream.get(sequence=getattr(self,'_frame_sequence',0),after=after,timeout=timeout)
+            perception = getattr(self, 'perception_stream', None)
+            if perception is not None and getattr(self, 'in_battle', False) and not after:
+                prepared = perception.get(sequence=getattr(self, '_frame_sequence', 0), timeout=timeout)
+                self.policy.prepared_frame = prepared
+                frame = prepared.frame
+            else:
+                frame=stream.get(sequence=getattr(self,'_frame_sequence',0),after=after,timeout=timeout)
             self._frame_sequence=frame.sequence
             image,started,finished=frame.image,frame.started,frame.finished
         self._last_battle_capture=(image,started)
@@ -1102,13 +1109,19 @@ class BotEngine:
         print(f"训练数据目录：{self.recorder.run_dir}")
         print("离线安全门已启用；可随时从控制台安全停止。")
         self.frame_stream=None
+        self.perception_stream=None
         if self.config.get('automation',{}).get('latest_frame_capture',False):
             from .frame_stream import LatestFrameStream
             self.frame_stream=LatestFrameStream(getattr(self.device,'screenshot_fast',self.device.screenshot),
-                interval=float(self.config.get('timing',{}).get('capture_interval_s',.05))).start()
+                interval=float(self.config.get('timing',{}).get('capture_interval_s',1/30))).start()
         try:
+            if self.frame_stream is not None and self.config.get('automation', {}).get('continuous_perception', False):
+                from .perception_stream import PerceptionStream
+                self.perception_stream = PerceptionStream(self.frame_stream, self.policy.hand_recognizer).start()
             self._run_single_marker(package)
         finally:
+            if self.perception_stream is not None:
+                self.perception_stream.close()
             if getattr(self, "auto_trial", None) is not None:
                 self.auto_trial.close()
             if self.frame_stream is not None:
