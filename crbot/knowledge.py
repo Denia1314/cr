@@ -48,6 +48,24 @@ class UnitSpec:
     resource_period: float = 0
     resource_amount: float = 0
     resource_on_death: float = 0
+    dash_damage: float = 0
+    dash_min: float = 0
+    dash_max: float = 0
+    dash_windup: float = 0
+    dash_travel: float = 0
+    dash_speed: float = 0
+    dash_recovery: float = 0
+    dash_radius: float = 0
+    dash_pushback: float = 0
+    dash_immune: bool = False
+    minimum_range: float = 0
+    ignore_pushback: bool = False
+    attack_targets: int = 1
+    reflected_damage: float = 0
+    reflected_radius: float = 0
+    reflected_stun: float = 0
+    chain_count: int = 1
+    chain_radius: float = 0
 
 
 class KnowledgeBase:
@@ -125,6 +143,24 @@ class KnowledgeBase:
                 unsupported.append(field)
         if raw.get("charge_range") and "damage_special" in unsupported:
             unsupported.remove("damage_special")
+        dash = bool(raw.get('dash_damage') and raw.get('dash_min_range') and raw.get('dash_max_range')
+                    and int(raw.get('dash_count') or 0) <= 1)
+        if dash and 'jump_speed' in unsupported:
+            unsupported.remove('jump_speed')
+        if 'minimum_range' in unsupported:
+            unsupported.remove('minimum_range')
+        for field in ('multiple_projectiles', 'projectile_special', 'attached_character',
+                      'kamikaze', 'hides_when_not_attacking', 'morph_character', 'convert_on_kill',
+                      'area_effect_on_hit', 'death_spawn_projectile', 'spawn_character2'):
+            if raw.get(field) and field not in unsupported:
+                unsupported.append(field)
+        if raw.get('dash_damage') and not dash:
+            unsupported.append('dash_chain_or_ability')
+        for field in ('projectile_range','spawn_projectile','pingpong_visual_time'):
+            if projectile.get(field):unsupported.append('projectile:'+field)
+        if raw.get('hide_time_ms'):unsupported.append('invisibility')
+        if raw.get('death_spawn_character') and not self.units.get(raw['death_spawn_character'],{}).get('hitpoints_per_level'):
+            unsupported.append('death_spawn_missing_definition')
         buff_key = projectile.get("buff_on_damage") or raw.get("buff_on_damage")
         buff = self.buffs.get(buff_key, {})
         stun_time = float(projectile.get("buff_on_damage_time") or raw.get("buff_on_damage_time") or 0) / 1000
@@ -154,7 +190,7 @@ class KnowledgeBase:
             unsupported=tuple(unsupported),
             charge_distance=float(raw.get("charge_range") or 0) / 100,
             charge_multiplier=float(raw.get("charge_speed_multiplier") or 100) / 100,
-            charge_damage=float(raw.get("damage_special") or 0) * scale,
+            charge_damage=self.special_value(raw,'damage_special',level),
             ramp_times=(float(raw.get("variable_damage_time1") or 0) / 1000, float(raw.get("variable_damage_time2") or 0) / 1000),
             ramp_damage=(float(raw.get("variable_damage2") or 0) * scale, float(raw.get("variable_damage3") or 0) * scale),
             stun=stun_time if buff.get("hit_speed_multiplier") == -100 else 0,
@@ -162,9 +198,38 @@ class KnowledgeBase:
             resource_period=float(raw.get('mana_generate_time_ms') or 0)/1000,
             resource_amount=float(raw.get('mana_collect_amount') or 0),
             resource_on_death=float(raw.get('mana_on_death') or 0),
+            dash_damage=self.special_value(raw,'dash_damage',level) if dash else 0,
+            dash_min=float(raw.get('dash_min_range') or 0)/1000,
+            dash_max=float(raw.get('dash_max_range') or 0)/1000,
+            dash_windup=float(raw.get('dash_cooldown') or 0)/1000,
+            dash_travel=float(raw.get('dash_constant_time') or 0)/1000,
+            dash_speed=float(raw.get('jump_speed') or 0)/60,
+            dash_recovery=float(raw.get('dash_landing_time') or 0)/1000,
+            dash_radius=float(raw.get('dash_radius') or 0)/1000,
+            dash_pushback=float(raw.get('dash_push_back') or 0)/1000,
+            dash_immune=bool(raw.get('dash_immune_to_damage_time')),
+            minimum_range=float(raw.get('minimum_range') or 0)/1000,
+            ignore_pushback=bool(raw.get('ignore_pushback')),
+            attack_targets=max(1,int(raw.get('multiple_targets') or 1)),
+            reflected_damage=self.special_value(raw,'reflected_attack_damage',level),
+            reflected_radius=float(raw.get('reflected_attack_radius') or 0)/1000,
+            reflected_stun=float(raw.get('reflected_attack_buff_duration') or 0)/1000
+                if self.buffs.get(raw.get('reflected_attack_buff'),{}).get('hit_speed_multiplier') == -100 else 0,
+            chain_count=max(1,int(projectile.get('chained_hit_count') or 1)),
+            chain_radius=float(projectile.get('chained_hit_radius') or 0)/1000,
         )
         self._cache[key] = spec
         return spec
+
+    def special_value(self, raw, key, level):
+        """Prefer explicit levels; otherwise retain the source's level scaling estimate."""
+        detail_key={'dash_damage':'jumpDamage','damage_special':'chargeDamage'}.get(key)
+        row=raw.get('_detail_levels',{}).get(str(level),{})
+        if detail_key in row:return float(row[detail_key])
+        if raw.get(key+'_per_level'):return self.value(raw,key,level)
+        base=self.units.get(raw.get('_base_unit_name'),raw)
+        scale=self.value(base,'hitpoints',level)/max(1,float(base.get('hitpoints') or 1))
+        return round(float(raw.get(key) or 0)*scale)
 
     def roster(self, card_id: str, level: int = 11) -> list[tuple[UnitSpec, int]]:
         card = self.cards.get(card_id, {})
@@ -216,7 +281,9 @@ class KnowledgeBase:
 
     def audit(self, level: int = 11) -> dict:
         from .card_effects import PATTERNS
+        from .unit_mechanics import mechanism_status
         supported, missing, partial, numeric = [], [], [], []
+        mechanism_counts={}
         for cid, card in self.cards.items():
             try:
                 roster = self.roster(cid, level)
@@ -226,7 +293,10 @@ class KnowledgeBase:
                     numeric.append(cid)
                 if roster or spell:
                     supported.append(cid)
-                    if card.get("unsupported") or any(u.unsupported for u, _ in roster):
+                    coverage=mechanism_status(self,cid,level)
+                    for mechanism in coverage['implemented']:
+                        mechanism_counts[mechanism]=mechanism_counts.get(mechanism,0)+1
+                    if coverage['pending']:
                         partial.append(cid)
                 else:
                     missing.append(cid)
@@ -234,6 +304,7 @@ class KnowledgeBase:
                 missing.append(cid)
         return {"knowledge_version": self.version, "source": self.source,
                 "effect_record_cards": len(self.cards), "executable_spell_patterns": dict(PATTERNS),
+                "executable_unit_mechanism_counts":mechanism_counts,
                 "directory_source": self.payload.get('directory_source'),
                 "detail_cards": sum('detail_stats' in c for c in self.cards.values()),
                 "detail_level_rows": sum(len(c.get('detail_stats', {}).get('levelStats', [])) for c in self.cards.values()),

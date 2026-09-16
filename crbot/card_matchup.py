@@ -36,9 +36,12 @@ def matchup(spec, enemy, count=1):
 
 def card_evidence(kb, cid, level, enemies):
     roster = kb.roster(cid, level)
+    from .unit_mechanics import mechanism_status, deployment_pulses
     return dict(knowledge_version=kb.version, assumed_level=level,
                 source=kb.cards.get(cid, {}).get('metadata_source', kb.source),
                 approximation='local_duel_screen_then_spatial_combat',
+                special_mechanisms=mechanism_status(kb,cid,level),
+                deployment_effects=deployment_pulses(kb,cid,level),
                 spell=kb.spell(cid, level),
                 units=[dict(name=s.name, count=n, hp=s.hp, shield=s.shield,
                             damage=s.damage, period_s=s.period, first_hit_s=s.first_hit,

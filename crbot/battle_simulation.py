@@ -52,6 +52,13 @@ class Entity:
     winding_target: int | None = None
     tower_kind: str = ''
     active: bool = True
+    attack_slow: float = 1
+    dash_phase: str = ''
+    dash_target: int | None = None
+    dash_at: float = 0
+    dash_ready_at: float = 0
+    dash_x: float = 0
+    dash_y: float = 0
 
 
 @dataclass
@@ -124,6 +131,9 @@ class Simulator:
             e.resource_at=s.time+spec.deploy+spec.resource_period
         s.entities.append(e)
         s.uncertainties.update(spec.unsupported)
+        if deployed:
+            from .unit_mechanics import queue_spawn_pulse
+            queue_spawn_pulse(self,s,e)
         return e
 
     def apply(self, s: SimState, a: SimAction, side: int) -> bool:
@@ -150,6 +160,9 @@ class Simulator:
                     self.add(s, spec, side, x + ((index % 3) - 1) * .4,
                              y + (index // 3) * .35 * side, value=card["elixir"] / total, deployed=True)
                     index += 1
+            from .unit_mechanics import deployment_pulses
+            for event in deployment_pulses(self.kb,a.card_id,self.level):
+                s.effects.append(dict(event,at=s.time+event['delay'],side=side,x=x,y=y))
         elif spell:
             if spell.get('pattern'):
                 from .card_effects import queue_effect
@@ -168,16 +181,22 @@ class Simulator:
     def distance(a: Entity, b: Entity):
         return max(0, math.hypot(a.x - b.x, a.y - b.y) - a.spec.radius - b.spec.radius)
 
-    def hit(self, s: SimState, e: Entity, damage: float):
-        if e.hp <= 0:
-            return
+    def hit(self, s: SimState, e: Entity, damage: float, attacker=None):
+        if e.hp <= 0 or (e.spec.dash_immune and e.dash_phase=='flight'):
+            return False
+        if attacker is not None and e.spec.reflected_damage and attacker.side!=e.side and self.distance(e,attacker)<=e.spec.reflected_radius:
+            if self.hit(s,attacker,e.spec.reflected_damage):
+                from .unit_mechanics import control
+                control(s,attacker,stun=e.spec.reflected_stun)
+            s.uncertainties.add('retaliation_source_and_level_scaling_estimate')
         if e.shield > 0:
             e.shield = max(0, e.shield - damage)  # shield consumes hit, no overflow
-            return
+            return True
         dealt = min(e.hp, max(0, damage))
         e.hp -= dealt
         if e.tower:
             s.damage[e.side] += dealt
+        return True
 
     def advance(self, s: SimState, duration: float, *, deadline=None, clock=None):
         end = s.time + max(0, duration)
@@ -201,15 +220,12 @@ class Simulator:
                     if e.side == side or e.hp <= 0 or (e.spec.air and not air):
                         continue
                     if (radius > 0 and math.hypot(e.x - x, e.y - y) <= radius + e.spec.radius) or (radius == 0 and e.uid == target):
-                        self.hit(s, e, damage * (tower_mult if e.tower else 1))
+                        attacker=next((a for a in s.entities if a.uid==control[2]),None) if len(control)>2 else None
+                        if not self.hit(s, e, damage * (tower_mult if e.tower else 1),attacker):continue
                         if control:
-                            stun, pushback = control
-                            e.stunned_until = max(e.stunned_until, s.time + stun)
-                            if stun:
-                                e.walked, e.locked_at = 0, s.time + stun
-                                e.winding_target=None
-                            if pushback and not e.spec.building and not e.tower:
-                                e.y = max(0, min(32, e.y - side * pushback))
+                            from .unit_mechanics import control as apply_control
+                            stun, pushback = control[:2]
+                            apply_control(s,e,stun=stun,pushback=pushback,x=x,y=y+side*.001)
             for e in list(s.entities):
                 if e.hp <= 0:
                     continue
@@ -237,6 +253,8 @@ class Simulator:
                         continue
                 from .grid_world import target_for
                 target = target_for(self,s,e)
+                from .unit_mechanics import advance_dash
+                if advance_dash(self,s,e,target):continue
                 if target and target.uid != e.target:
                     e.target=target.uid
                     e.winding_target=None
@@ -260,9 +278,33 @@ class Simulator:
                         elif held >= e.spec.ramp_times[0]:
                             damage = e.spec.ramp_damage[0]
                     e.walked = 0
-                    s.impacts.append((s.time + delay, e.side, target.uid, target.x, target.y,
-                                      damage, e.spec.splash, "air" in e.spec.targets, 1., e.spec.stun, e.spec.pushback))
-                    e.ready_at = s.time + e.spec.period / (e.haste if s.time < e.haste_until else 1)
+                    victims=[target]
+                    if e.spec.chain_count>1:
+                        while len(victims)<e.spec.chain_count:
+                            previous=victims[-1]
+                            nearby=[v for v in s.entities if v.side!=e.side and v.hp>0 and v not in victims
+                                    and ('air' if v.spec.air else 'ground') in e.spec.targets
+                                    and self.distance(previous,v)<=e.spec.chain_radius]
+                            if not nearby:break
+                            victims.append(min(nearby,key=lambda v:(self.distance(previous,v),v.uid)))
+                        s.uncertainties.add('chain_travel_time_estimate')
+                    elif e.spec.attack_targets>1:
+                        others=sorted((v for v in s.entities if v.side!=e.side and v.hp>0 and v.uid!=target.uid
+                                       and ('air' if v.spec.air else 'ground') in e.spec.targets
+                                       and self.distance(e,v)<=e.spec.reach),key=lambda v:(self.distance(e,v),v.uid))
+                        victims+=others[:e.spec.attack_targets-1]
+                    # Source damage is per projectile/target; a lone target receives both bolts.
+                    chain_delay=0.;previous_source=e
+                    for i in range(len(victims) if e.spec.chain_count>1 else e.spec.attack_targets):
+                        victim=victims[i%len(victims)]
+                        delay=self.distance(e,victim)/e.spec.projectile_speed if e.spec.projectile_speed else 0
+                        if e.spec.chain_count>1:
+                            chain_delay+=self.distance(previous_source,victim)/e.spec.projectile_speed if e.spec.projectile_speed else 0
+                            delay=chain_delay;previous_source=victim
+                        s.impacts.append((s.time+delay,e.side,victim.uid,victim.x,victim.y,
+                                          damage,e.spec.splash,'air' in e.spec.targets,1.,e.spec.stun,e.spec.pushback,e.uid))
+                    speed_factor=(e.haste if s.time<e.haste_until else 1)*(e.attack_slow if s.time<e.slow_until else 1)
+                    e.ready_at = s.time + e.spec.period / speed_factor
                     if e.tower:
                         s.tower_shots[e.side] += 1
                 elif e.spec.speed > 0 and not e.tower:

@@ -71,6 +71,10 @@ def resolve_effects(sim, state):
             state.effects.append(event)
             continue
         side, x, y, pattern = event['side'], event['x'], event['y'], event['pattern']
+        if pattern=='unit_pulse':
+            from .unit_mechanics import resolve_pulse
+            resolve_pulse(sim,state,event)
+            continue
         if pattern == 'spawn_entity':
             spec=sim.kb.unit(event['spawn'],sim.level)
             if spec is not None and len(state.entities)<96:
@@ -104,11 +108,10 @@ def resolve_effects(sim, state):
                     enemy.haste=1+event['boost']
                     continue
                 multiplier = event['tower_multiplier'] if enemy.tower else (event['building_multiplier'] if enemy.spec.building else 1)
-                sim.hit(state,enemy,event['damage']*multiplier)
+                if not sim.hit(state,enemy,event['damage']*multiplier):continue
                 if event['stun']:
-                    enemy.stunned_until=max(enemy.stunned_until,state.time+event['stun'])
-                    enemy.walked=0
-                    enemy.locked_at=state.time+event['stun']
+                    from .unit_mechanics import control
+                    control(state,enemy,stun=event['stun'])
                 if not enemy.tower and not enemy.spec.building:
                     if event['slow']:
                         enemy.slow_until=max(enemy.slow_until,state.time+event['period'])
@@ -148,8 +151,11 @@ def mechanism_profile(kb, cid):
         effects.append(dict(unit=summon['unit'],count=summon['count'],parameters=fields,
                             projectile=projectile,linked_effects=linked))
     unresolved=[v for v in card.get('unsupported',[]) if not (cid in PATTERNS and v=='spell_pattern')]
+    from .unit_mechanics import mechanism_status
+    coverage=mechanism_status(kb,cid)
     return dict(card_id=cid, pattern=PATTERNS.get(cid,'unit' if summons or cid=='berserker' else 'unmapped'),
         unit_effects=effects, spell_parameters=card.get('spell'), detail_parameters=card.get('detail_stats'),
-        card_parameters=card.get('source_fields',{}), unresolved=unresolved,
+        card_parameters=card.get('source_fields',{}), unresolved=sorted(set(unresolved)|set(coverage['pending'])),
+        executable_mechanisms=coverage['implemented'],
         source=card.get('metadata_source',kb.source), balance_validated=False,
         approximation_notes=['Movement, wave timing and spawn spread are approximate; active abilities and variants require separate validation.'])

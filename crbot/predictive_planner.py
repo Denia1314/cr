@@ -22,7 +22,7 @@ class PlanResult:
     reason: str = ""
     elapsed_ms: float = 0
     knowledge_version: str = ""
-    simulation_version: str = "spatial_v4_calibrated_windup"
+    simulation_version: str = "spatial_v6_unit_mechanics"
     nodes: int = 0
     completed_depth: int = 0
     budget_exhausted: bool = False
@@ -197,7 +197,7 @@ class PredictivePlanner:
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
                             "unavailable", knowledge_version=self.kb.version)
         if self.sim.grid_navigation:
-            result.simulation_version = 'spatial_v5_grid_navigation'
+            result.simulation_version = 'spatial_v6_grid_unit_mechanics'
         result.learning = {**(learning_status or {}), "applied": False,
                            "selected_for_execution": False, "changed_selection": False}
         stage_started = time.perf_counter()

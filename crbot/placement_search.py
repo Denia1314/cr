@@ -28,6 +28,12 @@ def spatial_rounds(ranked, side):
 def placement_points(sim, state, card_id, side, *, limit=12, quick=False):
     card = sim.kb.cards[card_id]
     roster = sim.kb.roster(card_id, sim.level)
+    from .unit_mechanics import deployment_pulses, pulse, placement_special_bonus
+    special_events=deployment_pulses(sim.kb,card_id,sim.level)
+    for spec,count in roster:
+        raw=sim.kb.units.get(spec.name,{})
+        event=pulse(sim.kb,sim.kb.effects.get(raw.get('spawn_area_object')),sim.level)
+        if event:special_events.extend([event]*count)
     spell = sim.kb.spell(card_id, sim.level)
     enemies = [e for e in state.entities if e.side != side and not e.tower and e.hp > 0]
     towers = [e for e in state.entities if e.side == side and e.tower and e.hp > 0]
@@ -139,7 +145,8 @@ def placement_points(sim, state, card_id, side, *, limit=12, quick=False):
             if all(v is not None for v in scores):
                 values = [sum(v[i]*count for v, (_, count) in zip(scores, roster))/sum(n for _, n in roster)
                           for i in range(len(positions))]
-    ranked = [(values[i] if values is not None else value(point), point, normalized)
+    ranked = [((values[i] if values is not None else value(point))+
+               (placement_special_bonus(point,roster,projected,special_events) if roster and not spell else 0), point, normalized)
               for i, (_, point, normalized) in enumerate(ranked)]
     ranked.sort(key=lambda r: r[0], reverse=True)
     if roster and not spell:

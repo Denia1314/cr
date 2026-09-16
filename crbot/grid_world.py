@@ -12,6 +12,8 @@ def target_for(sim, state, entity):
     if entity.tower_kind == 'king' and not entity.active:
         return None
     enemies=[t for t in state.entities if t.side!=entity.side and t.hp>0
+             and not (t.spec.dash_immune and t.dash_phase=='flight')
+             and sim.distance(entity,t)>=entity.spec.minimum_range
              and ('air' if t.spec.air else 'ground') in entity.spec.targets
              and (not entity.spec.building_only or t.spec.building or t.tower)]
     if entity.tower:
