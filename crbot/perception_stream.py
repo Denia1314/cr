@@ -54,6 +54,12 @@ class PerceptionStream:
                 self.error = exc
                 self.condition.notify_all()
 
+    def latest(self):
+        with self.condition:
+            if self.error is not None:
+                raise self.error
+            return self.result
+
     def get(self, *, sequence=0, timeout=8.):
         deadline = time.monotonic() + timeout
         with self.condition:

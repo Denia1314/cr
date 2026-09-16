@@ -31,7 +31,7 @@ def export_action_review(project_root: Path, output: Path, *, limit: int = 200, 
             if not action_id or not isinstance(frame, str) or not frame:
                 continue
             absolute = str((run_dir / frame).resolve())
-            if event.get("event") == "battle_action_proposed":
+            if event.get("event") in {"battle_action_proposed", "battle_action_pre_send_frame"}:
                 proposed_frames[action_id] = absolute
             elif (
                 event.get("event") == "battle_action_sent"

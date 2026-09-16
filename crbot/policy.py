@@ -1209,6 +1209,18 @@ class BattlePolicy:
                           lane + "_layer_confidence": threat.layer_confidence})
         return state
 
+    def recheck_lane_threats(self, current, previous, now):
+        """Check visible lane occupancy without rerunning YOLO or mutating tracks.
+
+        Card identity was established by the plan. This final guard only needs
+        to reject a vanished lane threat, using current level badges/motion.
+        Do not mask the proposed drop as an already deployed friendly unit.
+        """
+        prepared = getattr(self, 'prepared_frame', None)
+        kwargs = {'candidates': prepared.badges} if prepared is not None and prepared.frame.image is current else {}
+        dt = max(.05, now-self._threat_observed_at) if self._threat_observed_at > -999. else None
+        return detect_lane_threats(current, previous, (), frame_dt_s=dt, **kwargs)
+
     def _perceive_threats(
         self, current: Image.Image, previous: Image.Image | None, now: float,
     ) -> dict[str, LaneThreat]:

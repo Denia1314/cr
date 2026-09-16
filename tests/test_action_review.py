@@ -30,6 +30,10 @@ class ActionReviewTests(unittest.TestCase):
                     "event": "battle_action_sent", "action_id": "a0", "frame": "frames/post.jpg",
                     "confirmation_frame_role": "final_observation",
                 }) + "\n")
+                handle.write(json.dumps({
+                    "event": "battle_action_pre_send_frame", "action_id": "a1", "frame": "frames/deferred.jpg",
+                    "recorded_after_confirmation": True,
+                }) + "\n")
             output = root / "review.jsonl"
 
             result = export_action_review(root, output, limit=4)
@@ -40,6 +44,8 @@ class ActionReviewTests(unittest.TestCase):
             linked = next(row for row in exported if row["action_id"] == "a0")
             self.assertTrue(linked["pre_action_frame"].endswith("pre.jpg"))
             self.assertTrue(linked["post_confirmation_frame"].endswith("post.jpg"))
+            deferred = next(row for row in exported if row['action_id'] == 'a1')
+            self.assertTrue(deferred['pre_action_frame'].endswith('deferred.jpg'))
             with self.assertRaisesRegex(ValueError, "未覆盖"):
                 export_action_review(root, output, limit=4)
 

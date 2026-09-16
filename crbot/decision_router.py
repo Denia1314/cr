@@ -161,7 +161,8 @@ class PredictiveBattlePolicy(BattlePolicy):
         ):
             return self._fallback(current, previous, now, "no_active_enemy_use_normal_play")
         frame_age = max(0, float(getattr(self, "prediction_frame_age_s", 0)))
-        snapshot=replace(snapshot,observation_delay_s=frame_age+time.perf_counter()-decision_started)
+        pre_decision_s = max(0, float(getattr(self, "prediction_pre_decision_s", 0)))
+        snapshot=replace(snapshot,observation_delay_s=frame_age+pre_decision_s+time.perf_counter()-decision_started)
         scorer, learning = None, {"available": False, "reason": "disabled"}
         if self.planning_config.get("learned_action_value", True):
             learning["reason"] = "model_unavailable"
@@ -186,13 +187,15 @@ class PredictiveBattlePolicy(BattlePolicy):
             fraction=t.hp_fraction,observed_at=t.hp_observed_at,confidence=t.hp_confidence,
             identity_known=not t.card_id.startswith('unknown:')) for t in snapshot.tracks]
         self.last_plan["frame_age_before_perception_s"] = round(frame_age, 4)
+        self.last_plan["pre_decision_s"] = round(pre_decision_s, 4)
         self.last_plan["perception_mode"] = "exact_cards" if getattr(detector, "last_detection_succeeded", False) and not any(x.startswith("enemy_identity_unknown") for x in uncertain) else "lane_hypotheses"
         if self.decision_engine == "shadow":
             self.last_execution_engine = "legacy_shadow"
             decision = super().decide(current, previous, now=now)
             return replace(decision, decision_engine="legacy_shadow") if decision is not None else None
-        if max(result.elapsed_ms / 1000, time.perf_counter() - decision_started) > result.valid_until - result.observed_at:
+        if pre_decision_s + max(result.elapsed_ms / 1000, time.perf_counter() - decision_started) > result.valid_until - result.observed_at:
             self.last_plan["fallback_reason"] = "plan_expired_recapture"
+            self.planner._urgent_recovery = True
             self.last_execution_engine = "none"
             return None
         if result.status == "timeout":

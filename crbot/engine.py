@@ -705,7 +705,42 @@ class BotEngine:
                 print("[停止] 已收到停止请求，自动训练已安全结束。")
                 return
 
+    def _fresh_battle_frame(self, image):
+        """Replace a frame aged by navigation checks, without skipping screen guards."""
+        stream = getattr(self, 'frame_stream', None)
+        if stream is None:
+            return image
+        frame = stream.latest()
+        perception = getattr(self, 'perception_stream', None)
+        prepared = perception.latest() if perception is not None else None
+        if (prepared is not None and prepared.frame.sequence > getattr(self, '_frame_sequence', 0)
+                and time.monotonic() - prepared.frame.started <= .5):
+            frame = prepared.frame
+        if frame is None or frame.sequence <= getattr(self, '_frame_sequence', 0):
+            return image
+        automation = self.config.get('automation', {})
+        roi = automation.get('battle_ui_roi')
+        if roi is None:
+            return image
+        current = frame.image
+        threshold = float(automation.get('battle_ui_threshold', .72))
+        if (battle_ui_score(current, roi) < threshold or
+                find_result_confirm_button(current)[0] is not None or
+                (automation.get('chest_screen_enabled', True) and find_chest_open_screen(current)[0] is not None)):
+            # Let the normal navigation loop classify this transition; no old click.
+            return None
+        self._frame_sequence = frame.sequence
+        self._last_battle_capture = (current, frame.started)
+        self._last_screenshot_elapsed_s = frame.finished - frame.started
+        self.latest_frame = current
+        if prepared is not None and prepared.frame.image is current:
+            self.policy.prepared_frame = prepared
+        return current
+
     def _play_battle(self, image: Image.Image) -> None:
+        image = self._fresh_battle_frame(image)
+        if image is None:
+            return
         now = time.monotonic()
         captured = getattr(self, "_last_battle_capture", None)
         self.policy.prediction_frame_age_s = max(0, now - captured[1]) if captured and captured[0] is image else 0
@@ -719,6 +754,7 @@ class BotEngine:
         if not self.dry_run:
             self.replay.observe_action_effect(self.completed_battles + 1, observation)
         policy_snapshot = self.policy.snapshot_state()
+        self.policy.prediction_pre_decision_s = time.perf_counter() - cycle_started
         decision_started = time.perf_counter()
         decision = self.policy.decide(image, self.previous_battle_frame, now=now)
         timing["decision_s"] = time.perf_counter() - decision_started
@@ -823,23 +859,34 @@ class BotEngine:
         self._write_runtime_status()
 
     def _revalidate_prediction(self, image, decision):
+        self._prediction_recheck_evidence = None
         stream=getattr(self,'frame_stream',None)
         if stream is None or getattr(decision,'decision_engine','legacy') != 'predictive':
             return image,None
         frame=stream.latest()
+        perception = getattr(self, 'perception_stream', None)
+        prepared = perception.latest() if perception is not None else None
+        if (prepared is not None and prepared.frame.sequence > getattr(self, '_frame_sequence', 0)
+                and time.monotonic() - prepared.frame.started <= .5):
+            frame = prepared.frame
         if frame is None or frame.sequence <= getattr(self,'_frame_sequence',0):
             return image,None
         if time.monotonic()-frame.started > float(self.config.get('prediction',{}).get('max_plan_age_s',2.5)):
             return image,'latest_frame_stale'
         current=frame.image
-        matches=self.policy.hand_recognizer.recognize(current)
+        if prepared is not None and prepared.frame.image is current:
+            matches = prepared.hand
+            self.policy.prepared_frame = prepared
+        else:
+            matches=self.policy.hand_recognizer.recognize(current)
         match=next((m for m in matches if m.slot_index==decision.slot_index),None)
         if match is None or match.card_id != decision.card_id or match.confidence < float(getattr(self.policy,'policy',{}).get('hand_min_confidence',.4)):
             return current,'hand_changed_before_send'
         elixir,confidence=estimate_elixir(current,self.config['vision'].get('elixir_meter_roi',self.config['vision']['elixir_roi']))
         if confidence >= .08 and elixir is not None and elixir < (decision.card_cost or 0):
             return current,'elixir_changed_before_send'
-        threats=self.policy._perceive_threats(current,image,time.monotonic())
+        recheck = getattr(self.policy, 'recheck_lane_threats', self.policy._perceive_threats)
+        threats=recheck(current,image,time.monotonic())
         old=decision.left_threat if decision.lane=='left' else decision.right_threat
         threat=threats[decision.lane]
         intent=getattr(decision,'action_intent','reactive')
@@ -848,6 +895,7 @@ class BotEngine:
             return current,'development_resource_changed_before_send'
         if not independent_development and old >= .17 and threat.score < .05 and threat.unit_count == 0:
             return current,'threat_disappeared_before_send'
+        self._prediction_recheck_evidence = (current, matches, elixir, confidence)
         return current,None
 
     def _execute_action(
@@ -861,17 +909,20 @@ class BotEngine:
         """Send one action and resolve it from bounded post-click evidence."""
         decision = self.policy.prepare_action(decision, policy_snapshot)
         action_id = decision.action_id
+        proposed_at_unix = time.time()
         recheck_started=time.perf_counter()
         image,rejected=self._revalidate_prediction(image,decision)
         if hasattr(self,'response_timing'):
             self.response_timing.record('pre_send_recheck',time.perf_counter()-recheck_started)
+        if timing is not None:
+            timing['pre_send_recheck_s'] = time.perf_counter()-recheck_started
         if rejected:
             confirmation=ActionConfirmation(action_id,'rejected',1.,rejected,{'pre_send_recheck':rejected},0.,0)
             self.policy.resolve_action(action_id,'rejected',now=time.monotonic())
             return replace(decision,action_status='rejected'),None,None,confirmation,image,rejected
         self.recorder.record(
             "battle_action_proposed",
-            image,
+            None,  # JPEG encoding must not consume the remaining click deadline.
             decision.to_dict(),
         )
 
@@ -879,14 +930,19 @@ class BotEngine:
         # unavailable, the confirmation state machine simply demands stronger
         # remaining evidence instead of assuming the tap worked.
         pre_matches = None
-        if self.policy.last_hand_image is image and self.policy.last_hand_matches:
+        rechecked = getattr(self, '_prediction_recheck_evidence', None)
+        if rechecked is not None and rechecked[0] is image:
+            pre_matches = rechecked[1]
+        elif self.policy.last_hand_image is image and self.policy.last_hand_matches:
             pre_matches = self.policy.last_hand_matches
         elif self.policy.hand_recognizer is not None:
             try:
                 pre_matches = self.policy.hand_recognizer.recognize(image)
             except Exception:
                 pre_matches = None
-        if (
+        if rechecked is not None and rechecked[0] is image:
+            pre_elixir, pre_elixir_confidence = rechecked[2:]
+        elif (
             self.policy.last_elixir_image is image
             and self.policy.last_elixir_estimate_value is not None
         ):
@@ -1060,6 +1116,11 @@ class BotEngine:
         if timing is not None:
             timing["confirmation_s"] = confirmation_elapsed
         self.response_timing.record("confirmation", confirmation_elapsed)
+        self.recorder.record(
+            'battle_action_pre_send_frame', image,
+            {'action_id': action_id, 'proposal_created_at_unix': proposed_at_unix,
+             'frame_role': 'pre_send', 'recorded_after_confirmation': True},
+        )
         self.recorder.record(
             "battle_action_sent",
             post_image,
