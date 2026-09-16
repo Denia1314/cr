@@ -16,6 +16,8 @@ from typing import Any, Callable
 from PIL import Image, ImageTk
 
 from . import IMPLEMENTED_STAGES, implemented_stages_label, release_label
+from .app_paths import data_root
+from .animations import Animator, fade_in, mix, motion_enabled
 from .adb import MumuDevice
 from .annotate import AnnotationWindow
 from .calibrate import CalibrationWindow
@@ -52,7 +54,7 @@ from .vision import WorkflowRecognizer
 from .training_sync import ReplaySync, SyncWorker, training_allowed
 
 
-APP_ROOT = Path(__file__).resolve().parent.parent
+APP_ROOT = data_root()
 DEFAULT_CONFIG = APP_ROOT / "config.json"
 
 
@@ -128,19 +130,30 @@ class HoverButton(tk.Button):
             cursor="hand2",
             **kwargs,
         )
+        self.animator = Animator(self)
         self.bind("<Enter>", self._enter, add="+")
         self.bind("<Leave>", self._leave, add="+")
 
     def _enter(self, _event: tk.Event[Any]) -> None:
         if str(self["state"]) != "disabled":
-            self.configure(background=self.hover_background)
+            self._animate_to(self.hover_background)
 
     def _leave(self, _event: tk.Event[Any]) -> None:
-        self.configure(background=self.normal_background)
+        self._animate_to(self.normal_background)
+
+    def _animate_to(self, target: str) -> None:
+        start = self.cget("background")
+        def update(progress):
+            if str(self["state"]) == "disabled":
+                self.animator.cancel("hover")
+                self.configure(background=self.normal_background)
+            else:
+                self.configure(background=mix(start, target, progress))
+        self.animator.tween("hover", update, 140)
 
 
 class RoyalTrainerApp:
-    def __init__(self, root: tk.Tk, config_path: Path = DEFAULT_CONFIG):
+    def __init__(self, root: tk.Tk, config_path: Path = DEFAULT_CONFIG, *, start_services: bool = True):
         self.root = root
         self.config_path = config_path.resolve()
         self.messages: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -169,12 +182,16 @@ class RoyalTrainerApp:
         self._bind_shortcuts()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_messages)
-        self.root.after(700, self._passive_status_check)
+        if start_services:
+            self.root.after(700, self._passive_status_check)
         self._refresh_model_status()
-        self.sync_worker = SyncWorker(
-            self.config_path.parent,
-            notify=lambda message: self.messages.put(("log", message)),
-        ).start()
+        self.sync_worker = None
+        if start_services:
+            self.sync_worker = SyncWorker(
+                self.config_path.parent,
+                notify=lambda message: self.messages.put(("log", message)),
+            ).start()
+        self.window_animation = fade_in(root)
 
     def _configure_window(self) -> None:
         self.root.title(release_label())
@@ -257,6 +274,10 @@ class RoyalTrainerApp:
             ("双机数据同步", self.sync_training_data),
         ):
             self.tools_menu.add_command(label=label, command=command)
+        self.tools_menu.add_separator()
+        self.reduced_motion = tk.BooleanVar(value=not motion_enabled())
+        self.tools_menu.add_checkbutton(label="减少动态效果", variable=self.reduced_motion,
+                                       command=self._toggle_motion)
         tools_button.configure(menu=self.tools_menu)
 
         self.check_button = HoverButton(
@@ -271,6 +292,10 @@ class RoyalTrainerApp:
         )
         self.connection_button.pack(side="right", padx=8)
         self._refresh_connection_button()
+        self.activity_dot = tk.Canvas(header, width=12, height=12, bg=Palette.SURFACE, highlightthickness=0)
+        self.activity_dot.pack(side="left", padx=(4, 2))
+        self.activity_dot.create_oval(3, 3, 9, 9, fill=Palette.MUTED, outline="", tags="dot")
+        self.activity_animation = Animator(self.activity_dot)
         self.header_badge = tk.Label(
             header, text="尚未连接", font=(FONT, 9),
             foreground=Palette.MUTED, background=Palette.SURFACE,
@@ -577,6 +602,15 @@ class RoyalTrainerApp:
         self.root.bind("<Control-Return>", lambda _event: self.start_bot())
         self.root.bind("<Escape>", lambda _event: self.stop_bot())
 
+    def _toggle_motion(self) -> None:
+        os.environ["CRBOT_REDUCED_MOTION"] = "1" if self.reduced_motion.get() else "0"
+        if self.reduced_motion.get():
+            self.activity_animation.cancel()
+            self.activity_dot.itemconfigure("dot", fill=Palette.MUTED)
+        elif self._bot_is_running():
+            self.activity_animation.pulse("running", lambda t: self.activity_dot.itemconfigure(
+                "dot", fill=mix(Palette.BLUE, Palette.CYAN, t)))
+
     def _set_header(self, text: str, color: str) -> None:
         self.header_badge.configure(text=f"●  {text}", foreground=color)
 
@@ -643,6 +677,12 @@ class RoyalTrainerApp:
             self._set_run_state("已停止", Palette.MUTED)
 
     def _set_running_controls(self, running: bool) -> None:
+        if running:
+            self.activity_animation.pulse("running", lambda t: self.activity_dot.itemconfigure(
+                "dot", fill=mix(Palette.BLUE, Palette.CYAN, t)))
+        else:
+            self.activity_animation.cancel("running")
+            self.activity_dot.itemconfigure("dot", fill=Palette.MUTED)
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
         self.model_combo.configure(state="disabled" if running else "readonly")
@@ -1578,7 +1618,8 @@ class RoyalTrainerApp:
             if self.engine is not None:
                 self.engine.request_stop()
         self.closing = True
-        self.sync_worker.close()
+        if self.sync_worker is not None:
+            self.sync_worker.close()
         self.root.destroy()
 
 

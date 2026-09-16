@@ -1,38 +1,31 @@
-# Windows EXE 启动器
+# Windows 独立 EXE
 
-3.10.13 的 `RoyalLab.exe` 是图形启动入口。将它放在项目根目录，与
-`start_ui.bat`、`config.json`、`crbot`、`tools` 文件夹一起使用，然后双击。
-可以通过资源管理器为它创建桌面快捷方式。
+`RoyalLab.exe` 包含控制台、识别与推演、标定与标注、示范学习、自主学习、模型管理和同步模块，以及 Python、OpenCV、PyTorch/CUDA、Ultralytics、Git 和 GitHub CLI。运行不再调用外部 Python、BAT、CMD 或 VBS；`启动控制台.vbs` 已移除。
 
-双击后显示图形启动窗口，后台检查 Python、GPU 与界面依赖，然后直接打开
-主界面，不调用 CMD 或 BAT。只有主界面完成创建并发出就绪信号后，启动窗口
-才关闭。启动失败时在窗口显示原因与日志；关闭准备窗口会取消本次启动。
-NVIDIA 自动准备 CUDA、CPU 回退及显式 CPU 设置继续复用 `tools/ensure_gpu.py`。
-首次准备需要联网，可能下载较大的 PyTorch 包；已有环境也会检查可用性。
+双击从解包阶段就显示动态加载环，随后淡入主界面。按钮悬停使用渐变，任务运行时状态灯呼吸。可在“工具 → 减少动态效果”关闭当前进程的动画；设置环境变量 `CRBOT_REDUCED_MOTION=1` 可从启动起关闭 Tk 动画。
 
-3.10.13 修复旧 EXE 继承打包目录中 Tcl/Tk 环境变量导致 `init.tcl` 无法找到
-的问题：外部 Python 使用自己的库路径，并清除 PyInstaller 的 DLL 搜索路径
-影响。`launcher.log` 记录准备过程，`ui-process.log` 记录界面进程输出，
-`startup-error.log` 记录最近一次界面启动异常。日志保留在本地，不提交仓库。
+## 使用和数据
 
-这不是无需 Python 的完整离线安装包。电脑仍需要 Python 3.10+ 或项目支持的
-现有 Python 环境；只复制 EXE 到另一台机器不能运行机器人。
-模型、设备配置及训练数据继续使用原有目录和私有同步流程。
-EXE 不包含任何训练数据、凭据或模型，也不会改变模型加载或自动部署规则。
+只复制这个 EXE 到其他目录也能启动，无需安装 Python 或复制项目源码。CUDA 库使文件体积较大，第一次解包需要等待，临时磁盘也需有足够空间。MuMu/安卓模拟器和 NVIDIA 驱动仍由电脑安装；打包程序不能代替这些外部设备环境。
+
+- 若 EXE 同目录已有 `config.json`，继续使用该目录，保留原来的模型、配置、标定及同步身份。
+- 独立放置时，默认数据目录为 `%LOCALAPPDATA%\RoyalLab`。首次运行写入内置默认配置、公开卡牌知识和识别模板；升级不会覆盖用户已有文件。
+- 可用 `RoyalLab.exe --data-dir "D:\RoyalLabData"` 指定数据目录。
+- 私有训练数据、登录凭据、机器身份和自己训练的模型不写进 EXE。已有模型保留在数据目录，其他设备通过原有私有同步获取。GitHub 同步仍需要用户账号登录；内置工具不包含任何人的凭据。
+- EXE 另含经过固定 SHA-256 校验的公开战场识别基线（约 30 MB）及其许可说明，首次运行即可使用。它不被标记为本地验收通过，也不会自动替换训练冠军。
+- NVIDIA 电脑使用内置 CUDA 运行库；没有可用 GPU 时保留 CPU 路径，显式 CPU 设置仍有效。
 
 ## 构建
 
-在 Windows 项目目录双击 `build_exe.bat`，或在终端运行它。
-脚本安装 `requirements-build.txt` 中固定版本的 PyInstaller，并生成根目录
-`RoyalLab.exe`。打包依赖只用于构建，不会成为机器人运行时必需依赖。
-构建方式使用 PyInstaller 官方支持的 `--onefile --windowed`：
-<https://www.pyinstaller.org/en/stable/usage.html>。
+开发者在 Windows 双击 `build_exe.bat`。构建需要 Python、`requirements-build.txt` 和训练依赖，以及 Git、GitHub CLI。构建前通过 `setup_gpu.bat` 准备 CUDA 版 PyTorch，可以生成包含 CUDA 的 EXE；最终用户无需这些构建工具。
 
-构建产物和临时目录已从代码仓库忽略；另一台电脑拉取代码后可自行构建。
-更新机器人 Python 代码通常无需重建启动器；修改启动器本身时需重新构建。
-从 3.10.12 升级到 3.10.13 必须重新构建并替换旧 `RoyalLab.exe`。
-当前产物未做代码签名。
+构建使用 `packaging/RoyalLab.spec` 和 `tools/build_standalone.py`。只打包应用代码、公开配置与资源、第三方运行库和同步工具，不打包 `.venv` 整个目录或任何本机模型、回放、账号数据。EXE 和构建缓存从代码仓库忽略。
 
-可运行 `RoyalLab.exe --check` 只检查项目位置和必要文件，退出码 0 表示齐全，
-1 表示缺失；结果写到同目录 `launcher-check.log`。此检查不会启动机器人，
-也不证明 GPU、模拟器连接或实战已通过验收。
+代码在 EXE 内，更新代码后必须重新构建并替换 EXE。旧版“小启动器”不能升级为独立程序，需使用新版文件。当前产物未签名。
+
+## 验证与诊断
+
+- `RoyalLab.exe --self-test --report "D:\package-check.json"` 验证资源、功能模块、CPU/CUDA 运算与训练梯度、YOLO 无下载推理、多进程推演入口、学习子进程和同步工具；结果写入 JSON。
+- `RoyalLab.exe --smoke-ui --report "D:\ui-check.json"` 打开真实界面后自动关闭，不启动设备检测、同步或战斗，记录版本选项与窗口尺寸。
+- `RoyalLab.exe --cli --version` 或 `--cli <原 CLI 参数>` 使用内置命令行功能，输出保存到数据目录 `desktop.log`，不会弹控制台。
+- 正常运行日志位于数据目录 `desktop.log`。自检通过不代表模型已加载、账号已登录或整场战斗验收通过。

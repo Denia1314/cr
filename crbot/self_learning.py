@@ -46,6 +46,9 @@ def effective_learning_config(config: dict, config_path: Path) -> dict:
 
 
 def code_identity(root: Path) -> str:
+    from .app_paths import frozen, resource_root
+    if frozen():
+        return json.loads((resource_root() / 'build-info.json').read_text(encoding='utf-8'))['code_hash']
     return digest({p.name: hashlib.sha256(p.read_text(encoding="utf-8-sig").encode()).hexdigest()
                    for p in sorted((root / "crbot").glob("*.py"))})
 
@@ -331,8 +334,8 @@ class SelfLearningService:
         process = None
         try:
             with log_path.open("w", encoding="utf-8") as log:
-                process = subprocess.Popen([sys.executable, "-X", "utf8", "-m", "crbot.self_learning", "--root", str(self.root),
-                    "--request", str(request_path)], cwd=self.root, stdout=log, stderr=subprocess.STDOUT,
+                from .app_paths import learning_command
+                process = subprocess.Popen(learning_command(self.root, request_path, log_path), cwd=self.root, stdout=log, stderr=subprocess.STDOUT,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 last = None
                 while process.poll() is None:

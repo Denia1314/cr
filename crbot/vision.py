@@ -521,9 +521,9 @@ def find_chest_open_screen(image: Image.Image) -> tuple[list[float] | None, floa
     return click, confidence
 
 
-_CONFIRM_TEXT_TEMPLATE_PATH = (
-    Path(__file__).resolve().parent.parent / "templates" / "result_continue.png"
-)
+from .app_paths import data_root
+
+_CONFIRM_TEXT_TEMPLATE_PATH = data_root() / "templates" / "result_continue.png"
 _confirm_text_template: np.ndarray | None = None
 
 
