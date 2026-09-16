@@ -57,22 +57,22 @@ DEFAULT_CONFIG = APP_ROOT / "config.json"
 
 
 class Palette:
-    BG = "#090C17"
-    SURFACE = "#101522"
-    CARD = "#151B2B"
-    CARD_ALT = "#1A2133"
-    BORDER = "#273149"
+    BG = "#0B1120"
+    SURFACE = "#101B2E"
+    CARD = "#142137"
+    CARD_ALT = "#1D304B"
+    BORDER = "#2B405C"
     TEXT = "#F4F7FF"
-    MUTED = "#8F9BB3"
-    FAINT = "#5F6B82"
-    BLUE = "#4D8DFF"
-    BLUE_HOVER = "#6AA0FF"
-    PURPLE = "#8B6DFF"
+    MUTED = "#A6B7CE"
+    FAINT = "#8195B0"
+    BLUE = "#397CF6"
+    BLUE_HOVER = "#6098FF"
+    PURPLE = "#A78BFA"
     CYAN = "#44D7E8"
     GREEN = "#43D6A0"
     AMBER = "#FFBE55"
     RED = "#FF647C"
-    LOG = "#0B0F1B"
+    LOG = "#0D1728"
 
 
 FONT = "Microsoft YaHei UI"
@@ -120,6 +120,7 @@ class HoverButton(tk.Button):
             background=background,
             activebackground=hover,
             foreground=foreground,
+            disabledforeground=Palette.FAINT,
             activeforeground=foreground,
             relief="flat",
             borderwidth=0,
@@ -187,8 +188,19 @@ class RoyalTrainerApp:
         y = max(0, (screen_h - height) // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
         self.root.minsize(1040, 700)
+        self.root.option_add("*TCombobox*Listbox.font", (FONT, 10))
+        self.root.option_add("*TCombobox*Listbox.background", Palette.SURFACE)
+        self.root.option_add("*TCombobox*Listbox.foreground", Palette.TEXT)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", Palette.BLUE)
         style = ttk.Style(self.root)
         style.theme_use("clam")
+        style.configure("Vertical.TScrollbar", background=Palette.CARD_ALT,
+                        troughcolor=Palette.LOG, borderwidth=0, arrowsize=12,
+                        bordercolor=Palette.LOG, lightcolor=Palette.CARD_ALT,
+                        darkcolor=Palette.CARD_ALT,
+                        arrowcolor=Palette.MUTED)
+        style.map("Vertical.TScrollbar", background=[("active", Palette.BORDER),
+                                                     ("disabled", Palette.LOG)])
         style.configure(
             "Model.TCombobox",
             fieldbackground=Palette.SURFACE,
@@ -267,12 +279,12 @@ class RoyalTrainerApp:
 
         content = tk.Frame(self.root, background=Palette.BG)
         content.pack(fill="both", expand=True, padx=24, pady=18)
-        content.grid_columnconfigure(0, weight=1)
-        content.grid_rowconfigure(2, weight=3)
-        content.grid_rowconfigure(3, weight=1)
+        content.grid_columnconfigure(0, weight=3, uniform="workspace")
+        content.grid_columnconfigure(1, weight=2, uniform="workspace")
+        content.grid_rowconfigure(2, weight=1)
 
         stats = tk.Frame(content, background=Palette.BG)
-        stats.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        stats.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         for column in range(3):
             stats.grid_columnconfigure(column, weight=1, uniform="stats")
 
@@ -320,7 +332,7 @@ class RoyalTrainerApp:
         value_label = tk.Label(
             info,
             text=value,
-            font=(FONT, 15, "bold"),
+            font=(FONT, 19, "bold"),
             foreground=Palette.TEXT,
             background=Palette.CARD,
         )
@@ -342,7 +354,7 @@ class RoyalTrainerApp:
             highlightbackground=Palette.BORDER,
             highlightthickness=1,
         )
-        card.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
+        card.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
         card.grid_rowconfigure(1, weight=1)
         card.grid_columnconfigure(0, weight=1)
 
@@ -350,7 +362,7 @@ class RoyalTrainerApp:
         top.grid(row=0, column=0, sticky="ew", padx=16, pady=(13, 9))
         tk.Label(
             top,
-            text="设备画面",
+            text="实时画面",
             font=(FONT, 11, "bold"),
             foreground=Palette.TEXT,
             background=Palette.CARD,
@@ -383,7 +395,7 @@ class RoyalTrainerApp:
         preview_frame.grid_columnconfigure(0, weight=1)
         self.preview_canvas = tk.Canvas(
             preview_frame,
-            width=590,
+            width=300,
             height=180,
             background="#070A12",
             highlightthickness=0,
@@ -394,7 +406,7 @@ class RoyalTrainerApp:
 
     def _build_control_card(self, parent: tk.Frame) -> None:
         controls = tk.Frame(parent, background=Palette.BG)
-        controls.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         strategy_bar = tk.Frame(controls, background=Palette.BG)
         strategy_bar.pack(fill="x", pady=(0, 6))
         tk.Label(strategy_bar, text="版本", font=(FONT, 9), foreground=Palette.MUTED,
@@ -502,7 +514,7 @@ class RoyalTrainerApp:
             highlightbackground=Palette.BORDER,
             highlightthickness=1,
         )
-        card.grid(row=3, column=0, sticky="nsew")
+        card.grid(row=2, column=1, sticky="nsew", padx=(8, 0))
         card.grid_columnconfigure(0, weight=1)
         card.grid_rowconfigure(1, weight=1)
 
@@ -531,6 +543,9 @@ class RoyalTrainerApp:
         self.log_text = tk.Text(
             log_wrap,
             height=5,
+            width=30,
+            spacing1=3,
+            spacing3=3,
             background=Palette.LOG,
             foreground="#C7D1E6",
             insertbackground=Palette.TEXT,
@@ -543,7 +558,8 @@ class RoyalTrainerApp:
             wrap="word",
             state="disabled",
         )
-        scroll = tk.Scrollbar(log_wrap, orient="vertical", command=self.log_text.yview, relief="flat")
+        scroll = ttk.Scrollbar(log_wrap, orient="vertical", command=self.log_text.yview,
+                               style="Vertical.TScrollbar")
         self.log_text.configure(yscrollcommand=scroll.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
@@ -1443,7 +1459,8 @@ class RoyalTrainerApp:
         self.preview_canvas.create_text(
             cx,
             cy,
-            text="连接 MuMu 后显示实时画面",
+            text="等待设备连接\n\n点击右上角「连接并检测」\n连接 MuMu 后在这里查看实时画面",
+            justify="center",
             fill=Palette.FAINT,
             font=(FONT, 9),
         )

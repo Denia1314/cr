@@ -19,3 +19,8 @@ venv/
 .training-sync/
 reports/
 .royal-lab.json
+
+# Local executable builds
+build/
+dist/
+RoyalLab.exe
