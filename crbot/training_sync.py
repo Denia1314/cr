@@ -584,6 +584,8 @@ class ReplaySync:
                 self.protocol()
                 exported = self.export_records()
                 imported = self.import_records()
+                from .battlefield_assets import sync_assets
+                battlefield_assets = sync_assets(self.root, self.checkout)
                 from .deployment_sync import publish_deployment, import_deployment, acknowledge_publication
                 published_deployments = publish_deployment(self)
                 received_deployments = import_deployment(self)
@@ -609,6 +611,7 @@ class ReplaySync:
                         raise SyncError("远端提交尚未核验一致，部署发布将重试")
                     acknowledge_publication(self)
                 result = {"enabled": True, "time": time.time(), "exported_episodes": exported,
+                          "battlefield_assets": battlefield_assets,
                           "candidate_model_error": candidate_model_error,
                           "published_deployments": published_deployments, "received_deployments": received_deployments,
                           "imported_episodes": imported, "published_models": published,

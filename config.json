@@ -355,6 +355,9 @@
     "compute_device": "auto"
   },
   "training": {
+    "pretrained_enabled": true,
+    "pretrained_confidence": 0.55,
+    "pretrained_side_confidence": 0.85,
     "minimum_human_frames": 200,
     "minimum_human_boxes": 300,
     "minimum_human_battles": 10,

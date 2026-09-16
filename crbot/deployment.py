@@ -58,7 +58,7 @@ class DeploymentService:
         components = {}
         for name in ("imitation_model", "learned_detector"):
             model = getattr(self.policy, name, None)
-            champion = getattr(model, "champion", None)
+            champion = getattr(model, "runtime_metadata", None) or getattr(model, "champion", None)
             components[name] = (champion or {}).get("model_sha256") or champion
         return digest(dict(code=code_identity(self.root), policy=config.get("policy", {}),
             prediction=config.get("prediction", {}), replay=replay, components=components,

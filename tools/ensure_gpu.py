@@ -77,6 +77,10 @@ def ensure_gpu(force=False):
 def main():
     try:
         result = ensure_gpu('--force' in sys.argv)
+        if result == 0:
+            python = ROOT / '.venv/Scripts/python.exe'
+            result = run([str(python) if python.is_file() else sys.executable,
+                          str(ROOT / 'tools/ensure_battlefield.py')]).returncode
     except (OSError, subprocess.SubprocessError) as exc:
         print(f'GPU setup error: {exc}', flush=True)
         result = 1

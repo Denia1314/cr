@@ -1377,17 +1377,20 @@ class RoyalTrainerApp:
 
         exact = dict(payload.get("exact_detector", {}))
         exact_champion = ModelRegistry(self.config_path.parent).champion()
+        from .battlefield_assets import assets_ready, VERSION as battlefield_version
+        baseline_ready = assets_ready(self.config_path.parent)
         exact_status = (
             f"识别冠军：{exact_champion.get('version')}（实际加载见主界面）"
             if exact_champion
-            else "未启用（不影响自动战斗和上方自学模型）"
+            else f"公开预训练：{battlefield_version}，待本地准确率验收（实际加载见主界面）" if baseline_ready
+            else "模型未安装：运行 setup_battlefield.bat；当前只能观察位置和威胁"
         )
         detail += (
             "\n\n可选增强：精确识别敌方卡名\n"
             f"状态：{exact_status}\n"
             f"人工框选：{exact.get('human_frames', 0)} 帧 / "
             f"{exact.get('human_boxes', 0)} 个目标\n"
-            "只有这个可选增强需要框选；可以完全跳过。"
+            "公开预训练模型可直接推理；本地训练和准确率验收仍需独立单位框标注。"
         )
         self._append_log(
             f"无标注自学：{status} · 有效出牌 "

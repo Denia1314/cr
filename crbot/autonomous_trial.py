@@ -142,7 +142,7 @@ class AutonomousTrial:
                         if path is not None:
                             paths.append(Path(path))
         return digest(dict(code=code_identity(self.root), config=self.config,
-                           loaded_components={name: getattr(getattr(self.policy, name, None), "champion", None)
+                           loaded_components={name: (getattr(getattr(self.policy, name, None), "runtime_metadata", None) or getattr(getattr(self.policy, name, None), "champion", None))
                                               for name in ("imitation_model", "learned_detector")},
                            resources=[hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None for p in paths]))
 

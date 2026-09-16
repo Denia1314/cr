@@ -74,10 +74,13 @@ class BotEngine:
                     self.policy.learned_detector is not None
                     and self.policy.learned_detector.available
                 ):
-                    version = self.policy.learned_detector.champion.get("version", "unknown")
-                    print(f"[策略] 已加载验证通过的战场模型：{version}")
+                    status = self.policy.learned_detector.status()
+                    version = status.get("version", "unknown")
+                    qualification = "公开预训练，待本地准确率验收" if status.get("source") == "public_pretrained" else "本地已验证"
+                    print(f"[策略] 战场模型：{version}（{qualification}；{status.get('device', 'auto')}）")
                 else:
-                    print("[策略] 尚无验证通过的战场模型，使用通用压路威胁检测。")
+                    reason = getattr(self.policy.learned_detector, "error", "")
+                    print(f"[策略] 战场模型未加载，使用位置/威胁检测：{reason}")
                 if (
                     self.policy.imitation_model is not None
                     and self.policy.imitation_model.available
@@ -200,6 +203,7 @@ class BotEngine:
             "prediction": self.policy.prediction_status() if hasattr(self.policy, "prediction_status") else {"selected_engine": "legacy", "actual_engine": "legacy"},
             "rule_version": self.policy.policy.get("version", "unversioned"),
             "hand_matching": hand_status,
+            "battlefield_recognition": self.policy.learned_detector.status() if getattr(self.policy, "learned_detector", None) is not None else {"loaded": False},
             "perception_stream": self.perception_stream.status() if getattr(self, "perception_stream", None) else {"enabled": False},
             "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown"),"ipc_error":getattr(self.device,"capture_ipc_error","")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
             "replay_model": {

@@ -13,7 +13,7 @@ from .knowledge import KnowledgeBase
 
 
 class LearnedBattlefieldDetector:
-    """Optional exact-card detector backed only by a validated champion model."""
+    """Validated local champion, or an explicitly identified public baseline."""
 
     def __init__(
         self,
@@ -31,6 +31,8 @@ class LearnedBattlefieldDetector:
         self.registry = ModelRegistry(project_root)
         self.champion = self.registry.champion()
         self.model = None
+        self.pretrained = None
+        self.runtime_metadata = self.champion
         self.class_names: list[str] = []
         self.error = ""
         self.observed_allies: list[dict[str, Any]] = []
@@ -39,6 +41,15 @@ class LearnedBattlefieldDetector:
         self.allies_observed = False
         model_path = self.registry.champion_model_path()
         if self.champion is None or model_path is None:
+            if training_config.get("pretrained_enabled", True):
+                try:
+                    from .pretrained_battlefield import PretrainedBattlefield
+                    self.pretrained = PretrainedBattlefield(project_root, catalog, training_config)
+                    self.runtime_metadata = self.pretrained.metadata
+                except Exception as exc:
+                    self.error = str(exc)
+            else:
+                self.error = "战场预训练模型已禁用，且无本地识别冠军"
             return
         try:
             from ultralytics import YOLO
@@ -52,7 +63,17 @@ class LearnedBattlefieldDetector:
 
     @property
     def available(self) -> bool:
-        return self.model is not None and bool(self.class_names)
+        return getattr(self, "pretrained", None) is not None or (self.model is not None and bool(self.class_names))
+
+    def status(self) -> dict[str, Any]:
+        baseline = getattr(self, "pretrained", None)
+        details = baseline.status() if baseline is not None else {
+            "source": "local_champion" if self.model is not None else "none",
+            "version": (self.champion or {}).get("version"),
+        }
+        return {**details, "loaded": self.available, "error": self.error,
+                "last_detection_succeeded": self.last_detection_succeeded,
+                "observed_enemies": len(self.observed_enemies), "observed_allies": len(self.observed_allies)}
 
     def detect(
         self,
@@ -65,24 +86,31 @@ class LearnedBattlefieldDetector:
         self.allies_observed = False
         if not self.available:
             return fallback
+        baseline = getattr(self, "pretrained", None)
+        detections = []
         try:
-            result = self.model.predict(
-                source=image,
-                conf=float(self.training.get("runtime_confidence", 0.70)),
-                imgsz=int(self.training.get("image_size", 640)),
-                device=vision_device(self.training.get("device", "auto")),
-                verbose=False,
-            )[0]
+            if baseline is not None:
+                detections = baseline.detect(image)
+                result = None
+            else:
+                result = self.model.predict(
+                    source=image,
+                    conf=float(self.training.get("runtime_confidence", 0.70)),
+                    imgsz=int(self.training.get("image_size", 640)),
+                    device=vision_device(self.training.get("device", "auto")),
+                    verbose=False,
+                )[0]
         except Exception as exc:  # pragma: no cover - backend/runtime dependent
             self.error = str(exc)
             return fallback
         self.last_detection_succeeded = True
-        self.allies_observed = any(str(name).startswith("ally__") for name in self.class_names)
+        self.error = ""
+        self.allies_observed = baseline is not None or any(str(name).startswith("ally__") for name in self.class_names)
         by_lane: dict[str, list[tuple[str, float, float, float]]] = {
             "left": [],
             "right": [],
         }
-        if result.boxes is not None:
+        if result is not None and result.boxes is not None:
             classes = result.boxes.cls.cpu().tolist()
             confidences = result.boxes.conf.cpu().tolist()
             boxes = result.boxes.xyxyn.cpu().tolist()
@@ -120,6 +148,19 @@ class LearnedBattlefieldDetector:
                     **read_unit_health(image, bbox, side=-1),
                 })
                 by_lane[lane].append((card_id, center_x, center_y, float(confidence)))
+
+        for detection in detections:
+            bbox = detection["bbox"]
+            x1, y1, x2, y2 = bbox
+            x, y = (x1+x2)/2, (y1+y2)/2
+            lane = "left" if x < .5 else "right"
+            observation = {**detection, "x": round(x,4), "y": round(y,4), "lane": lane,
+                           **read_unit_health(image, bbox, side=detection["side"])}
+            if detection["side"] == 1:
+                self.observed_allies.append(observation)
+            else:
+                self.observed_enemies.append(observation)
+                by_lane[lane].append((detection["card_id"], x, y, detection["confidence"]))
 
         merged: dict[str, LaneThreat] = {}
         for lane in ("left", "right"):

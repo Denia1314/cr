@@ -64,9 +64,12 @@ def model_status(project_root: Path, *, policy: Any = None, running: bool = Fals
 
         model = getattr(policy, attribute, None) if running and not demonstration else None
         if model is not None and model.available:
-            version = str((model.champion or {}).get("version", "未知版本"))
+            metadata = getattr(model, "runtime_metadata", None) or model.champion or {}
+            version = str(metadata.get("version", "未知版本"))
             loaded.append(f"{label} {version}")
             runtime = f"已加载 {version}"
+            if metadata.get("kind") == "public_pretrained_baseline":
+                runtime += "（公开预训练，待本地准确率验收）"
             scale = getattr(model, "influence_scale", None)
             if scale is not None:
                 runtime += f"（当前影响权重 {scale:g}）"
@@ -85,6 +88,10 @@ def model_status(project_root: Path, *, policy: Any = None, running: bool = Fals
             latest_models.append((_created_at(candidates[0]), label, candidates[0]))
         else:
             lines.append("暂无本地模型")
+        if directory == "battlefield":
+            from .battlefield_assets import assets_ready, VERSION
+            if assets_ready(project_root):
+                lines.append(f"公开预训练：{VERSION} · 文件校验通过 · 待本地准确率验收；不属于本地训练冠军")
         for candidate in candidates:
             version = str(candidate.get("version", "未知版本"))
             source = "同步接收" if candidate.get("sync_publication") else "本机训练"
