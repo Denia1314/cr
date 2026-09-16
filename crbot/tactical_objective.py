@@ -40,6 +40,63 @@ def protect_towers_before_wait(best, candidates, world, kb, tolerance=30., minim
     return chosen, audit
 
 
+def emergency_tower_defense(best, candidates, world, sim, initial, threshold=600.):
+    """Break worst-branch ties during a tower crisis using actionable defenses."""
+    audit = dict(active=False, changed=False, reason='not_required', threshold=threshold)
+    if best['action']['card_id'] is not None:
+        return best, audit
+    waiting = next((r for r in candidates if not r['action']['card_id'] and r.get('branches')), None)
+    if waiting is None:
+        return best, audit
+    risk = max(b.get('own_tower_damage', 0)+b.get('imminent_tower_exposure', 0) for b in waiting['branches'])
+    audit['wait_damage_and_exposure'] = risk
+    if risk < threshold:
+        return best, audit
+    audit['active'] = True
+    enemies = [e for e in initial.entities if e.side == -1 and not e.tower and e.hp > 0]
+    enemy_specs = [e.spec for e in enemies]
+    # initial uses the worst identity hypothesis. Do not reject every ground
+    # defender merely because an unidentified ground/air track could be Balloon.
+    for track in world.tracks:
+        if track.side != -1 or track.hp_fraction == 0 or world.at-track.last_seen > 1.5:
+            continue
+        for cid in track.hypotheses:
+            enemy_specs.extend(spec for spec,count in sim.kb.roster(cid,sim.level))
+    options = []
+    for row in candidates:
+        a = row['action']; cid = a['card_id']
+        if not cid or (a['slot'], cid) not in world.hand or not row.get('branches'):
+            continue
+        cost = sim.kb.cards[cid].get('elixir')
+        if cost is None or cost > world.elixir or not sim.legal_placement(initial,cid,1,a['x'],a['y']):
+            continue
+        spell = sim.kb.spell(cid,sim.level)
+        interacts = bool(spell and not spell.get('friendly') and spell.get('damage',0)>0
+                          and any(not enemy.air or spell.get('air') for enemy in enemy_specs))
+        for spec, count in sim.kb.roster(cid,sim.level):
+            interacts |= any((spec.damage>0 and (not spec.building_only or enemy.building)
+                             and ('air' if enemy.air else 'ground') in spec.targets)
+                            or (spec.hp>0 and (not enemy.building_only or spec.building)
+                                and ('air' if spec.air else 'ground') in enemy.targets) for enemy in enemy_specs)
+        if interacts:
+            options.append(row)
+    audit['available_defenses'] = len(options)
+    if not options:
+        audit['reason'] = 'no_affordable_legal_interacting_defense'
+        return best, audit
+    def rank(row):
+        losses = [-100000*b.get('own_towers_remaining',2)+b.get('own_tower_damage',0)
+                  + b.get('imminent_tower_exposure',0) for b in row['branches']]
+        cid = row['action']['card_id']
+        return max(losses),sum(losses)/len(losses),sim.kb.cards[cid]['elixir'] if cid else 0,-row['score']
+    chosen = min(options,key=rank)
+    audit.update(changed=True,reason='tower_crisis_defend_despite_uncertain_mitigation',
+                 card_id=chosen['action']['card_id'],reserve_override=True,
+                 worst_risk_improved=rank(chosen)[0]<rank(waiting)[0],
+                 mean_risk_improved=rank(chosen)[1]<rank(waiting)[1])
+    return chosen,audit
+
+
 def phase_for(state):
     enemies = [e for e in state.entities if e.side == -1 and not e.tower and e.hp > 0]
     if enemies:

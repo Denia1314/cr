@@ -455,6 +455,12 @@ class PredictivePlanner:
                 self.config.get('defense_damage_tolerance', 30),
                 self.config.get('tower_wait_minimum_mitigation', 30))
             result.compute['tower_wait_guard'] = tower_wait
+            from .tactical_objective import emergency_tower_defense
+            best, emergency = emergency_tower_defense(best, result.candidates, world, self.sim, initial,
+                float(self.config.get('tower_emergency_damage', 600)))
+            baseline, _ = emergency_tower_defense(baseline, result.candidates, world, self.sim, initial,
+                float(self.config.get('tower_emergency_damage', 600)))
+            result.compute['tower_emergency_defense'] = emergency
             result.learning.update(changed_selection=best["action"] != baseline["action"],
                                    baseline_action=baseline["action"],
                                    selected_action_supported="learned_value" in best)
@@ -473,6 +479,10 @@ class PredictivePlanner:
                 result.reason += '；敌方沉底，提前安全展开' if preparation else '；接近满费，执行安全低费发展'
             if tower_wait['changed']:
                 result.reason += f"；等待将增加皇家塔受伤风险，提前防守（预计减少伤害及暴露 {tower_wait['prevented_damage_and_exposure']:g}）"
+            if emergency['changed']:
+                result.reason += f"；皇家塔高危 {emergency['wait_damage_and_exposure']:g}，使用预留费用执行应急防守（不保证最坏场景减伤）"
+            elif emergency['active']:
+                result.reason += '；已解除高危留费限制，但完整方案中无可支付、合法且能交战的防守'
             elif best['action']['card_id'] is None and 'wait_damage_and_exposure' in tower_wait:
                 result.reason += f"；立即等待预计塔伤及暴露 {tower_wait['wait_damage_and_exposure']:g}"
                 if tower_wait['reason'] == 'no_completed_effective_defense':
@@ -500,7 +510,7 @@ class PredictivePlanner:
                 missing = ','.join(result.compute['partial_hand_comparison']['missing'])
                 result.reason += f"；使用完整子集比较，未完成手牌：{missing}"
             reserve_audit = result.compute.get('development_reserve', {})
-            if result.status == 'wait' and reserve_audit.get('blocked'):
+            if result.status == 'wait' and reserve_audit.get('blocked') and not result.compute.get('tower_emergency_defense',{}).get('active'):
                 requirements = [o['required'] for o in reserve_audit.get('options', []) if not o['accepted']]
                 needed = min(requirements, default=float(self.config.get('attack_reserve',3)))
                 result.reason += f"；留费防下一波：出牌后需保留至少 {needed:g} 费"
