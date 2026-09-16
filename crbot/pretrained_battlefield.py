@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 
 from .battlefield_assets import RELATIVE_ROOT, assets_ready, manifest
+from .unit_badges import find_level_badges, associate_badges
 
 # Unit identities are representatives, not proof that a particular card was played.
 # Unsupported split/companion entities must not acquire the parent's statistics.
@@ -61,31 +62,10 @@ def restore_box(box, transform):
     return [float(np.clip(v, 0, 1)) for v in values]
 
 
-def classify_side(image, bbox, scores, threshold=.85):
-    """Use reliable classifier scores, or strong badge color for ambiguous crops.
-
-    The side model exports two independent sigmoid scores, not softmax logits.
-    Position on the board is never used to guess allegiance.
-    """
-    scores = np.asarray(scores, dtype=float).reshape(-1)
-    if len(scores) != 2 or not np.isfinite(scores).all() or np.any((scores < 0) | (scores > 1)):
-        return None
-    index = int(scores.argmax())
-    if scores[index] >= threshold and scores[index] - scores[1-index] >= .35:
-        return (1 if index == 0 else -1), float(scores[index]), "side_model"
-    w, h = image.size
-    x1, y1, x2, y2 = bbox
-    box = (round(x1*w), max(0, round(y1*h-.005*h)), round(x2*w), round((y1+.23*(y2-y1))*h))
-    if box[2] <= box[0] or box[3] <= box[1]:
-        return None
-    pixels = np.asarray(image.crop(box).convert("RGB"), dtype=float)
-    r, g, b = pixels.transpose(2, 0, 1)
-    red = int(((r>105)&(r>g*1.5)&(r>b*1.1)&(g<120)).sum())
-    blue = int(((b>110)&(b>r*1.5)&(b>g*1.05)).sum())
-    minimum = max(15, round(w*h * .000035))
-    if max(red, blue) >= minimum and max(red, blue) >= 3 * max(1, min(red, blue)):
-        return (-1 if red>blue else 1), .85, "top_color_evidence"
-    return None
+def classify_side(image, bbox, scores=None, threshold=.85):
+    """A visible level badge owns team identity; legacy model scores cannot override it."""
+    badge = associate_badges([bbox], find_level_badges(image)).get(0)
+    return (badge['side'], badge['confidence'], badge['evidence']) if badge else None
 
 
 class PretrainedBattlefield:
@@ -118,13 +98,10 @@ class PretrainedBattlefield:
         if requested not in {"auto", "cpu"} and "CUDAExecutionProvider" not in self.providers:
             raise RuntimeError("指定 CUDA 但战场识别未能加载 CUDAExecutionProvider")
         self.device = "cuda" if "CUDAExecutionProvider" in self.providers else "cpu"
-        # This tiny 16x16 network is faster on CPU and avoids many GPU transfers.
-        self.side_session = ort.InferenceSession(str(directory / "side.onnx"), sess_options=options, providers=["CPUExecutionProvider"])
         inp = self.session.get_inputs()[0]
         if inp.shape != [1, 3, 480, 352] or inp.type != "tensor(float16)":
             raise ValueError("战场模型输入契约不匹配")
         self.input_name = inp.name
-        self.side_input = self.side_session.get_inputs()[0].name
         self.names = ast.literal_eval(self.session.get_modelmeta().custom_metadata_map["names"])
         if not isinstance(self.names, dict) or set(self.names) != set(range(97)):
             raise ValueError("战场模型类别表不匹配")
@@ -140,7 +117,7 @@ class PretrainedBattlefield:
         tensor, transform = prepare_image(image)
         rows = np.asarray(self.session.run(None, {self.input_name: tensor})[0])[0]
         threshold = float(self.config.get("pretrained_confidence", .55))
-        result = []
+        result = []; candidates = []
         rejected = {"unmapped": 0, "side_unknown": 0, "invalid": 0}
         for row in rows:
             if len(row) != 6 or not np.isfinite(row).all():
@@ -162,19 +139,18 @@ class PretrainedBattlefield:
             if x2 <= x1 or y2 <= y1 or not .20 <= (y1+y2)/2 <= .80:
                 rejected["invalid"] += 1
                 continue
-            crop = image.crop(tuple(round(v*s) for v,s in zip(bbox, [image.width,image.height]*2))).convert("RGB")
-            if not crop.width or not crop.height:
-                continue
-            pixels = np.asarray(crop.resize((16,16), Image.Resampling.BICUBIC), dtype=np.float32)[None] / 255
-            scores = self.side_session.run(None, {self.side_input: pixels})[0][0]
-            side = classify_side(image, bbox, scores, float(self.config.get("pretrained_side_confidence", .85)))
-            if side is None:
+            candidates.append((card_id, unit_name, bbox, confidence))
+        badges = associate_badges([c[2] for c in candidates], find_level_badges(image))
+        for index, (card_id, unit_name, bbox, confidence) in enumerate(candidates):
+            badge = badges.get(index)
+            if badge is None:
                 rejected["side_unknown"] += 1
                 continue
-            team, side_confidence, evidence = side
+            team, side_confidence, evidence = badge['side'], badge['confidence'], badge['evidence']
             result.append(dict(card_id=card_id, unit_name=unit_name, side=team, bbox=bbox,
                 confidence=min(confidence, side_confidence), detection_confidence=confidence,
                 side_confidence=side_confidence, side_evidence=evidence,
+                level=badge['level'], level_badge_bbox=badge['bbox'],
                 identity_source="public_pretrained", deployment_confirmed=False))
         self.calls += 1
         self.gpu_calls += self.device == "cuda"
@@ -185,7 +161,7 @@ class PretrainedBattlefield:
 
     def status(self):
         return dict(version=self.metadata["version"], source="public_pretrained", device=self.device,
-                    providers=self.providers, side_device="cpu", inference_calls=self.calls,
+                    providers=self.providers, side_device="cpu", side_method="level_badge", inference_calls=self.calls,
                     gpu_inference_calls=self.gpu_calls, detected_units=self.detected_units,
                     last_ms=round(self.last_ms,3), rejected=self.rejected,
                     local_quality_validated=False, battle_acceptance=False)

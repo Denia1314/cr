@@ -37,22 +37,6 @@ class AdapterTests(unittest.TestCase):
         for name in ("golemite","phoenix_egg","nonexistent","giant_snowball"):
             self.assertIsNone(unit_card_id(name,catalog))
 
-    def test_side_abstains_without_evidence_and_does_not_use_board_half(self):
-        image=Image.new("RGB",(540,960),"gray")
-        for bbox in ([.2,.2,.3,.3],[.2,.6,.3,.7]):
-            self.assertIsNone(classify_side(image,bbox,[.52,.48]))
-            self.assertEqual(classify_side(image,bbox,[.98,.01])[0],1)
-            self.assertEqual(classify_side(image,bbox,[.01,.98])[0],-1)
-        self.assertIsNone(classify_side(image,[.2,.2,.3,.3],[np.nan,1]))
-
-    def test_ambiguous_side_uses_strong_top_color(self):
-        red=Image.new("RGB",(540,960),(180,30,55))
-        blue=Image.new("RGB",(540,960),(20,120,210))
-        self.assertEqual(classify_side(red,[.2,.4,.3,.5],[.6,.4])[0],-1)
-        self.assertEqual(classify_side(blue,[.2,.4,.3,.5],[.3,.7])[0],1)
-        # Confident crop classification takes precedence over overlapping badges.
-        self.assertEqual(classify_side(red,[.2,.4,.3,.5],[.99,.01])[0],1)
-
     def detector(self):
         d=PretrainedBattlefield.__new__(PretrainedBattlefield)
         d.catalog=CardCatalog([make_card("knight")]);d.config={}
@@ -70,7 +54,8 @@ class AdapterTests(unittest.TestCase):
             [80,160,120,200,.91,.5], [80,160,120,200,np.nan,0],
             [120,160,80,200,.91,0],
         ]])]
-        observations=d.detect(Image.new("RGB",(540,960),"gray"))
+        from tests.battlefield_fixtures import scene_with_badge
+        observations=d.detect(scene_with_badge(x=.325,y=.30))
         self.assertEqual(len(observations),1)
         self.assertEqual(observations[0]["card_id"],"knight")
         self.assertEqual(observations[0]["side"],-1)

@@ -18,6 +18,8 @@ class PredictiveBattlePolicy(BattlePolicy):
         self.decision_engine = config.get("policy", {}).get("decision_engine", "legacy")
         self.planning_config = dict(config.get("prediction", {}))
         self.world = BattleWorld()
+        from .tower_observation import TowerHealthTracker
+        self.tower_observer = TowerHealthTracker()
         self.planner = None
         self.knowledge_error = ""
         self.last_plan = None
@@ -40,6 +42,7 @@ class PredictiveBattlePolicy(BattlePolicy):
     def reset_battle(self, now=None):
         super().reset_battle(now)
         self.world.reset()
+        self.tower_observer.reset()
         self.last_plan = None
         self.last_execution_engine = "none"
         self._proposed_prediction = None
@@ -112,6 +115,13 @@ class PredictiveBattlePolicy(BattlePolicy):
         bars = []
         if self.planning_config.get('unit_health_observation', True):
             from .unit_health import detect_unit_health_bars
+            from .unit_badges import find_level_badges
+            enemy_badges=[b for b in find_level_badges(current) if b['side']==-1]
+            for detection in detections:
+                if detection['side']!=-1 or not detection['card_id'].startswith('unknown:'):continue
+                nearby=[b for b in enemy_badges if math.hypot(b['x']-detection['x'],b['y']-detection['y'])<.025]
+                if len(nearby)==1:
+                    detection.update(level=nearby[0]['level'],side_evidence='level_badge')
             bars = detect_unit_health_bars(current, self.planner.sim.geometry.tower_points)
             claimed = set()
             for bar in bars:
@@ -123,6 +133,8 @@ class PredictiveBattlePolicy(BattlePolicy):
                     if detections[index].get('hp_fraction') is None:
                         detections[index].update({k:v for k,v in bar.items() if k.startswith('hp_')})
                 elif not candidates or candidates[0][0] > .065:
+                    if bar['side']==-1 and not any(abs(b['x']-bar['x'])<.055 and abs(b['y']-bar['y'])<.065 for b in enemy_badges):
+                        continue
                     lane='left' if bar['x']<.5 else 'right'
                     hypotheses=('knight','minions','balloon') if bar['side']==-1 else ()
                     detections.append(dict(bar,card_id=f"unknown:{lane}:health",confidence=.8,hypotheses=hypotheses))
@@ -134,8 +146,8 @@ class PredictiveBattlePolicy(BattlePolicy):
                 if m.card_id and m.confidence >= float(self.policy.get("hand_min_confidence", .4))]
         costs = {cid: c["elixir"] for cid, c in self.planner.kb.cards.items() if c.get("elixir") is not None}
         elixir = float(self.last_elixir_estimate_value or 0)
-        from .tower_observation import observe_tower_health
-        tower_health=observe_tower_health(current,self.planning_config.get("tower_bar_rois",[]))
+        tower_health=self.tower_observer.observe(current,self.planning_config.get("tower_bar_rois",[]),
+            self.planner.sim.geometry.tower_points,now=now)
         snapshot = self.world.update(detections, now=now, elapsed=now-self.battle_started_at,
                                      elixir=elixir, hand=hand, costs=costs,
                                      seconds_per_elixir=float(self.policy.get("seconds_per_elixir", 2.8)) / self._elixir_rate_multiplier,
@@ -164,6 +176,8 @@ class PredictiveBattlePolicy(BattlePolicy):
             try:
                 state=self.planner.initial(snapshot,snapshot.enemy_elixir_estimate,1.)
                 packet=self.grid_audit.update(snapshot,state,self.planner.sim,result)
+                packet['tower_bar_rois']=self.planning_config.get('tower_bar_rois',[])
+                packet['battle_started_at']=self.battle_started_at
                 self.last_plan['grid_world']=packet
                 self.grid_frame=(current,packet)
             except (ValueError,KeyError,TypeError) as exc:

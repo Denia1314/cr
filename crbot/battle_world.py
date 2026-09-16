@@ -24,6 +24,8 @@ class Track:
     hp_observed_at: float | None = None
     hp_confidence: float = 0.
     identity_observed_at: float | None = None
+    level: int | None = None
+    side_evidence: str | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,8 @@ class BattleWorld:
                 self.tracks[t.track_id] = t
                 self.next_id += 1
             claimed.add(t.track_id)
+            t.level=d.get('level')
+            t.side_evidence=d.get('side_evidence')
             if not cid.startswith('unknown:'):
                 t.identity_observed_at=now
             elif not t.card_id.startswith('unknown:') and t.identity_observed_at is not None and now-t.identity_observed_at > 2:
@@ -142,7 +146,9 @@ class BattleWorld:
                         self.enemy_elixir_estimate = max(0, self.enemy_elixir_estimate - costs.get(cid, 0) * likelihood)
                         self.events.append({"id": f"sighting-{t.track_id}", "card_id": cid,
                                             "at": now, "kind": "sighting", "deployment_likelihood": likelihood})
-        self.tower_health=tuple(tower_health or (None,)*4)
+        incoming=tuple(tower_health or (None,)*len(self.tower_health))
+        self.tower_health=tuple(0. if i<len(self.tower_health) and self.tower_health[i]==0 else v
+                                for i,v in enumerate(incoming))
         self.enemy_elixir = low, high
         self.tracks = {k: t for k, t in self.tracks.items() if now - t.last_seen <= 3}
         for track in self.tracks.values():
@@ -156,12 +162,12 @@ class BattleWorld:
             reasons.append("enemy_elixir_interval")
         if any(t.hp_fraction is None for t in self.tracks.values()):
             reasons.append("unit_health_estimated")
-        if tower_health is None or any(v is None for v in tower_health):
+        if any(v is None for v in self.tower_health):
             reasons.append("tower_health_unknown")
         return WorldSnapshot(self.revision, now, elapsed, elixir, (low, high), tuple(hand),
                              tuple(Track(**asdict(t)) for t in self.tracks.values()),
                              tuple(self.enemy_seen), recent, tuple(reasons),
-                             tuple(tower_health or (None, None, None, None)), self.enemy_elixir_estimate,
+                             self.tower_health, self.enemy_elixir_estimate,
                              tuple(dict(e) for e in self.events if e["kind"] == "ally_deployment" and now - e["at"] < 8))
 
     def confirm(self, action_id: str, card_id: str, x: float, y: float, now: float):

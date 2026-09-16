@@ -65,11 +65,16 @@ class GridWorldAudit:
                 tower_fraction=world.tower_health[index] if len(world.tower_health)>index else None
             rows.append(dict(id=key,track_id=entity.track_id,uid=entity.uid,side=entity.side,
                 x=entity.x,y=entity.y,cell=[int(entity.x),int(entity.y)],card_id=t.card_id if t else entity.spec.name,
-                hp=entity.hp,hp_fraction=entity.hp/entity.spec.hp,hp_estimated=(t.hp_fraction is None if t else tower_fraction is None),
+                hp=(None if tower_fraction is None else entity.hp) if entity.tower else entity.hp,
+                hp_fraction=tower_fraction if entity.tower else entity.hp/entity.spec.hp,
+                simulated_hp=entity.hp,simulated_hp_fraction=entity.hp/entity.spec.hp,
+                hp_estimated=(t.hp_fraction is None if t else tower_fraction is None),
                 identity_estimated=bool(t and (t.hypotheses or t.card_id.startswith('unknown:'))),
+                level=t.level if t else None,side_evidence=t.side_evidence if t else None,
                 source=source,confidence=t.confidence if t else None,age_s=world.at-t.last_seen if t else None,
                 hypotheses=list(t.hypotheses) if t else [],attributes=asdict(entity.spec),tower=entity.tower,
                 tower_kind=entity.tower_kind or ('princess' if entity.tower else ''),active=entity.active,
+                tower_index=index if entity.tower else None,
                 target_uid=target.uid if target else None,path=points,position_model='navigation_without_future_combat'))
         for t in world.tracks:
             if t.track_id in observed_ids:continue
@@ -77,7 +82,16 @@ class GridWorldAudit:
             rows.append(dict(id=f'track:{t.track_id}',track_id=t.track_id,uid=None,side=t.side,x=x,y=y,
                 cell=[int(x),int(y)],card_id=t.card_id,hp=None,hp_fraction=t.hp_fraction,hp_estimated=t.hp_fraction is None,
                 identity_estimated=True,source='unmodeled_observation',confidence=t.confidence,age_s=world.at-t.last_seen,
+                level=t.level,side_evidence=t.side_evidence,
                 hypotheses=list(t.hypotheses),attributes=None,tower=False,active=None,target_uid=None,path=[]))
+        # Destroyed anchors remain inspectable, but never re-enter simulation.
+        for index,point in enumerate(sim.geometry.tower_points):
+            if index>=len(world.tower_health) or world.tower_health[index]!=0:continue
+            x,y=sim.xy(*point)
+            rows.append(dict(id=f'destroyed-tower:{index}',side=1 if index<2 else -1,
+                x=x,y=y,cell=[int(x),int(y)],card_id='princess_tower',tower=True,tower_kind='princess',
+                tower_index=index,hp=0,hp_fraction=0.,hp_estimated=False,destroyed=True,active=False,
+                source='observed_destroyed',target_uid=None,path=[]))
         errors=[]
         previous=self.previous
         if previous and 0 < world.at-previous['at'] <= 2:
@@ -91,7 +105,7 @@ class GridWorldAudit:
                     hp_change=None if p['hp_estimated'] or r['hp_estimated'] else round(r['hp_fraction']-p['hp_fraction'],3)))
         packet=dict(schema='grid_world_v1',revision=world.revision,at=world.at,elapsed=world.elapsed,
                     width=18,height=32,river_rows=[15,16],bridges=list(sim.geometry.bridges),geometry=asdict(sim.geometry),
-                    elixir=world.elixir,enemy_elixir=list(world.enemy_elixir),entities=rows,
+                    elixir=world.elixir,enemy_elixir=list(world.enemy_elixir),entities=rows,tower_health=list(world.tower_health),
                     action=asdict(plan.action),decision=plan.reason,status=plan.status,
                     calibration=dict(samples=len(errors),errors=errors,mean_position_error_tiles=round(sum(e['position_error_tiles'] for e in errors)/len(errors),3) if errors else None,
                         scope='movement_forecast_and_observed_hp_change; not outcome_or_combat_accuracy'),

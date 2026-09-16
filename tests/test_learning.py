@@ -281,7 +281,9 @@ class LearnedPerceptionTests(unittest.TestCase):
             "right": LaneThreat("right", 0.0, 0, 0.0, "none", ()),
         }
 
-        threats = detector.detect(Image.new("RGB", (600, 1000), "black"), fallback)
+        from tests.battlefield_fixtures import scene_with_badge
+        image = scene_with_badge(x=.65,y=.48,size=(600,1000))
+        threats = detector.detect(image, fallback)
 
         self.assertEqual(threats["right"].enemy_cards, ("giant",))
         self.assertEqual(threats["right"].threat, "heavy")
@@ -292,11 +294,11 @@ class LearnedPerceptionTests(unittest.TestCase):
         detector.knowledge = KnowledgeBase.load(Path(__file__).resolve().parents[1] / "data/battle_knowledge.json")
         for cid, layer in (("giant", "ground"), ("balloon", "air"), ("minions", "air"), ("musketeer", "ground")):
             detector.class_names = ["enemy__" + cid]
-            result = detector.detect(Image.new("RGB", (600, 1000), "black"), fallback)["right"]
+            result = detector.detect(image, fallback)["right"]
             self.assertEqual(result.unit_layers, (layer,))
             self.assertGreaterEqual(result.layer_confidence, .7)
         fallback["right"] = LaneThreat("right", .8, 2, .7, "heavy", ((.65, .58), (.8, .7)))
-        result = detector.detect(Image.new("RGB", (600, 1000), "black"), fallback)["right"]
+        result = detector.detect(image, fallback)["right"]
         self.assertIn((.8, .7), result.centers)
         self.assertEqual(result.layer_confidence, 0)
         self.assertEqual(result.unit_layers, ())

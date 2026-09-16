@@ -50,12 +50,18 @@ def render_grid(packet, size=(450,700)):
         if len(path)>1:draw.line([point(*p) for p in path],fill=color,width=1)
         radius=max(4,scale*(.65 if e.get('tower') else .30))
         box=(x-radius,y-radius,x+radius,y+radius)
-        draw.rectangle(box,outline=color,width=2,fill='#263047' if e.get('identity_estimated') else color)
+        destroyed=e.get('destroyed',False)
+        draw.rectangle(box,outline=color,width=2,fill='#263047' if e.get('identity_estimated') or destroyed else color)
+        if destroyed:
+            draw.line(box,fill=color,width=2)
+            draw.line((box[0],box[3],box[2],box[1]),fill=color,width=2)
         hp=e.get('hp_fraction')
-        if hp is not None:
+        if hp is not None and not e.get('hp_estimated') and not destroyed:
             draw.line((x-radius,y-radius-4,x+radius,y-radius-4),fill='#4b5260',width=3)
-            draw.line((x-radius,y-radius-4,x-radius+2*radius*hp,y-radius-4),fill='#b5ef89',width=3)
+            if hp>0:draw.line((x-radius,y-radius-4,x-radius+2*radius*hp,y-radius-4),fill='#b5ef89',width=3)
         label=str(e.get('track_id') or ('K' if e.get('tower_kind')=='king' else 'T'))
+        if destroyed:label+='×'
+        elif e.get('level') is not None:label+=f" L{e['level']}"
         if e.get('identity_estimated') or e.get('hp_estimated'):label+='?'
         if (e.get('attributes') or {}).get('air'):label+='↑'
         cached_text(image,(x+radius+2,y-radius),label,size=10,fill='#f0f4ff')
@@ -266,6 +272,8 @@ class GridWorldWindow:
     def show_details(self,hit):
         names={'card_id':'单位','side':'敌我（1我方/-1敌方）','hp':'模拟血量','hp_fraction':'血量比例',
                'hp_estimated':'血量为估计','identity_estimated':'身份为假设','source':'数据来源',
+               'destroyed':'已摧毁','level':'观测等级','side_evidence':'敌我判断依据',
+               'simulated_hp':'推演假设血量','simulated_hp_fraction':'推演假设血量比例',
                'confidence':'识别置信度','target_uid':'目标编号','attributes':'属性','path':'预测路径',
                'damage':'单次伤害','speed':'速度','reach':'射程','period':'攻击间隔','targets':'攻击层',
                'air':'空中单位','building_only':'仅攻击建筑','radius':'碰撞半径'}

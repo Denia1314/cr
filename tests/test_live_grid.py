@@ -11,10 +11,8 @@ class LiveGridTests(unittest.TestCase):
     def test_scaled_badges_keep_normalized_location(self):
         from PIL import ImageDraw
         from crbot.battle_perception import _level_badge_candidates
-        image=Image.new('RGB',(1080,1920))
-        draw=ImageDraw.Draw(image)
-        draw.rectangle((400,850,425,875),fill='red')
-        draw.rectangle((407,856,418,866),fill='white')
+        from tests.battlefield_fixtures import scene_with_badge
+        image=scene_with_badge(x=.4,y=.44,size=(1080,1920))
         original=_level_badge_candidates(image)
         small=GridTracker.small(image)
         scaled=_level_badge_candidates(small,pixel_scale=small.width/image.width)
@@ -35,7 +33,7 @@ class LiveGridTests(unittest.TestCase):
     def test_new_pixels_update_position_without_new_plan_and_do_not_mutate_model(self):
         original=copy.deepcopy(self.base)
         moved=Image.fromarray(np.roll(self.pixels,3,axis=1)).convert('RGB')
-        with patch('crbot.live_grid._level_badge_candidates',return_value=[]):
+        with patch('crbot.live_grid.find_level_badges',return_value=[]):
             _,packet=self.tracker.update(Frame(moved,1.033,1.04,12),(self.image,self.base))
         self.assertEqual(packet['revision'],12)
         self.assertEqual(packet['model_revision'],7)
@@ -48,16 +46,18 @@ class LiveGridTests(unittest.TestCase):
 
     def test_missing_features_and_expired_identity_are_not_repeated_as_detection(self):
         blank=Image.new('RGB',(180,320))
-        with patch('crbot.live_grid._level_badge_candidates',return_value=[]):
+        with patch('crbot.live_grid.find_level_badges',return_value=[]):
             _,packet=self.tracker.update(Frame(blank,1.1,1.11,2),(blank,self.base))
             self.assertEqual(packet['entities'],[])
             _,packet=self.tracker.update(Frame(self.image,4,4.01,3),(self.image,self.base))
             self.assertEqual(packet['entities'],[])
 
     def test_new_badge_enters_without_waiting_for_planner(self):
-        with patch('crbot.live_grid._level_badge_candidates',return_value=[(.2,.3,20)]):
+        with patch('crbot.live_grid.find_level_badges',return_value=[dict(x=.2,y=.3,side=-1,level=11)]):
             _,packet=self.tracker.update(Frame(self.image,4,4.01,3),(self.image,self.base))
         row=packet['entities'][0]
         self.assertEqual(row['card_id'],'unknown')
         self.assertEqual(row['source'],'current_frame_badge')
+        self.assertEqual(row['level'],11)
+        self.assertEqual(row['side_evidence'],'level_badge')
         self.assertAlmostEqual(row['x'],3.6)

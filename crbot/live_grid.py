@@ -11,8 +11,9 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .battle_perception import _level_badge_candidates
+from .unit_badges import find_level_badges
 from .vision import estimate_elixir
+from .tower_observation import TowerHealthTracker
 
 
 class GridTracker:
@@ -21,6 +22,8 @@ class GridTracker:
         self.previous=None
         self.rows=[]
         self.model_key=None
+        self.battle_key=None
+        self.tower_observer=TowerHealthTracker()
 
     @staticmethod
     def small(image):
@@ -29,6 +32,10 @@ class GridTracker:
 
     def update(self, frame, model):
         image,base=model
+        battle_key=base.get('battle_started_at')
+        if battle_key!=self.battle_key or self.model_key is None:
+            self.tower_observer.reset()
+            self.battle_key=battle_key
         age=max(0.,frame.started-base['at'])
         small=self.small(frame.image)
         current=np.asarray(small.convert('L'))
@@ -77,20 +84,34 @@ class GridTracker:
         self.previous=current
         rows=copy.deepcopy(self.rows)
         # New enemy badges enter immediately, without waiting for a planner.
-        for index,(x,y,_) in enumerate(_level_badge_candidates(small,pixel_scale=small.width/frame.image.width)):
+        for index,badge in enumerate(find_level_badges(small)):
+            if badge['side']!=-1:continue
+            x,y=badge['x'],badge['y']
             gx,gy=(x-l)/(r-l)*18,(y-t)/(b-t)*32
             if not (0<=gx<=18 and 0<=gy<=32):continue
             if any(e['side']==-1 and not e.get('tower') and abs(e['x']-gx)<1.2 and abs(e['y']-gy)<1.5 for e in rows):continue
             rows.append(dict(id=f'badge:{frame.sequence}:{index}',track_id=f'b{index+1}',x=gx,y=gy,side=-1,
                              card_id='unknown',identity_estimated=True,hp_estimated=True,
+                             level=badge['level'],side_evidence='level_badge',
                              hp_fraction=None,source='current_frame_badge',age_s=0.,path=[]))
-        # Static anchors are geometry, not freshly read tower health.
         for row in rows:
-            if row.get('tower'):row.update(hp_fraction=None,hp_estimated=True,source='tower_anchor',path=[])
+            if row.get('tower') and row.get('destroyed') and row.get('tower_index') is not None:
+                self.tower_observer.destroyed.add(row['tower_index'])
+        health=self.tower_observer.observe(frame.image,base.get('tower_bar_rois',[]),
+            base['geometry'].get('tower_points',[]),now=frame.started)
+        for row in rows:
+            if row.get('tower'):
+                index=row.get('tower_index')
+                hp=health[index] if index is not None and 0<=index<len(health) else None
+                destroyed=hp==0
+                row.update(hp=0 if destroyed else None,hp_fraction=hp,hp_estimated=hp is None,
+                           destroyed=destroyed,source='observed_destroyed' if destroyed else 'tower_bar' if hp is not None else 'tower_anchor',
+                           path=[],target_uid=None)
+                if destroyed:row['active']=False
             row['cell']=[int(row['x']),int(row['y'])]
         packet={k:copy.deepcopy(base[k]) for k in ('geometry','bridges','width','height') if k in base}
         elixir,confidence=estimate_elixir(small,self.vision['elixir_roi'])
-        packet.update(revision=frame.sequence,at=frame.started,entities=rows,elixir=elixir,
+        packet.update(revision=frame.sequence,at=frame.started,entities=rows,tower_health=list(health),elixir=elixir,
                       elixir_confidence=confidence,action=None,status='live_tracking',
                       model_revision=base['revision'],model_age_s=age,
                       decision='逐帧位置跟踪；兵种沿用最近识别，非逐帧完整推演')

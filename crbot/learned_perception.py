@@ -114,40 +114,23 @@ class LearnedBattlefieldDetector:
             classes = result.boxes.cls.cpu().tolist()
             confidences = result.boxes.conf.cpu().tolist()
             boxes = result.boxes.xyxyn.cpu().tolist()
-            for class_index, confidence, bbox in zip(classes, confidences, boxes):
+            from .unit_badges import associate_badges, find_level_badges
+            badges = associate_badges(boxes, find_level_badges(image))
+            for row_index, (class_index, confidence, bbox) in enumerate(zip(classes, confidences, boxes)):
                 index = int(class_index)
-                if index < 0 or index >= len(self.class_names):
+                if index < 0 or index >= len(self.class_names) or row_index not in badges:
                     continue
                 class_name = str(self.class_names[index])
-                if class_name.startswith("ally__"):
-                    card_id = class_name.removeprefix("ally__")
-                    x1, y1, x2, y2 = [float(value) for value in bbox]
-                    x, y = (x1 + x2) / 2, (y1 + y2) / 2
-                    if self.catalog.get(card_id) is not None and 0.20 <= y <= 0.80:
-                        self.observed_allies.append({
-                            "card_id": card_id, "x": round(x, 4), "y": round(y, 4),
-                            "lane": "left" if x < 0.5 else "right",
-                            "confidence": float(confidence),
-                            **read_unit_health(image, bbox, side=1),
-                        })
+                if not class_name.startswith(('ally__', 'enemy__')):
                     continue
-                if not class_name.startswith("enemy__"):
+                card_id = class_name.split('__', 1)[1]
+                if self.catalog.get(card_id) is None or not .20 <= (bbox[1]+bbox[3])/2 <= .80:
                     continue
-                card_id = class_name.removeprefix("enemy__")
-                if self.catalog.get(card_id) is None:
-                    continue
-                x1, y1, x2, y2 = [float(value) for value in bbox]
-                center_x = (x1 + x2) / 2.0
-                center_y = (y1 + y2) / 2.0
-                if not 0.20 <= center_y <= 0.80:
-                    continue
-                lane = "left" if center_x < 0.5 else "right"
-                self.observed_enemies.append({
-                    "card_id": card_id, "x": round(center_x, 4), "y": round(center_y, 4),
-                    "lane": lane, "confidence": float(confidence),
-                    **read_unit_health(image, bbox, side=-1),
-                })
-                by_lane[lane].append((card_id, center_x, center_y, float(confidence)))
+                badge = badges[row_index]
+                detections.append(dict(card_id=card_id, bbox=bbox, side=badge['side'],
+                    confidence=min(float(confidence),badge['confidence']),
+                    side_evidence='level_badge', level=badge['level'], level_badge_bbox=badge['bbox'],
+                    identity_source='local_champion', deployment_confirmed=False))
 
         for detection in detections:
             bbox = detection["bbox"]

@@ -197,63 +197,12 @@ class UniversalHandRecognizer:
 
 
 def _level_badge_candidates(image: Image.Image, *, pixel_scale=1.) -> list[tuple[float, float, int]]:
-    """Find red enemy level badges across the playable arena."""
+    """Red level digits, not red clothing; pixel_scale retained for callers."""
     if cv2 is None:
         return []
-
-    rgb = np.asarray(image.convert("RGB"))
-    height, width = rgb.shape[:2]
-    # Evaluate color only inside the same playable bounds as the original
-    # full-frame mask. Retain full-size zero padding for identical morphology.
-    top, bottom = round(.20 * height), round(.76 * height)
-    left, right = round(.13 * width), round(.87 * width)
-    arena = rgb[top:bottom, left:right].astype(np.int16)
-    red, green, blue = arena[..., 0], arena[..., 1], arena[..., 2]
-    mask = np.zeros((height, width), dtype=np.uint8)
-    mask[top:bottom, left:right] = (
-        (red > 150)
-        & (green < 110)
-        & (red > green * 1.5)
-        & (red > blue * 1.08)
-        & ((red - green) > 60)
-    ).astype(np.uint8) * 255
-    mask[round(0.68 * height) :, round(0.75 * width) :] = 0
-    # Princess-tower skins contain red plates and white highlights that look
-    # like a level badge.  Troops leaving these areas become visible well
-    # before the bridge, so exclude the static tower footprints themselves.
-    tower_top, tower_bottom = round(0.17 * height), round(0.31 * height)
-    mask[tower_top:tower_bottom, round(0.13 * width) : round(0.39 * width)] = 0
-    mask[tower_top:tower_bottom, round(0.61 * width) : round(0.87 * width)] = 0
-    mask[round(0.10 * height) : round(0.23 * height), round(0.39 * width) : round(0.61 * width)] = 0
-    mask = cv2.morphologyEx(
-        mask,
-        cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_RECT, (max(1,round(5*pixel_scale)), max(1,round(3*pixel_scale)))),
-    )
-    _count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask)
-    detected: list[tuple[float, float, int]] = []
-    for x, y, component_width, component_height, area in stats[1:]:
-        if not (
-            18*pixel_scale <= component_width <= 110*pixel_scale
-            and 10*pixel_scale <= component_height <= 45*pixel_scale
-            and area >= 80*pixel_scale**2
-        ):
-            continue
-        padding=max(1,round(5*pixel_scale))
-        x1, y1 = max(0, x - padding), max(0, y - padding)
-        x2 = min(width, x + component_width + padding)
-        y2 = min(height, y + component_height + padding)
-        patch = rgb[y1:y2, x1:x2]
-        white_ratio = float(np.mean(np.all(patch > 180, axis=2)))
-        if white_ratio < 0.04:
-            continue
-        normalized_x = float((x + component_width / 2.0) / width)
-        normalized_y = float((y + component_height / 2.0) / height)
-        if normalized_y > 0.68 and 0.35 < normalized_x < 0.65:
-            continue
-        detected.append((normalized_x, normalized_y, int(component_width)))
-
-    return detected
+    from .unit_badges import find_level_badges
+    return [(b['x'], b['y'], round((b['bbox'][2]-b['bbox'][0])*image.width))
+            for b in find_level_badges(image) if b['side'] == -1]
 
 
 def detect_lane_threats(
