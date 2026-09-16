@@ -49,7 +49,6 @@ def placement_points(sim, state, card_id, side, *, limit=12):
             return sum((e.spec.damage if spell.get('friendly') else min(e.hp + e.shield, spell['damage'] * (spell.get('tower_multiplier',1.) if e.tower else 1.))) * (1 + e.value) for e, q in zip(enemies, projected)
                        if (not e.spec.air or spell['air']) and math.dist(p, q) <= spell['radius'] + e.spec.radius)
     elif roster:
-        spec = roster[0][0]
         # Cover the full conservative home deployment region, not a list of lane anchors.
         points = [(float(x), float(y if side == 1 else 32-y))
                   for x in range(1, 18, 1 if getattr(sim, "placement_batch", None) else 2)
@@ -59,18 +58,19 @@ def placement_points(sim, state, card_id, side, *, limit=12):
             tower = min(towers, key=lambda t: math.hypot(enemy.x-t.x, enemy.y-t.y), default=None)
             if tower is not None:
                 from .defense_timing import project_approach
-                q=project_approach(sim,state,enemy,tower,spec.deploy+getattr(sim,'defense_pipeline_s',.35))
+                q=project_approach(sim,state,enemy,tower,max(u.deploy for u, _ in roster)+getattr(sim,'defense_pipeline_s',.35))
             else:
                 q=(enemy.x,enemy.y)
             projected.append((enemy, q))
             # Continuous offsets around the predicted contact point enable precise interceptions.
-            for radius in (1., 2.5, max(1., spec.reach)):
+            for radius in sorted({1., 2.5, *(max(1., u.reach) for u, _ in roster)}):
                 for angle in range(0, 360, 45):
                     points.append((q[0]+radius*math.cos(math.radians(angle)),
                                    q[1]+radius*math.sin(math.radians(angle))))
             for t in towers:
                 points.append(((q[0]+t.x)/2, (q[1]+t.y)/2))
-        def value(p):
+        def unit_value(p, spec, count):
+            from .card_matchup import matchup
             total = 0.
             for enemy, q in projected:
                 can_hit = (not spec.building_only or enemy.spec.building) and ('air' if enemy.spec.air else 'ground') in spec.targets
@@ -90,7 +90,9 @@ def placement_points(sim, state, card_id, side, *, limit=12):
                     if t.active and ('air' if enemy.spec.air else 'ground') in t.spec.targets
                     and math.dist(fight, (t.x,t.y)) <= t.spec.reach+t.spec.radius+enemy.spec.radius)
                 interception = math.exp(-contact/2)
-                total += threat * interception * ((2 if can_hit else 0) + (1 if can_pull else 0) + tower_dps/100)
+                comparison = matchup(spec, enemy, count)
+                total += threat * interception * ((2 + 2*comparison['attack_weight'] if can_hit else 0)
+                    + (1 + comparison['stall_weight'] if can_pull else 0) + tower_dps/100)
                 if can_hit:
                     total -= threat * abs(distance - min(4., spec.reach) * .85) * .15
                 # Ranged units should use reach; do not drop fragile support on top of attackers.
@@ -102,6 +104,8 @@ def placement_points(sim, state, card_id, side, *, limit=12):
                 # Quiet-board development also follows the surviving towers and existing formation.
                 total -= min((math.dist(p, (t.x,t.y-side*2)) for t in towers), default=abs(p[0]-9))*.2
             return total
+        def value(p):
+            return sum(unit_value(p, member, count)*count for member, count in roster) / sum(n for _, n in roster)
     else:
         return []
     if limit is None:
@@ -127,7 +131,13 @@ def placement_points(sim, state, card_id, side, *, limit=12):
         elif roster and not enemies and hasattr(batch, 'quiet_score'):
             values = batch.quiet_score(positions,towers,side)
         elif roster:
-            values = batch.score(positions,spec,projected,towers)
+            # Every constituent participates; e.g. a front unit cannot hide the
+            # ranged/air-targeting members of a mixed card.
+            scores = [batch.score(positions, member, projected, towers, count=count)
+                      for member, count in roster] if hasattr(batch, 'roster_scoring') else [None]
+            if all(v is not None for v in scores):
+                values = [sum(v[i]*count for v, (_, count) in zip(scores, roster))/sum(n for _, n in roster)
+                          for i in range(len(positions))]
     ranked = [(values[i] if values is not None else value(point), point, normalized)
               for i, (_, point, normalized) in enumerate(ranked)]
     ranked.sort(key=lambda r: r[0], reverse=True)

@@ -219,6 +219,8 @@ class PredictivePlanner:
             # Every legal hand card receives its full spatial shortlist before refinement.
             positions = max(2,min(24,int(self.config.get('positions_per_card',16))))
             roots = self.candidates(initial, 1, limit=None if self.config.get("all_placement_points",False) else 1 + positions * len(initial.hands[1]))
+            from .card_matchup import card_evidence
+            observed_enemies = [e for e in initial.entities if e.side == -1 and not e.tower and e.hp > 0]
             for slot, cid in initial.hands[1]:
                 card = self.kb.cards.get(cid, {})
                 positions = sum(a.card_id == cid for a in roots)
@@ -227,6 +229,7 @@ class PredictivePlanner:
                           'mechanism_or_target_unavailable' if not positions else 'pending')
                 result.hand_evaluations.append(dict(slot=slot, card_id=cid, positions=positions,
                                                     evaluated=0, status=reason, spatial_scored=positions,
+                                                    database_comparison=card_evidence(self.kb, cid, self.sim.level, observed_enemies),
                                                     full_domain=bool(self.config.get("all_placement_points",False))))
             result.compute['stage_ms']['spatial_ranking'] = round((time.perf_counter()-stage_started)*1000, 2)
             stage_started = time.perf_counter()

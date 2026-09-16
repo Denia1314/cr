@@ -5,6 +5,7 @@ from .gpu import resolve_device
 
 
 class PlacementBatch:
+    roster_scoring = True
     def __init__(self, requested="auto", *, trajectory=False, trajectory_step=.25):
         self.device = resolve_device(requested)
         self.trajectory=trajectory
@@ -20,7 +21,7 @@ class PlacementBatch:
             from types import SimpleNamespace
             # Warm every ranking operation before the first battle's time budget starts.
             spec = SimpleNamespace(reach=3.,radius=.5,hp=1000.,shield=0.,damage=100.,period=1.,first_hit=.5,speed=1.,building=True)
-            self._compute([[1.,20.]], [[2.,18.,.5,1.,1.,2.,1.,500.,100.,4.,5.,6.,1.,1.]],
+            self._compute([[1.,20.]], [[2.,18.,.5,1.,1.,2.,1.,500.,100.,4.,5.,6.,1.,1.,.5,.5]],
                           [[3.,28.,8.,100.]], [[1.]], spec)
 
     def status(self):
@@ -113,12 +114,14 @@ class PlacementBatch:
         self.calls+=1
         return result
 
-    def score(self, points, spec, projected, towers):
+    def score(self, points, spec, projected, towers, *, count=1):
         # Precompute immutable card attributes once; all positions share this batch.
         if not projected:
             return None
+        from .card_matchup import matchup
         rows = []
         for enemy, q in projected:
+            comparison = matchup(spec, enemy, count)
             hit = (not spec.building_only or enemy.spec.building) and ('air' if enemy.spec.air else 'ground') in spec.targets
             pull = (not enemy.spec.building_only or spec.building) and ('air' if spec.air else 'ground') in enemy.spec.targets
             urgency = 1/(1+min((max(0,np.hypot(q[0]-t.x,q[1]-t.y)-enemy.spec.reach-t.spec.radius) for t in towers),default=12)/5)
@@ -127,7 +130,7 @@ class PlacementBatch:
                          enemy.hp+enemy.shield,enemy.spec.damage/max(.1,enemy.spec.period),
                          min((max(0,np.hypot(q[0]-t.x,q[1]-t.y)-enemy.spec.reach-t.spec.radius)/max(.1,enemy.spec.speed) for t in towers),default=8.),
                          enemy.spec.sight, min((np.hypot(q[0]-t.x,q[1]-t.y)-t.spec.radius-enemy.spec.radius for t in towers),default=32.),
-                         float(enemy.spec.building_only),enemy.spec.speed])
+                         float(enemy.spec.building_only),enemy.spec.speed, comparison['attack_weight'], comparison['stall_weight']])
         towers = [t for t in towers if t.active]
         cover = [[t.x,t.y,t.spec.reach+t.spec.radius,t.spec.damage/max(.1,t.spec.period)] for t in towers]
         eligible = [[float(('air' if e.spec.air else 'ground') in t.spec.targets) for t in towers] for e,_ in projected]
@@ -168,7 +171,7 @@ class PlacementBatch:
             t = arr(cover)
             d = ((fight[:,:,None,:]-t[None,None,:,:2])**2).sum(axis=-1)**.5
             tower_dps = ((d <= t[None,None,:,2]+e[None,:,None,2])*arr(eligible)[None,:,:]*t[None,None,:,3]).sum(axis=-1)
-        value = e[None,:,6]*xp.exp(-contact/2)*(2*e[None,:,3]+pull+tower_dps/100)
+        value = e[None,:,6]*xp.exp(-contact/2)*((2+2*e[None,:,14])*e[None,:,3]+pull*(1+e[None,:,15])+tower_dps/100)
         value -= e[None,:,6]*abs(distance-min(4.,spec.reach)*.85)*.15*e[None,:,3]
         if spec.reach > 2:
             value -= e[None,:,6]*clamp(min(spec.reach,4)-distance)*.8*e[None,:,3]*pull
