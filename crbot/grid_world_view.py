@@ -52,7 +52,7 @@ def render_grid(packet, size=(450,700)):
     elixir_text='未知' if elixir is None else f'{elixir:.1f}'
     cached_text(image,(8,5 if compact else 10),f"方格战场 · 圣水 {elixir_text}",size=10 if compact else 14,fill='#eef4ff')
     live=packet.get('status')=='live_tracking'
-    if not compact:cached_text(image,(12,32),'实时位置跟踪 · 兵种非逐帧重识别' if live else '当前观测：蓝=我方 红=敌方 黄框=身份未知',size=12,fill='#9fb2cb')
+    if not compact:cached_text(image,(12,32),'实时位置跟踪 · 兵种非逐帧重识别' if live else '当前观测：蓝=我方 红=敌方 黄框=身份未知',size=11,fill='#9fb2cb')
     draw.rectangle((*point(0,15),*point(18,17)),fill='#154567')
     for bridge in packet.get('bridges',[]):draw.rectangle((*point(bridge-1,15),*point(bridge+1,17)),fill='#967a50')
     for x in range(19):draw.line((*point(x,0),*point(x,32)),fill='#25344a')
