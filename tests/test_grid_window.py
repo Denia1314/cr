@@ -7,6 +7,30 @@ from crbot.grid_world_view import GridWorldWindow
 
 
 class GridWindowTests(unittest.TestCase):
+    def test_embedded_view_fits_small_canvas_and_clears_stale_packet(self):
+        root=tk.Tk();self.addCleanup(root.destroy)
+        root.geometry('540x160')
+        image=Image.new('RGB',(100,200),'#123456')
+        packet=dict(revision=1,entities=[dict(id='track:1',x=3,y=4,side=-1,hp_fraction=.8)])
+        holder=[(image,packet)]
+        window=GridWorldWindow(root,lambda:holder[0],embedded=True)
+        window.window.pack(fill='both',expand=True)
+        root.update_idletasks();root.update();window.refresh()
+        self.assertIsInstance(window.window,tk.Frame)
+        self.assertEqual(window.photo.width(),window.canvas.winfo_width())
+        self.assertEqual(window.photo.height(),window.canvas.winfo_height())
+        self.assertTrue(window.boxes)
+        b=window.boxes[0][0]
+        window.select(SimpleNamespace(x=(b[0]+b[2])/2,y=(b[1]+b[3])/2))
+        root.update_idletasks()
+        self.assertTrue(window.details.winfo_ismapped())
+        window.hide_details()
+        self.assertFalse(window.details.winfo_ismapped())
+        holder[0]=(image,None);window.refresh()
+        self.assertIsNone(window.packet)
+        self.assertEqual(window.boxes,[])
+        self.assertIn('等待',window.label.cget('text'))
+
     def test_deadline_subtracts_render_time_and_recovers_one_late_frame(self):
         for now, expected in ((.02,14),(.04,1),(.2,1)):
             window=SimpleNamespace(window=Mock(),refresh=Mock(),next_tick=0.,period=1/30,

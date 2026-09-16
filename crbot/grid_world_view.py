@@ -29,10 +29,11 @@ def cached_text(image,position,text,*,size,fill):
 
 def render_grid(packet, size=(450,700)):
     image=Image.new('RGB',size,'#101a2a');draw=ImageDraw.Draw(image)
-    w,h=size;scale=min((w-40)/18,(h-120)/32);ox=(w-18*scale)/2;oy=60
+    w,h=size;compact=h<280
+    scale=max(.1,min((w-24)/18,(h-(50 if compact else 120))/32));ox=(w-18*scale)/2;oy=26 if compact else 60
     def point(x,y):return ox+x*scale,oy+y*scale
-    cached_text(image,(12,10),f"方格战场 · 圣水 {packet.get('elixir',0):.1f} · {packet.get('status','')}",size=14,fill='#eef4ff')
-    cached_text(image,(12,32),'蓝=我方  红=敌方  虚线/问号=估计',size=12,fill='#9fb2cb')
+    cached_text(image,(8,5 if compact else 10),f"方格战场 · 圣水 {packet.get('elixir',0):.1f}",size=10 if compact else 14,fill='#eef4ff')
+    if not compact:cached_text(image,(12,32),'蓝=我方  红=敌方  问号=估计',size=12,fill='#9fb2cb')
     draw.rectangle((*point(0,15),*point(18,17)),fill='#154567')
     for bridge in packet.get('bridges',[]):draw.rectangle((*point(bridge-1,15),*point(bridge+1,17)),fill='#967a50')
     for x in range(19):draw.line((*point(x,0),*point(x,32)),fill='#25344a')
@@ -59,13 +60,14 @@ def render_grid(packet, size=(450,700)):
         geo=packet['geometry'];l,t,r,b=geo['bounds'];x,y=point((action['x']-l)/(r-l)*18,(action['y']-t)/(b-t)*32)
         draw.ellipse((x-9,y-9,x+9,y+9),outline='#ffe37e',width=3)
     error=packet.get('calibration',{}).get('mean_position_error_tiles')
-    cached_text(image,(12,h-44),f"位置预测误差：{error if error is not None else '等待可比观测'} 格",size=12,fill='#b9c6da')
-    cached_text(image,(12,h-24),'路线为模型预测；点击方块查看属性',size=12,fill='#b9c6da')
+    if not compact:cached_text(image,(12,h-44),f"位置预测误差：{error if error is not None else '等待可比观测'} 格",size=12,fill='#b9c6da')
+    cached_text(image,(8,h-19),'蓝=我方 红=敌方 · 点击查看' if compact else '路线为模型预测；点击方块查看属性',size=10 if compact else 12,fill='#b9c6da')
     return image,boxes
 
 
 class GridWorldWindow:
-    def __init__(self,parent,source):
+    def __init__(self,parent,source,*,embedded=False):
+        self.embedded=embedded;self.mode='compare'
         self.source=source;self.last=None;self.boxes=[]
         self.selected_id=None
         self.period=1/30
@@ -75,7 +77,8 @@ class GridWorldWindow:
         self.updated_frames=0
         self.source_fps=0.
         self.packet=None
-        self.window=tk.Toplevel(parent);self.window.title('方格战场 · 实时模型检查')
+        self.window=tk.Frame(parent,bg='#0c1321') if embedded else tk.Toplevel(parent)
+        if not embedded:self.window.title('方格战场 · 实时模型检查')
         self.timer_api=None
         try:
             import ctypes
@@ -84,20 +87,27 @@ class GridWorldWindow:
         except (AttributeError,OSError):
             pass
         self.window.bind('<Destroy>',self.release_timer,add='+')
-        self.window.geometry('1040x760');self.window.minsize(800,600)
+        if not embedded:
+            self.window.geometry('1040x760');self.window.minsize(800,600)
         self.window.grid_rowconfigure(1,weight=1);self.window.grid_columnconfigure(0,weight=1)
-        self.label=tk.Label(self.window,text='等待 P1 战场数据；此窗口不会启动游戏或出牌',anchor='w')
+        self.label=tk.Label(self.window,text='等待 P1 战场数据',anchor='w',
+                            bg='#0c1321',fg='#9fb2cb',font=('Microsoft YaHei UI',8),width=1)
         self.label.grid(row=0,column=0,sticky='ew')
-        self.canvas=tk.Canvas(self.window,bg='#0c1321',highlightthickness=0)
+        self.canvas=tk.Canvas(self.window,bg='#0c1321',highlightthickness=0,width=300,height=160)
         self.canvas.grid(row=1,column=0,sticky='nsew')
-        self.details=tk.Text(self.window,width=18,wrap='word',font=('Microsoft YaHei UI',9))
-        self.details.grid(row=0,column=1,rowspan=2,sticky='nsew')
+        self.details=tk.Text(self.window,width=18,height=1,wrap='word',font=('Microsoft YaHei UI',9),
+                             bg='#142137',fg='#eef4ff',insertbackground='#eef4ff',relief='flat')
+        self.details.grid(row=1 if embedded else 0,column=1,rowspan=1 if embedded else 2,sticky='nsew')
+        if embedded:
+            self.details.grid_remove()
+            self.close_details=tk.Button(self.window,text='收起属性 ×',command=self.hide_details,
+                bg='#142137',fg='#9fb2cb',relief='flat',font=('Microsoft YaHei UI',8))
         self.canvas.bind('<Button-1>',self.select)
-        self.window.after(0,self.tick)
+        self.after_id=self.window.after(0,self.tick)
 
     def tick(self):
         if not self.window.winfo_exists():return
-        self.refresh()
+        if not getattr(self,'embedded',False) or self.window.winfo_ismapped():self.refresh()
         now=time.perf_counter()
         elapsed=now-self.meter_started
         if elapsed >= 1:
@@ -108,20 +118,27 @@ class GridWorldWindow:
         self.next_tick += self.period
         if self.next_tick < now-self.period:
             self.next_tick=now
-        self.window.after(max(1,math.ceil((self.next_tick-now)*1000)),self.tick)
+        self.after_id=self.window.after(max(1,math.ceil((self.next_tick-now)*1000)),self.tick)
 
     def refresh(self,force=False):
         source=self.source()
-        if not source:return
+        if not source:source=(None,None)
         screenshot,packet=source
-        key=(id(packet),id(screenshot),self.canvas.winfo_width(),self.canvas.winfo_height())
+        key=(id(packet),id(screenshot),self.canvas.winfo_width(),self.canvas.winfo_height(),self.mode)
         if key==self.last and not force:return
-        new_packet=self.last is None or key[:2]!=self.last[:2]
-        self.last=key;w=max(400,key[2]);h=max(400,key[3]);half=w//2
-        grid,boxes=render_grid(packet,(half,h))
+        new_packet=packet is not None and (self.last is None or key[:2]!=self.last[:2])
+        self.last=key;w=max(80,key[2]);h=max(80,key[3]);half=w//2 if self.mode=='compare' else 0
         combined=Image.new('RGB',(w,h),'#0c1321')
-        shot=screenshot.copy();shot.thumbnail((half,h),Image.Resampling.BILINEAR);combined.paste(shot,((half-shot.width)//2,(h-shot.height)//2))
-        combined.paste(grid,(half,0));self.photo=ImageTk.PhotoImage(combined)
+        if half and screenshot is not None:
+            shot=screenshot.copy();shot.thumbnail((half,h),Image.Resampling.BILINEAR);combined.paste(shot,((half-shot.width)//2,(h-shot.height)//2))
+        boxes=[]
+        if packet is not None:
+            grid,boxes=render_grid(packet,(w-half,h));combined.paste(grid,(half,0))
+        else:
+            draw=ImageDraw.Draw(combined)
+            draw.multiline_text((half+(w-half)//2,h//2),'等待 P1 战场数据\n进入对局后显示',font=font(11),
+                                fill='#8195b0',anchor='mm',align='center',spacing=6)
+        self.photo=ImageTk.PhotoImage(combined)
         if self.image_item is None:
             self.image_item=self.canvas.create_image(0,0,anchor='nw',image=self.photo)
         else:
@@ -139,17 +156,29 @@ class GridWorldWindow:
 
     def update_label(self):
         if self.packet is not None:
-            self.label.configure(text=f"目标 30 FPS · 数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型\n{self.packet.get('decision','')[:65]}",wraplength=max(400,self.canvas.winfo_width()))
+            self.label.configure(text=f"数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型" +
+                ('' if self.embedded else '\n'+self.packet.get('decision','')[:65]),wraplength=max(80,self.canvas.winfo_width()))
+        else:self.label.configure(text='等待 P1 战场数据 · 游戏画面可独立查看')
+
+    def hide_details(self):
+        self.selected_id=None
+        self.details.grid_remove();self.close_details.grid_remove()
 
     def release_timer(self,event):
-        if event.widget is self.window and self.timer_api is not None:
-            self.timer_api.timeEndPeriod(1)
-            self.timer_api=None
+        if event.widget is self.window:
+            if getattr(self,'after_id',None) is not None:
+                self.window.after_cancel(self.after_id)
+                self.after_id=None
+            if self.timer_api is not None:
+                self.timer_api.timeEndPeriod(1)
+                self.timer_api=None
 
     def select(self,event):
         hit=next((e for b,e in reversed(self.boxes) if b[0]-5<=event.x<=b[2]+5 and b[1]-5<=event.y<=b[3]+5),None)
         if not hit:return
         self.selected_id=hit.get('id')
+        if self.embedded:
+            self.details.grid();self.close_details.grid(row=0,column=1,sticky='ew')
         self.show_details(hit)
 
     def show_details(self,hit):

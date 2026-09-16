@@ -13,6 +13,7 @@ from crbot.gui import RoyalTrainerApp
 
 
 class RunWorkerTests(unittest.TestCase):
+
     def test_flushes_partial_output_and_reports_completion(self) -> None:
         app = RoyalTrainerApp.__new__(RoyalTrainerApp)
         app.messages = queue.Queue()
@@ -38,6 +39,32 @@ class RunWorkerTests(unittest.TestCase):
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_grid_is_embedded_and_switching_preserves_same_frame_pair(self):
+        from types import SimpleNamespace
+        from PIL import Image
+        self.assertEqual(self.app.preview_mode.get(),'同帧对照')
+        self.assertIs(self.app.grid_inspector.window.winfo_toplevel(),self.root)
+        paired=Image.new('RGB',(100,200),'red')
+        packet={'revision':1,'entities':[]}
+        self.app.engine=SimpleNamespace(policy=SimpleNamespace(grid_frame=(paired,packet)))
+        self.app._show_image(Image.new('RGB',(100,200),'blue'))
+        self.assertIs(self.app._grid_preview_source()[0],paired)
+        self.app.preview_mode.set('游戏画面');self.app._set_preview_mode()
+        self.assertEqual(self.app.grid_inspector.window.winfo_manager(),'')
+        self.app.preview_mode.set('方格战场');self.app._set_preview_mode()
+        self.assertEqual(self.app.grid_inspector.mode,'grid')
+        self.app.show_grid_world()
+        self.assertEqual(self.app.grid_inspector.mode,'compare')
+        self.app._toggle_preview_size()
+        self.assertEqual(self.app.preview_card.grid_info()['columnspan'],2)
+        self.assertEqual(self.app.log_card.winfo_manager(),'')
+        self.assertNotEqual(self.app.stop_button.winfo_manager(),'')
+        self.app._toggle_preview_size()
+        self.assertEqual(self.app.preview_card.grid_info()['columnspan'],1)
+        self.assertEqual(self.app.log_card.winfo_manager(),'grid')
+        self.assertFalse(any(isinstance(w,tk.Toplevel) for w in self.root.winfo_children()))
+        self.app.engine=None
+
     def test_predictive_selector_fits_minimum_window_and_locks_while_running(self):
         self.root.geometry("1040x700+0+0")
         self.root.deiconify()

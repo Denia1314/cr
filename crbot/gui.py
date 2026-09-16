@@ -309,6 +309,7 @@ class RoyalTrainerApp:
         content.grid_rowconfigure(2, weight=1)
 
         stats = tk.Frame(content, background=Palette.BG)
+        self.stats_card=stats
         stats.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         for column in range(3):
             stats.grid_columnconfigure(column, weight=1, uniform="stats")
@@ -379,6 +380,8 @@ class RoyalTrainerApp:
             highlightbackground=Palette.BORDER,
             highlightthickness=1,
         )
+        self.preview_card=card
+        self.preview_expanded=False
         card.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
         card.grid_rowconfigure(1, weight=1)
         card.grid_columnconfigure(0, weight=1)
@@ -400,9 +403,15 @@ class RoyalTrainerApp:
             background=Palette.CARD,
         )
         self.preview_state.pack(side="left", padx=12)
-        HoverButton(top,text='方格战场',command=self.show_grid_world,
-                    background=Palette.CARD_ALT,foreground=Palette.MUTED,
-                    hover='#26314B',padx=8,pady=6).pack(side='right',padx=4)
+        self.preview_mode=tk.StringVar(value='同帧对照')
+        self.preview_mode_combo=ttk.Combobox(top,textvariable=self.preview_mode,
+            values=('游戏画面','方格战场','同帧对照'),state='readonly',width=9,
+            style='Model.TCombobox',font=(FONT,8))
+        self.preview_mode_combo.pack(side='right',padx=4)
+        self.preview_mode_combo.bind('<<ComboboxSelected>>',lambda _event:self._set_preview_mode())
+        self.expand_preview_button=HoverButton(top,text='放大',command=self._toggle_preview_size,
+            background=Palette.CARD_ALT,foreground=Palette.MUTED,hover=Palette.BORDER,padx=8,pady=6)
+        self.expand_preview_button.pack(side='right',padx=4)
         HoverButton(
             top,
             text="刷新",
@@ -428,6 +437,9 @@ class RoyalTrainerApp:
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
         self.preview_canvas.bind("<Configure>", lambda _event: self._render_preview())
         self._draw_preview_placeholder()
+        from .grid_world_view import GridWorldWindow
+        self.grid_inspector=GridWorldWindow(preview_frame,self._grid_preview_source,embedded=True)
+        self._set_preview_mode()
 
     def _build_control_card(self, parent: tk.Frame) -> None:
         controls = tk.Frame(parent, background=Palette.BG)
@@ -539,6 +551,7 @@ class RoyalTrainerApp:
             highlightbackground=Palette.BORDER,
             highlightthickness=1,
         )
+        self.log_card=card
         card.grid(row=2, column=1, sticky="nsew", padx=(8, 0))
         card.grid_columnconfigure(0, weight=1)
         card.grid_rowconfigure(1, weight=1)
@@ -1479,12 +1492,35 @@ class RoyalTrainerApp:
             self._append_log(f"环境检测完成：{installed_text} · {calibration_text}", "success" if not missing and payload.get("installed") else "warning")
 
     def show_grid_world(self) -> None:
-        from .grid_world_view import GridWorldWindow
-        existing=getattr(self,'grid_inspector',None)
-        if existing is not None and existing.window.winfo_exists():
-            existing.window.lift();return
-        self.grid_inspector=GridWorldWindow(self.root,lambda: getattr(
-            getattr(self.engine,'policy',None),'grid_frame',None) if self.engine else None)
+        self.preview_mode.set('同帧对照')
+        self._set_preview_mode()
+
+    def _grid_preview_source(self):
+        paired=getattr(getattr(self.engine,'policy',None),'grid_frame',None) if self.engine else None
+        # Model views always use the screenshot that produced the packet.
+        return paired if paired is not None else (self.current_image,None)
+
+    def _set_preview_mode(self):
+        if self.preview_mode.get()=='游戏画面':
+            self.grid_inspector.window.grid_remove()
+            self.preview_canvas.grid()
+            self._render_preview()
+        else:
+            self.preview_canvas.grid_remove()
+            self.grid_inspector.mode='grid' if self.preview_mode.get()=='方格战场' else 'compare'
+            self.grid_inspector.window.grid(row=0,column=0,sticky='nsew')
+            self.grid_inspector.refresh(force=True)
+
+    def _toggle_preview_size(self):
+        self.preview_expanded=not self.preview_expanded
+        if self.preview_expanded:
+            self.stats_card.grid_remove();self.log_card.grid_remove()
+            self.preview_card.grid_configure(columnspan=2,padx=0)
+            self.expand_preview_button.configure(text='还原')
+        else:
+            self.stats_card.grid();self.log_card.grid()
+            self.preview_card.grid_configure(columnspan=1,padx=(0,8))
+            self.expand_preview_button.configure(text='放大')
 
     def _show_image(self, image: Image.Image) -> None:
         self.current_image = image.copy()
@@ -1509,6 +1545,8 @@ class RoyalTrainerApp:
         )
 
     def _render_preview(self) -> None:
+        if hasattr(self,'grid_inspector') and self.preview_mode.get()!='游戏画面':
+            return
         if self.current_image is None:
             self._draw_preview_placeholder()
             return
