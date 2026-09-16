@@ -137,6 +137,50 @@ class SelfLearningTests(unittest.TestCase):
         with patch("crbot.self_learning.subprocess.Popen",side_effect=AssertionError):
             self.assertFalse(service.boundary())
 
+    def test_interactive_start_defers_training_until_verified_battle_interval(self):
+        config = {**self.config, 'self_learning': {**self.config['self_learning'], 'audit_every_battles': 3}}
+        service = SelfLearningService(self.root, config, defer_initial_training=True)
+        with patch('crbot.self_learning.subprocess.Popen', side_effect=AssertionError('must start battle first')):
+            self.assertFalse(service.boundary())
+            service.on_battle_completed({'reward_verified': False})
+            self.assertFalse(service.boundary())
+            for _ in range(2):
+                service.on_battle_completed({'reward_verified': True})
+                self.assertFalse(service.boundary())
+        service.on_battle_completed({'reward_verified': True})
+        self.assertTrue(service.due)
+        with patch.dict(os.environ, {'PYTHONPATH': str(Path(__file__).resolve().parents[1])}):
+            self.assertTrue(service.boundary())
+        self.assertEqual(service.phase, 'candidate_ready')
+        self.assertFalse(service.due)
+        self.assertIsNone(ReplayPolicyRegistry(self.root).champion())
+
+    def test_engine_reaches_first_start_click_without_candidate_training(self):
+        from threading import Event
+        from types import SimpleNamespace
+        from PIL import Image
+        from crbot.engine import BotEngine
+        from tests.test_core import base_config
+        config = base_config()
+        config.update(game={'package': 'game'}, workflow=[], self_learning={'enabled': True},
+                      automation={'chest_screen_enabled': False, 'start_battle_point': [.5, .75],
+                                  'battle_ui_roi': [.1, .94, .9, .999]})
+        device = Mock()
+        device.foreground_package.return_value = 'game'
+        engine = BotEngine(device, config, self.root / 'config.json', stop_event=Event())
+        self.assertIsNotNone(engine.self_learning)
+        engine.recognizer.match_all = Mock(return_value=[])
+        engine.offline_verified = True
+        engine._capture_frame = Mock(return_value=Image.new('RGB', (30, 30)))
+        engine._update_offline_gate = Mock(return_value=SimpleNamespace(score=1.))
+        engine._tap = Mock(side_effect=lambda *_: (engine.request_stop(), [15, 20])[1])
+        with patch('crbot.self_learning.subprocess.Popen', side_effect=AssertionError('training blocked first battle')), \
+             patch('crbot.engine.battle_ui_score', return_value=0), \
+             patch('crbot.engine.find_result_confirm_button', return_value=(None, 0)):
+            engine._run_single_marker('game')
+        engine._tap.assert_called_once()
+        self.assertEqual(engine._capture_frame.call_count, 1)
+
     def test_failed_job_is_not_repeated_for_same_snapshot(self):
         with patch("crbot.replay_learning.train_replay_policy",side_effect=ValueError("bad candidate")):
             with self.assertRaises(ValueError): run_cycle(self.root,self.request)

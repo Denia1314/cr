@@ -296,13 +296,16 @@ def _finish_job(store, state, job, candidate):
 
 class SelfLearningService:
     """Parent supervisor: only called at verified offline lobby boundaries."""
-    def __init__(self, root: Path, config: dict, stop_requested=lambda: False):
+    def __init__(self, root: Path, config: dict, stop_requested=lambda: False, *,
+                 defer_initial_training: bool = False):
         self.root, self.config = root.resolve(), config
         self.settings = learning_settings(config)
         self.stop_requested = stop_requested
         self.store = LearningStore(self.root)
         self.completed = 0
-        self.due = True  # First lobby after restart audits/reconciles interrupted jobs.
+        # Interactive sessions start collecting immediately. Explicit single-cycle
+        # callers can still audit/reconcile interrupted jobs without playing first.
+        self.due = not defer_initial_training
         self.phase = "waiting_boundary"
 
     def on_battle_completed(self, episode: dict) -> None:

@@ -41,19 +41,7 @@ def main():
         'modules': manifest,
     }, indent=2), encoding='utf-8')
     from PIL import Image, ImageDraw, ImageFont
-    image = Image.new('RGB',(620,320),'#0B1120')
-    draw = ImageDraw.Draw(image)
-    for y in range(320):
-        draw.line((0,y,620,y),fill=(11+int(y/45),17+int(y/30),32+int(y/18)))
     font_path = Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts/segoeui.ttf'
-    title = ImageFont.truetype(str(font_path),36)
-    note = ImageFont.truetype(str(font_path.parent/'msyh.ttc'),15)
-    draw.ellipse((267,35,353,121), outline='#2B405C', width=4)
-    draw.arc((267,35,353,121),-90,160,fill='#44D7E8',width=4)
-    draw.text((310,78),'RL',font=title,fill='#F4F7FF',anchor='mm')
-    draw.text((310,160),'Royal Lab',font=title,fill='#F4F7FF',anchor='mm')
-    draw.text((310,205),'正在准备内置运行环境，请稍候',font=note,fill='#A6B7CE',anchor='mm')
-    image.save(resources/'splash.png')
     icon=Image.new('RGBA',(256,256),'#0B1120');d=ImageDraw.Draw(icon)
     d.rounded_rectangle((8,8,248,248),radius=48,fill='#142137',outline='#397CF6',width=8)
     d.text((128,125),'RL',font=ImageFont.truetype(str(font_path),104),fill='#44D7E8',anchor='mm')
@@ -69,8 +57,15 @@ def main():
                ROYAL_BUILD_GIT=str(git_root), ROYAL_BUILD_GH=str(Path(gh).resolve()),
                PYINSTALLER_ZLIB_COMPRESSION_LEVEL='3')
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm',
-                    '--distpath',str(output),'--workpath',str(source/'build/standalone'),
+                    '--distpath',str(source/'build/standalone-runtime'),'--workpath',str(source/'build/standalone'),
                     str(source/'packaging/RoyalLab.spec')],env=env,cwd=source,check=True)
+    current = {p.name: hashlib.sha256(p.read_text(encoding='utf-8-sig').encode()).hexdigest()
+               for p in sorted((source/'crbot').glob('*.py'))}
+    if current != manifest:
+        raise SystemExit('Application sources changed during packaging. Rebuild before publishing.')
+    from build_bundle import build_bundle
+    build_bundle(source/'build/standalone-runtime/RoyalLab', output/'RoyalLab.exe',
+                 icon=resources/'royal-lab.ico')
 
 
 if __name__ == '__main__':

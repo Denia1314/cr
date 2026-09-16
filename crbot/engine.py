@@ -58,7 +58,10 @@ class BotEngine:
         self.self_learning = None
         if not dry_run and config.get("self_learning", {}).get("enabled", False):
             from .self_learning import SelfLearningService
-            self.self_learning = SelfLearningService(self.project_root, config, self._stop_requested)
+            self.self_learning = SelfLearningService(
+                self.project_root, config, self._stop_requested, defer_initial_training=True,
+            )
+            print(f"[自主学习] 先进入对局采集；每 {self.self_learning.settings['audit_every_battles']} 个可信完成局后检查候选训练")
         self.recognizer = WorkflowRecognizer(config, config_path)
         self.policy = create_policy(config, config_path)
         print(f"[决策引擎] {config.get('policy', {}).get('decision_engine', 'legacy')}")

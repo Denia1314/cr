@@ -26,28 +26,9 @@ a = Analysis([str(source/'tools/exe_launcher.py')], pathex=[str(source)],
              noarchive=False)
 pyz = PYZ(a.pure)
 
-class AnimatedSplash(Splash):
-    def generate_script(self):
-        # Runs in the bootloader's Tcl thread, so animation continues while the
-        # multi-gigabyte CUDA archive is being extracted, before Python exists.
-        return super().generate_script() + r'''
-set royal_angle 0
-.root.canvas create arc 267 35 353 121 -outline #44D7E8 -width 4 -style arc -extent 90 -tag royalspinner
-proc royal_tick {} {
-    global royal_angle
-    if {![winfo exists .root.canvas]} {return}
-    set royal_angle [expr {($royal_angle + 6) % 360}]
-    .root.canvas itemconfigure royalspinner -start [expr {-$royal_angle}]
-    after 25 royal_tick
-}
-if {![info exists ::env(CRBOT_REDUCED_MOTION)] || $::env(CRBOT_REDUCED_MOTION) ne "1"} {
-    royal_tick
-}
-'''
-
-splash = AnimatedSplash(str(resources/'splash.png'), binaries=a.binaries, datas=a.datas,
-                        full_tk=False, minify_script=False)
-exe = EXE(pyz, a.scripts, splash, splash.binaries, a.binaries, a.datas, [],
+# The outer GUI executable carries this entire folder and caches it per build.
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True,
           name='RoyalLab', debug=False, bootloader_ignore_signals=False,
           strip=False, upx=False, console=False, disable_windowed_traceback=False,
           icon=str(resources/'royal-lab.ico'))
+collection = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='RoyalLab')

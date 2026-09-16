@@ -8,12 +8,14 @@ from pathlib import Path
 import queue
 import sys
 import threading
+import time
 import traceback
 
 from .app_paths import configure_bundled_tools, initialize_data, resource_root
 
 
 def main() -> int:
+    started = time.perf_counter()
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--self-test", action="store_true")
@@ -67,12 +69,6 @@ def main() -> int:
         window.iconbitmap(str(icon))
     startup = StartupView(window)
     window.update_idletasks()
-    if getattr(sys, 'frozen', False):
-        try:
-            import pyi_splash
-            pyi_splash.close()
-        except ImportError:
-            pass
     results = queue.Queue()
 
     def load():
@@ -96,16 +92,18 @@ def main() -> int:
         try:
             startup.finish()
             app = app_class(window, root_path / "config.json", start_services=not args.smoke_ui)
+            ready_seconds = round(time.perf_counter() - started, 3)
             if args.smoke_ui:
                 def complete():
                     report = {"ok": True, "title": window.title(), "frozen": bool(getattr(sys, "frozen", False)),
                               "executable": sys.executable, "data_root": str(root_path),
                               "width": window.winfo_width(), "height": window.winfo_height(),
+                              "ready_seconds": ready_seconds,
                               "version_options": list(app.engine_combo['values'])}
                     (args.report or root_path / "ui-check.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
                     app._on_close()
                 window.after(1500, complete)
-            print(release_label() + " · packaged UI ready", flush=True)
+            print(release_label() + f" · packaged UI ready in {ready_seconds:.3f}s", flush=True)
         except Exception:
             details = traceback.format_exc()
             print(details, flush=True)

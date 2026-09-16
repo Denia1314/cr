@@ -32,6 +32,16 @@ def run_checks(report: Path) -> int:
         for name in modules:
             importlib.import_module('crbot.'+name)
         result['modules'] = modules
+        # The interactive path must collect before spending minutes on a candidate.
+        from .self_learning import SelfLearningService
+        with tempfile.TemporaryDirectory(prefix='royal-start-check-') as tmp:
+            service = SelfLearningService(Path(tmp), {'self_learning': {'enabled': True}},
+                                          defer_initial_training=True)
+            started = time.perf_counter()
+            assert not service.boundary()
+            result['first_battle_gate'] = {'candidate_training_deferred': True,
+                'milliseconds': round((time.perf_counter() - started) * 1000, 3),
+                'audit_every_battles': service.settings['audit_every_battles']}
         result['gui_module'] = importlib.import_module('crbot.gui').__file__
         config, _ = load_config(data_root()/'config.json')
         result['cards'] = len(CardCatalog.load(data_root()/'data/cards.json').cards)
