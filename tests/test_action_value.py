@@ -45,7 +45,8 @@ class ActionValueTests(unittest.TestCase):
         head, report = train_head(train + validation, train, validation, train, validation,
                                   feature, require_temporal=True)
         self.assertTrue(head.enabled)
-        self.assertEqual(report["random"]["brier"], 0)
+        self.assertLess(report["random"]["brier"], report["random"]["prior_brier"])
+        self.assertEqual(report["legacy"]["random"]["brier"], 0)
         self.assertGreater(report["random"]["prior_brier"], 0)
         _, report = train_head(train, train, validation, [], [], feature, require_temporal=True)
         self.assertFalse(report["enabled"])
@@ -70,6 +71,69 @@ class ActionValueTests(unittest.TestCase):
         arrays["action_value_xy"][0, 0] = np.nan
         with self.assertRaises(ValueError):
             ActionValueHead.load(arrays)
+
+    def test_weighting_shrinkage_and_independent_battle_prior(self):
+        rows = examples("train", 16)
+        recipe = dict(neighbors=8, state_radius=.5, position_radius=.15, shrinkage=8.)
+        head = fit(rows, feature, recipe=recipe)
+        prediction = head.predict("knight", feature(None), [.25, .65])
+        self.assertAlmostEqual(prediction["value"], .75)
+        self.assertEqual(prediction["support_battles"], 8)
+        # Duplicating a long winning battle must not alter the prior or votes.
+        duplicate = fit(rows + [rows[1]] * 100, feature, recipe=recipe)
+        self.assertAlmostEqual(duplicate.prior, head.prior)
+        self.assertEqual(duplicate.predict("knight", feature(None), [.25, .65]), prediction)
+        distant = head.predict("knight", feature(None), [.29, .65])
+        self.assertLess(distant["value"], prediction["value"])
+        self.assertGreater(distant["shrinkage_fraction"], prediction["shrinkage_fraction"])
+
+    def test_v2_artifact_roundtrip_preserves_recipe_and_prior(self):
+        head = fit(examples("t"), feature,
+                   recipe=dict(neighbors=4, state_radius=.2, position_radius=.1, shrinkage=16.))
+        head.enabled = True
+        loaded = ActionValueHead.load(head.arrays())
+        self.assertTrue(loaded.enabled)
+        self.assertEqual(loaded.recipe, head.recipe)
+        self.assertEqual(loaded.predict("knight", feature(None), [.25, .65]),
+                         head.predict("knight", feature(None), [.25, .65]))
+        for key, value in (("neighbors", 4.5), ("shrinkage", np.nan), ("position_radius", 0.)):
+            arrays = head.arrays()
+            arrays["action_value_" + key] = np.asarray([value])
+            with self.assertRaises(ValueError):
+                ActionValueHead.load(arrays)
+
+    def test_nested_selection_excludes_both_outer_validation_sets(self):
+        train, validation = examples("train", 64), examples("validation", 16)
+        temporal_train, temporal_validation = train[:48], train[48:] + validation
+        _, report = train_head(train + validation, train, validation, temporal_train,
+                               temporal_validation, feature, require_temporal=True)
+        selection = report["selection"]
+        selected_groups = set(selection["train_battles"] + selection["validation_battles"])
+        self.assertTrue(selected_groups)
+        self.assertTrue(selected_groups <= {a.group_id for a in temporal_train})
+        self.assertFalse(selected_groups & {a.group_id for a in validation + temporal_validation})
+        self.assertFalse(set(selection["train_battles"]) & set(selection["validation_battles"]))
+        changed = copy.deepcopy(validation)
+        for row in changed:
+            row.target = 1-row.target
+        _, poisoned = train_head(train + changed, train, changed, temporal_train,
+                                 train[48:] + changed, feature, require_temporal=True)
+        self.assertEqual(poisoned["selection"], selection)
+
+    def test_diagnostics_explain_baseline_failure_and_unsupported_cards(self):
+        train, validation = examples("t", 32), examples("v", 16)
+        for row in train:
+            row.deploy_point = [.5, .65]
+        for row in validation:
+            row.deploy_point = [.5, .65]
+        validation[-1].card_id = "unseen"
+        report = evaluate(train, validation, feature,
+                          recipe=dict(neighbors=16, state_radius=.3, position_radius=.15, shrinkage=32.))
+        self.assertFalse(report["passed"])
+        self.assertIn("not_better_than_battle_prior", report["rejection_reasons"])
+        self.assertEqual(report["unsupported"]["unseen_card"], 1)
+        self.assertEqual(report["by_card"]["unseen"]["coverage"], 0)
+        self.assertIn("16", report["support_histogram"])
 
     def test_production_training_saves_head_without_promoting_candidate(self):
         fixtures = replay.ReplayPolicyLearningTests()

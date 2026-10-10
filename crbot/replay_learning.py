@@ -2033,6 +2033,7 @@ def train_replay_policy(
         lambda a: _feature(replace(a, formation_phase="", desired_role=""),
                            catalog.by_id[a.card_id], visual_weight),
         require_temporal=bool(config.get("require_temporal_validation", False)),
+        seed=seed,
     )
     np.savez_compressed(
         temporary_model,
