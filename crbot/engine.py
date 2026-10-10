@@ -313,6 +313,8 @@ class BotEngine:
         battle_threshold = float(automation.get("battle_ui_threshold", 0.72))
         from .battle_transition import BattleTransitionGuard
         transition = BattleTransitionGuard.from_config(automation)
+        from .screen_recovery import ScreenRecovery
+        recovery = ScreenRecovery(automation)
         confirm_interval = float(
             automation.get("post_battle_confirm_interval_s", 0.75)
         )
@@ -388,6 +390,34 @@ class BotEngine:
                 and bool(automation.get("chest_screen_enabled", True))
             ):
                 chest_point, chest_score = find_chest_open_screen(image)
+
+            recognized = (gate is not None or battle_detected
+                          or confirm_point is not None or chest_point is not None)
+            was_recovering = recovery.active
+            tap_due = recovery.observe(image, recognized, now)
+            if was_recovering and recognized:
+                self.last_known_at = now
+                # Give the normal navigation flow a fresh timeout budget.
+                if post_battle:
+                    post_battle_since = now
+                if gate is not None:
+                    awaiting_battle = False
+                    if not self.in_battle:
+                        post_battle = False
+                self.recorder.record("stuck_screen_recovered", image, {})
+                print("[恢复] 已返回可识别画面，停止中心点击")
+            if recovery.active:
+                if tap_due and foreground == package and not self._stop_requested():
+                    pixel = self._tap([0.5, 0.5], image)
+                    recovery.tapped(now)
+                    self.recorder.record("stuck_screen_center_tap", image, {
+                        "click_normalized": [0.5, 0.5], "click_pixel": pixel,
+                        "dry_run": self.dry_run,
+                    })
+                    print("[恢复] 未识别画面停滞，点击画面正中心")
+                if self._sleep(max(poll_interval, 0.2)):
+                    return
+                continue
 
             if (
                 confirm_point is not None
