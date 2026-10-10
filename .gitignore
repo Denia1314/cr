@@ -24,3 +24,6 @@ reports/
 build/
 dist/
 RoyalLab.exe
+
+# Local memory-observation toolchains, native binaries and reports
+.memory-lab/

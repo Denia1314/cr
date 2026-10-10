@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     lab=subcommands.add_parser("battle-lab",help="准备机制覆盖、失败复核队列和攻防场景评估")
     lab.add_argument("action",choices=("prepare","evaluate"))
     subcommands.add_parser("doctor", help="检查 MuMu、ADB、游戏与标定")
+    memory = subcommands.add_parser("memory-lab", help="只读访问诊断与自建测试进程采集，不读取游戏字段")
+    from .memory_lab import add_arguments
+    add_arguments(memory)
     knowledge = subcommands.add_parser("knowledge", help="战斗知识库与推演运行审计")
     knowledge.add_argument("action", choices=("audit", "runtime-audit"), nargs="?", default="audit")
     subcommands.add_parser("calibrate", help="打开画面标定工具")
@@ -129,6 +132,9 @@ def doctor(device: MumuDevice, config: dict, config_path: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
+        if arguments.command == "memory-lab":
+            from .memory_lab import run_arguments
+            return run_arguments(arguments)
         config, config_path = load_config(arguments.config)
         if arguments.command == "self-learn":
             from .learning_store import LearningStore, atomic_json
