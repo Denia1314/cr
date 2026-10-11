@@ -1,5 +1,7 @@
 # YOLO 切片接入（V2 / 3.13.0）
 
+用户后续明确要求先直接启用：当前运行配置优先加载 `models/battlefield/katacr-real-units-v3/candidate/weights/best.pt`（模型标识 `katacr-2b0171bc060e`），`slice_fallback_enabled=true`。候选结果通过原有置信度、类别映射和等级徽标筛选后进入敌我单位观测及战场威胁判断；没有有效单位时使用公开模型回退。此为显式试用，历史失败复测结论及未验收标记保留。关闭旧窗口并重新打开后，启动新任务生效。
+
 ## V3 / 3.15.0 真实战场训练
 
 新增 `export-real`：读取固定上游 `images/part2` 的 Labelme 矩形框，将敌我数字及攻击/冻结状态后缀转换为原单位类别。保留进化单位类别，未知标签计入 ignored_annotations，不使用上游非标准多列 txt。校验图像尺寸、框坐标及来源版本。按完整对局分 train/val，再均匀抽取时间帧；相同图片的哈希不可跨集合。

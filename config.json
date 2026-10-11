@@ -356,6 +356,8 @@
     "compute_device": "auto"
   },
   "training": {
+    "slice_model_path": "models/battlefield/katacr-real-units-v3/candidate/weights/best.pt",
+    "slice_fallback_enabled": true,
     "pretrained_enabled": true,
     "pretrained_confidence": 0.55,
     "pretrained_side_confidence": 0.85,
