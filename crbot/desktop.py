@@ -99,7 +99,8 @@ def main() -> int:
                               "executable": sys.executable, "data_root": str(root_path),
                               "width": window.winfo_width(), "height": window.winfo_height(),
                               "ready_seconds": ready_seconds,
-                              "version_options": list(app.engine_combo['values'])}
+                              "configured_engine": app.decision_engine,
+                              "configured_rule": app.runtime_model}
                     (args.report or root_path / "ui-check.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
                     app._on_close()
                 window.after(1500, complete)

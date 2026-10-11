@@ -19,9 +19,9 @@ from PIL import Image, ImageTk
 
 from . import implemented_stages_label, release_label
 from .app_paths import data_root
-from .animations import Animator, fade_in, mix, motion_enabled
+from .animations import Animator, fade_in, mix
 from .ui_theme import FONT, MONO, Palette
-from .ui_widgets import HoverButton, Surface, ToolsPopover
+from .ui_widgets import HoverButton, Surface
 from .ui_select import AnimatedSelect
 from .adb import MumuDevice
 from .annotate import AnnotationWindow
@@ -44,16 +44,12 @@ from .replay_learning import (
     train_replay_policy,
 )
 from .runtime_model import (
-    DECISION_ENGINE_LABELS,
     apply_decision_engine,
     load_decision_engine,
-    save_decision_engine,
     DEFAULT_RUNTIME_MODEL,
-    RUNTIME_MODEL_LABELS,
     apply_runtime_model,
     load_runtime_model,
     runtime_model_label,
-    save_runtime_model,
 )
 from .vision import WorkflowRecognizer
 from .training_sync import ReplaySync, SyncWorker, training_allowed
@@ -172,25 +168,6 @@ class RoyalTrainerApp:
         HoverButton(self.sidebar, text="模型版本", anchor="w", background=Palette.SURFACE,
             hover=Palette.CARD_ALT, foreground=Palette.MUTED,
             command=self.show_model_versions, padx=14).pack(fill="x", padx=10, pady=4)
-        self.tools_button = HoverButton(self.sidebar, text="工具箱  ›", anchor="w",
-            background=Palette.SURFACE, hover=Palette.CARD_ALT, foreground=Palette.MUTED,
-            command=lambda: self.tools_popover.toggle(), padx=14)
-        self.tools_button.pack(fill="x", padx=10, pady=4)
-        self.tools_menu = tk.Menu(self.root, tearoff=False, font=(FONT, 10),
-            background=Palette.CARD, foreground=Palette.TEXT,
-            activebackground=Palette.CARD_ALT, activeforeground=Palette.TEXT)
-        for label, command in (
-            ("画面标定", self.open_calibration), ("训练数据", self.open_runs_folder),
-            ("精确标注（可选）", self.open_annotation), ("无标注自学", self.check_learning_status),
-            ("自主学习状态", self.show_self_learning_status), ("示范学习", self.start_demonstration),
-            ("双机数据同步", self.sync_training_data),
-        ):
-            self.tools_menu.add_command(label=label, command=command)
-        self.tools_menu.add_separator()
-        self.reduced_motion = tk.BooleanVar(value=not motion_enabled())
-        self.tools_menu.add_checkbutton(label="减少动态效果", variable=self.reduced_motion,
-                                       command=self._toggle_motion)
-        self.tools_popover = ToolsPopover(self.root, self.tools_button, self.tools_menu)
         tk.Label(self.sidebar, text="本地运行\n离线人机训练", justify="left", font=(FONT, 8),
                  foreground=Palette.FAINT, background=Palette.SURFACE).pack(side="bottom", anchor="w", padx=22, pady=22)
         tk.Frame(shell, width=1, background=Palette.BORDER).pack(side="left", fill="y")
@@ -226,11 +203,10 @@ class RoyalTrainerApp:
         content.grid_rowconfigure(2, weight=1)
         stats = self.stats_card = tk.Frame(content, background=Palette.BG)
         stats.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        for column in range(3):
+        for column in range(2):
             stats.grid_columnconfigure(column, weight=1, uniform="stats")
         self.device_value, self.device_note = self._stat_card(stats, 0, "设备连接", "未检测", "等待连接模拟器", Palette.BLUE)
-        self.safety_value, self.safety_note = self._stat_card(stats, 1, "离线校验", "待确认", "等待识别离线入口", Palette.PURPLE)
-        self.battle_value, self.battle_note = self._stat_card(stats, 2, "完成对局", "0 局", "本次运行统计", Palette.GREEN)
+        self.battle_value, self.battle_note = self._stat_card(stats, 1, "完成对局", "0 局", "本次运行统计", Palette.GREEN)
         self._build_control_card(content)
         self._build_preview_card(content)
         self._build_log_card(content)
@@ -252,15 +228,15 @@ class RoyalTrainerApp:
         self._compact = compact
         self.workspace_title.configure(font=(FONT, 16 if compact else 20, "bold"))
         self.release_heading.configure(font=(FONT, 7 if compact else 8))
-        for value in (self.device_value, self.safety_value, self.battle_value):
+        for value in (self.device_value, self.battle_value):
             value.configure(font=(FONT, 16 if compact else 20, "bold"))
         for card in self.stats_card.winfo_children():
             card.body.pack_configure(pady=8 if compact else 14)
-        for note in (self.device_note, self.safety_note, self.battle_note):
+        for note in (self.device_note, self.battle_note):
             note.configure(font=(FONT, 7 if compact else 8))
         for card in (self.control_card, self.preview_card, self.log_card):
             card.body.pack_configure(pady=10 if compact else 14)
-        for combo in (self.engine_combo, self.model_combo, self.preview_mode_combo):
+        for combo in (self.preview_mode_combo,):
             combo.configure(font=(FONT, 8 if compact else 9), pady=5 if compact else 7)
         for button in (self.start_button, self.stop_button):
             button.configure(pady=6 if compact else 8, font=(FONT, 9 if compact else 10))
@@ -274,7 +250,7 @@ class RoyalTrainerApp:
 
     def _stat_card(self, parent, column, title, value, note, accent):
         card = Surface(parent, padding=14)
-        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 5, 0 if column == 2 else 5))
+        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 5, 0 if column == 1 else 5))
         tk.Label(card.body, text=title, font=(FONT, 9), fg=Palette.MUTED,
                  bg=Palette.CARD).pack(anchor="w")
         value_label = tk.Label(card.body, text=value, font=(FONT, 20, "bold"),
@@ -329,27 +305,8 @@ class RoyalTrainerApp:
         self.control_card = Surface(parent, padding=14)
         self.control_card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         controls = self.control_card.body
-        fields = tk.Frame(controls, background=Palette.CARD)
-        fields.pack(fill="x")
-        fields.grid_columnconfigure(0, weight=1)
-        fields.grid_columnconfigure(1, weight=1)
-        tk.Label(fields, text="决策方式", font=(FONT, 8), fg=Palette.MUTED,
-                 bg=Palette.CARD).grid(row=0, column=0, sticky="w", pady=(0, 5))
-        tk.Label(fields, text="规则配置", font=(FONT, 8), fg=Palette.MUTED,
-                 bg=Palette.CARD).grid(row=0, column=1, sticky="w", padx=(14, 0), pady=(0, 5))
-        self.engine_var = tk.StringVar(value=DECISION_ENGINE_LABELS[self.decision_engine])
-        self.engine_combo = AnimatedSelect(fields, textvariable=self.engine_var,
-            values=list(DECISION_ENGINE_LABELS.values()), state="readonly", width=28, font=(FONT, 9))
-        self.engine_combo.grid(row=1, column=0, sticky="ew")
-        self.engine_combo.bind("<<ComboboxSelected>>", self._on_engine_selected)
-        self.model_key_by_label = {label: key for key, label in RUNTIME_MODEL_LABELS.items()}
-        self.model_var = tk.StringVar(value=runtime_model_label(self.runtime_model))
-        self.model_combo = AnimatedSelect(fields, textvariable=self.model_var,
-            values=list(RUNTIME_MODEL_LABELS.values()), state="readonly", width=22, font=(FONT, 9))
-        self.model_combo.grid(row=1, column=1, sticky="ew", padx=(14, 0))
-        self.model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
         bar = tk.Frame(controls, background=Palette.CARD)
-        bar.pack(fill="x", pady=(10, 0))
+        bar.pack(fill="x")
         self.run_state_label = tk.Label(bar, text="当前状态：待机", font=(FONT, 9),
             foreground=Palette.MUTED, background=Palette.CARD)
         self.run_state_label.pack(side="left")
@@ -446,15 +403,6 @@ class RoyalTrainerApp:
         self.root.bind("<Control-Return>", lambda _event: self.start_bot())
         self.root.bind("<Escape>", lambda _event: self.stop_bot())
 
-    def _toggle_motion(self) -> None:
-        os.environ["CRBOT_REDUCED_MOTION"] = "1" if self.reduced_motion.get() else "0"
-        if self.reduced_motion.get():
-            self.activity_animation.cancel()
-            self.activity_dot.itemconfigure("dot", fill=Palette.MUTED)
-        elif self._bot_is_running():
-            self.activity_animation.pulse("running", lambda t: self.activity_dot.itemconfigure(
-                "dot", fill=mix(Palette.BLUE, Palette.CYAN, t)))
-
     def _set_header(self, text: str, color: str) -> None:
         self.header_badge.configure(text=text, foreground=color)
 
@@ -501,8 +449,6 @@ class RoyalTrainerApp:
 
     def _interpret_log(self, line: str) -> None:
         if "[安全门]" in line:
-            self.safety_value.configure(text="验证通过", foreground=Palette.GREEN)
-            self.safety_note.configure(text="已确认离线人机页面")
             self._set_run_state("离线入口已验证", Palette.GREEN)
         elif "[战斗]" in line:
             self._set_run_state("战斗中", Palette.CYAN)
@@ -529,36 +475,12 @@ class RoyalTrainerApp:
             self.activity_dot.itemconfigure("dot", fill=Palette.MUTED)
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
-        self.model_combo.configure(state="disabled" if running else "readonly")
-        self.engine_combo.configure(state="disabled" if running else "readonly")
         self.check_button.configure(state="disabled" if running else "normal")
         self.connection_button.configure(state="disabled" if running else "normal")
         if running:
             self._set_header("任务运行中", Palette.GREEN)
         elif self.device_value.cget("text") == "已连接":
             self._set_header("设备已就绪", Palette.GREEN)
-
-    def _on_model_selected(self, _event: tk.Event[Any] | None = None) -> None:
-        label = self.model_var.get()
-        key = self.model_key_by_label.get(label, DEFAULT_RUNTIME_MODEL)
-        try:
-            self.runtime_model = save_runtime_model(self.config_path, key)
-        except (OSError, ValueError) as exc:
-            self.model_var.set(runtime_model_label(self.runtime_model))
-            messagebox.showerror("无法保存模型选择", str(exc), parent=self.root)
-            return
-        self._append_log(f"运行版本已切换为：{runtime_model_label(key)}", "success")
-
-    def _on_engine_selected(self, _event=None):
-        selected = next((key for key, label in DECISION_ENGINE_LABELS.items()
-                         if label == self.engine_var.get()), "legacy")
-        try:
-            self.decision_engine = save_decision_engine(self.config_path, selected)
-        except (OSError, ValueError) as exc:
-            self.engine_var.set(DECISION_ENGINE_LABELS[self.decision_engine])
-            messagebox.showerror("无法保存决策模式", str(exc), parent=self.root)
-            return
-        self._append_log(f"决策模式：{DECISION_ENGINE_LABELS[selected]}，下次启动生效", "success")
 
     def _refresh_connection_button(self, config: dict[str, Any] | None = None) -> None:
         try:
@@ -819,10 +741,7 @@ class RoyalTrainerApp:
         if self.background_busy:
             messagebox.showinfo("请稍候", "设备操作正在进行，请稍候再开始。", parent=self.root)
             return
-        selected_label = self.model_var.get()
-        selected_model = self.model_key_by_label.get(
-            selected_label, DEFAULT_RUNTIME_MODEL
-        )
+        selected_model = self.runtime_model
         selected_engine = self.decision_engine
         self.stop_event = threading.Event()
         self.engine = None
@@ -1286,7 +1205,6 @@ class RoyalTrainerApp:
         messagebox.showinfo("无标注自我学习", detail, parent=self.root)
 
     def _apply_device_status(self, payload: dict[str, Any], announce: bool = False) -> None:
-        calibrated = set(payload.get("calibrated") or [])
         if payload.get("connected"):
             self.device_value.configure(text="已连接", foreground=Palette.GREEN)
             serial = payload.get("serial") or "ADB 在线"
@@ -1306,13 +1224,6 @@ class RoyalTrainerApp:
             self.device_value.configure(text="未启动", foreground=Palette.MUTED)
             self.device_note.configure(text="点击“连接并检测”可自动启动")
             self._set_header("MuMu 未启动", Palette.MUTED)
-
-        if "offline_ai_marker" in calibrated:
-            self.safety_value.configure(text="已标定", foreground=Palette.GREEN)
-            self.safety_note.configure(text="运行时连续 3 帧校验")
-        else:
-            self.safety_value.configure(text="需标定", foreground=Palette.AMBER)
-            self.safety_note.configure(text="工具 → 画面标定")
 
         image = payload.get("image")
         if isinstance(image, Image.Image):
@@ -1503,7 +1414,6 @@ class RoyalTrainerApp:
             self.stop_event.set()
             if self.engine is not None:
                 self.engine.request_stop()
-        self.tools_popover.close()
         self.closing = True
         if self.sync_worker is not None:
             self.sync_worker.close()

@@ -5,7 +5,6 @@ import json
 import tempfile
 import tkinter as tk
 import unittest
-from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -77,22 +76,15 @@ class ConsoleTests(unittest.TestCase):
         self.assertFalse(any(isinstance(w,tk.Toplevel) for w in self.root.winfo_children()))
         self.app.engine=None
 
-    def test_predictive_selector_fits_minimum_window_and_locks_while_running(self):
+    def test_main_controls_and_release_fit_minimum_window(self):
         self.root.geometry("1040x700+0+0")
         self.root.deiconify()
         self.root.update_idletasks()
         self.root.update()
-        self.assertIn("P1", self.app.engine_combo["values"][-1])
         from crbot import current_stage_label, release_label
-        from tkinter.font import Font
-        current = self.app.engine_combo["values"][-1]
-        self.assertIn("SL4", current)
-        self.assertNotIn("UI1", current)
         self.assertIn(current_stage_label(), self.app.release_heading["text"])
         self.assertEqual(self.app.release_heading["text"], release_label())
-        label_width = Font(self.root, font=self.app.engine_combo["font"]).measure(current)
-        self.assertLessEqual(label_width + 24, self.app.engine_combo.winfo_width())
-        for widget in (self.app.engine_combo, self.app.model_combo, self.app.start_button,
+        for widget in (self.app.check_button, self.app.connection_button, self.app.start_button,
                        self.app.stop_button, self.app.release_heading):
             left = widget.winfo_rootx() - self.root.winfo_rootx()
             top = widget.winfo_rooty() - self.root.winfo_rooty()
@@ -101,11 +93,6 @@ class ConsoleTests(unittest.TestCase):
             self.assertLessEqual(left + widget.winfo_width(), 1040)
             self.assertLessEqual(top + widget.winfo_height(), 700)
             self.assertGreater(widget.winfo_width(), 20)
-        self.assertGreaterEqual(self.app.engine_combo.winfo_width(), self.app.engine_combo.winfo_reqwidth())
-        self.app._set_running_controls(True)
-        self.assertEqual(str(self.app.engine_combo["state"]), "disabled")
-        self.app._set_running_controls(False)
-        self.assertEqual(str(self.app.engine_combo["state"]), "readonly")
 
     def setUp(self) -> None:
         try:
@@ -123,26 +110,19 @@ class ConsoleTests(unittest.TestCase):
         with patch("crbot.gui.SyncWorker"), patch.object(self.root, "after"):
             self.app = RoyalTrainerApp(self.root, config_path)
 
-    def test_running_controls_and_model_selection_restore_on_completion(self) -> None:
+    def test_running_controls_restore_on_completion(self) -> None:
         self.app._set_running_controls(True)
-        self.assertEqual(str(self.app.model_combo["state"]), "disabled")
         self.assertEqual(str(self.app.start_button["state"]), "disabled")
         self.assertEqual(str(self.app.stop_button["state"]), "normal")
         self.app._finish_bot(None)
-        self.assertEqual(str(self.app.model_combo["state"]), "readonly")
         self.assertEqual(str(self.app.start_button["state"]), "normal")
         self.assertEqual(str(self.app.stop_button["state"]), "disabled")
 
-    def test_animated_lists_save_existing_keys_and_route_preview_mode(self):
+    def test_animated_list_routes_preview_mode(self):
         import os
-        from crbot.runtime_model import load_decision_engine, load_runtime_model
         self.root.deiconify()
         self.root.update()
         with patch.dict(os.environ, {"CRBOT_REDUCED_MOTION": "1"}):
-            self.app.engine_combo._choose(1)
-            self.assertEqual(load_decision_engine(self.app.config_path), "shadow")
-            self.app.model_combo._choose(0)
-            self.assertEqual(load_runtime_model(self.app.config_path), "v5")
             self.app.preview_mode_combo._choose(0)
             self.assertEqual(self.app.preview_mode.get(), "游戏画面")
             self.assertEqual(self.app.grid_inspector.window.winfo_manager(), "")
@@ -181,21 +161,37 @@ class ConsoleTests(unittest.TestCase):
             self.assertIn(version, self.app.model_details_text.get("1.0", "end"))
         self.assertNotIn("first", self.app.model_details_text.get("1.0", "end"))
 
-    def test_tools_menu_routes_all_auxiliary_actions(self) -> None:
-        methods = (
-            "open_calibration", "open_runs_folder", "open_annotation",
-            "check_learning_status", "show_self_learning_status", "start_demonstration", "sync_training_data",
-        )
-        with ExitStack() as stack:
-            actions = [stack.enter_context(patch.object(RoyalTrainerApp, method)) for method in methods]
-            stack.enter_context(patch("crbot.gui.SyncWorker"))
-            stack.enter_context(patch.object(self.root, "after"))
-            for widget in self.root.winfo_children():
-                widget.destroy()
-            app = RoyalTrainerApp(self.root, self.app.config_path)
-            for index, action in enumerate(actions):
-                app.tools_menu.invoke(index)
-                action.assert_called_once_with()
+    def test_removed_controls_are_absent_and_status_updates_still_work(self):
+        for name in ("engine_combo", "model_combo", "safety_value", "safety_note",
+                     "tools_button", "tools_menu", "tools_popover"):
+            self.assertFalse(hasattr(self.app, name), name)
+        self.assertEqual(len(self.app.stats_card.winfo_children()), 2)
+        self.app._apply_device_status({"connected": True, "installed": True,
+                                      "calibrated": ["offline_ai_marker"], "serial": "test"})
+        self.app._append_log("[安全门] 离线人机入口已确认")
+        self.assertEqual(self.app.device_value["text"], "已连接")
+        self.assertIn("离线入口已验证", self.app.run_state_label["text"])
+
+    def test_training_keeps_saved_rule_and_engine_without_selectors(self):
+        from crbot.runtime_model import save_runtime_model, save_decision_engine
+        save_runtime_model(self.app.config_path, "m2")
+        save_decision_engine(self.app.config_path, "shadow")
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        with patch("crbot.gui.SyncWorker"), patch.object(self.root, "after"):
+            self.app = RoyalTrainerApp(self.root, self.app.config_path)
+        self.assertEqual(self.app.runtime_model, "m2")
+        self.assertEqual(self.app.decision_engine, "shadow")
+        with patch("crbot.gui.MumuDevice"), patch("crbot.gui.BotEngine") as factory:
+            self.app.start_bot()
+            self.app.bot_thread.join(timeout=5)
+        self.assertFalse(self.app.bot_thread.is_alive())
+        factory.assert_called_once()
+        effective_config = factory.call_args.args[1]
+        self.assertEqual(effective_config["policy"]["runtime_model"], "m2")
+        self.assertEqual(effective_config["policy"]["decision_engine"], "shadow")
+        self.assertEqual(effective_config["game"]["allowed_mode"], "offline_ai_only")
+        factory.return_value.run.assert_called_once_with()
 
     def test_stop_during_connection_cancels_both_run_modes(self) -> None:
         for start, engine in (
