@@ -149,28 +149,6 @@ class RoyalTrainerApp:
     def _build_interface(self) -> None:
         shell = tk.Frame(self.root, background=Palette.BG)
         shell.pack(fill="both", expand=True)
-        self.sidebar = tk.Frame(shell, background=Palette.SURFACE, width=142)
-        self.sidebar.pack(side="left", fill="y")
-        self.sidebar.pack_propagate(False)
-        tk.Label(self.sidebar, text="RL", font=("Segoe UI", 26, "bold"),
-                 foreground=Palette.BLUE, background=Palette.SURFACE).pack(anchor="w", padx=22, pady=(24, 0))
-        tk.Label(self.sidebar, text="ROYAL LAB", font=("Segoe UI", 9, "bold"),
-                 foreground=Palette.TEXT, background=Palette.SURFACE).pack(anchor="w", padx=22, pady=(0, 28))
-        self.overview_button = HoverButton(self.sidebar, text="◈  工作台", anchor="w",
-            background=Palette.SELECTION, hover="#C7DDFB", foreground=Palette.BLUE,
-            command=self._reveal_workspace, padx=14)
-        self.overview_button.pack(fill="x", padx=10, pady=4)
-        self.connection_button = HoverButton(self.sidebar, text="自定义 ADB", anchor="w",
-            background=Palette.SURFACE, hover=Palette.CARD_ALT, foreground=Palette.MUTED,
-            command=self.open_adb_connection_settings, padx=14)
-        self.connection_button.pack(fill="x", padx=10, pady=4)
-        self._refresh_connection_button()
-        HoverButton(self.sidebar, text="模型版本", anchor="w", background=Palette.SURFACE,
-            hover=Palette.CARD_ALT, foreground=Palette.MUTED,
-            command=self.show_model_versions, padx=14).pack(fill="x", padx=10, pady=4)
-        tk.Label(self.sidebar, text="本地运行\n离线人机训练", justify="left", font=(FONT, 8),
-                 foreground=Palette.FAINT, background=Palette.SURFACE).pack(side="bottom", anchor="w", padx=22, pady=22)
-        tk.Frame(shell, width=1, background=Palette.BORDER).pack(side="left", fill="y")
         workspace = tk.Frame(shell, background=Palette.BG)
         workspace.pack(side="left", fill="both", expand=True, padx=22, pady=18)
         header = tk.Frame(workspace, background=Palette.BG)
@@ -178,6 +156,11 @@ class RoyalTrainerApp:
         self.check_button = HoverButton(header, text="连接并检测", background=Palette.CARD,
             hover=Palette.SELECTION, foreground=Palette.BLUE, command=self.run_doctor)
         self.check_button.pack(side="right", padx=(12, 0))
+        self.connection_button = HoverButton(header, text="自定义 ADB",
+            background=Palette.CARD, hover=Palette.CARD_ALT, foreground=Palette.MUTED,
+            command=self.open_adb_connection_settings, padx=14)
+        self.connection_button.pack(side="right", padx=(12, 0))
+        self._refresh_connection_button()
         status = tk.Frame(header, background=Palette.BG)
         status.pack(side="right")
         self.activity_dot = tk.Canvas(status, width=12, height=12, bg=Palette.BG, highlightthickness=0)
@@ -241,12 +224,6 @@ class RoyalTrainerApp:
         for button in (self.start_button, self.stop_button):
             button.configure(pady=6 if compact else 8, font=(FONT, 9 if compact else 10))
         self.model_status_button.configure(font=(FONT, 7 if compact else 8), pady=2 if compact else 4)
-
-    def _reveal_workspace(self) -> None:
-        if self.preview_expanded:
-            self._toggle_preview_size()
-        for card in (self.control_card, self.preview_card, self.log_card):
-            card.reveal()
 
     def _stat_card(self, parent, column, title, value, note, accent):
         card = Surface(parent, padding=14)

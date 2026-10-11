@@ -40,6 +40,7 @@ class AnimatedSelect(HoverButton):
         self.rows = []
         self.active_index = 0
         self._closing = False
+        self._close_on_release = False
         self._arrow = 0.0
         self._border = Palette.BORDER
         self._popup_position = (0, 0)
@@ -77,7 +78,7 @@ class AnimatedSelect(HoverButton):
         w, h = max(4, self.winfo_width()), max(4, self.winfo_height())
         disabled = self._button_options["state"] == "disabled"
         fill = Palette.CARD_ALT if disabled else self._fill
-        outline = Palette.BORDER if disabled else (Palette.BLUE if self._focused else self._border)
+        outline = Palette.BORDER if disabled else self._border
         rounded_shape(self, w, h, 9, fill=fill, outline=outline, width=1)
         text = str(self._button_options["text"])
         face = tkfont.Font(self, font=self._button_options["font"])
@@ -140,7 +141,7 @@ class AnimatedSelect(HoverButton):
     def _animate_to(self, target):
         super()._animate_to(target)
         start = self._border
-        end = Palette.BLUE if self._hovered or self._focused else Palette.BORDER
+        end = "#B8C4D3" if self._hovered or self._focused else Palette.BORDER
         def update(progress):
             self._border = mix(start, end, progress)
             self._draw()
@@ -171,6 +172,21 @@ class AnimatedSelect(HoverButton):
         else:
             self.close(restore_focus=True)
 
+    def _press(self, event=None):
+        # Moving focus to the field may dismiss the flyout before mouse-up.
+        # Remember the click's intent so that dismissal cannot reopen it.
+        self._close_on_release = self.popup is not None and not self._closing
+        super()._press(event)
+
+    def _release(self, event):
+        if self._close_on_release:
+            self._close_on_release = False
+            self._pressed = False
+            self.close(restore_focus=True)
+            self._animate_to(self.hover_background if self._hovered else self.normal_background)
+        else:
+            super()._release(event)
+
     def open(self):
         if self._button_options["state"] == "disabled" or not self.values:
             return
@@ -185,6 +201,7 @@ class AnimatedSelect(HoverButton):
         popup.withdraw()
         popup.overrideredirect(True)
         popup.transient(self.owner)
+        popup.attributes("-topmost", self.owner.attributes("-topmost"))
         corner = "#FF00FF" if sys.platform == "win32" else Palette.BG
         popup.configure(background=corner)
         if sys.platform == "win32":

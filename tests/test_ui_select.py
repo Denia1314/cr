@@ -145,6 +145,36 @@ class AnimatedSelectTests(unittest.TestCase):
         self.assertIs(self.root.focus_get(), self.next_button)
         self.assertEqual(self.events, [])
 
+    def test_second_click_on_field_closes_without_reopening_after_focus_loss(self):
+        for reduced_motion, delay in (("0", .02), ("0", .16), ("1", .02)):
+            with self.subTest(reduced_motion=reduced_motion, delay=delay), patch.dict(
+                os.environ, {"CRBOT_REDUCED_MOTION": reduced_motion}
+            ):
+                self.select.event_generate("<ButtonPress-1>", x=20, y=15)
+                self.select.event_generate("<ButtonRelease-1>", x=20, y=15)
+                self.pump()
+                self.assertIsNotNone(self.select.popup)
+                self.select.event_generate("<ButtonPress-1>", x=20, y=15)
+                self.pump(delay)
+                self.select.event_generate("<ButtonRelease-1>", x=20, y=15)
+                self.pump()
+                self.assertIsNone(self.select.popup)
+        self.assertEqual(self.variable.get(), "Second")
+        self.assertEqual(self.events, [])
+        self.assertFalse(self.errors)
+
+    def test_clicking_current_option_closes_and_keeps_selected_value(self):
+        with patch.dict(os.environ, {"CRBOT_REDUCED_MOTION": "1"}):
+            self.select.open()
+            self.root.update()
+            row = self.select.rows[1]
+            row.event_generate("<ButtonPress-1>", x=20, y=15)
+            row.event_generate("<ButtonRelease-1>", x=20, y=15)
+            self.root.update()
+        self.assertIsNone(self.select.popup)
+        self.assertEqual(self.variable.get(), "Second")
+        self.assertFalse(self.errors)
+
 
 if __name__ == "__main__":
     unittest.main()

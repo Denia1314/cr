@@ -93,6 +93,9 @@ class ConsoleTests(unittest.TestCase):
             self.assertLessEqual(left + widget.winfo_width(), 1040)
             self.assertLessEqual(top + widget.winfo_height(), 700)
             self.assertGreater(widget.winfo_width(), 20)
+        self.assertIs(self.app.connection_button.master, self.app.check_button.master)
+        self.assertGreater(self.app.connection_button.winfo_rootx()-self.root.winfo_rootx(), 520)
+        self.assertLess(self.app.connection_button.winfo_rooty()-self.root.winfo_rooty(), 100)
 
     def setUp(self) -> None:
         try:
@@ -138,7 +141,7 @@ class ConsoleTests(unittest.TestCase):
         self.root.update()
         self.assertTrue(self.app.start_button.winfo_ismapped())
         self.assertTrue(self.app.stop_button.winfo_ismapped())
-        self.app.overview_button.invoke()
+        self.app.expand_preview_button.invoke()
         self.root.update()
         self.assertFalse(self.app.preview_expanded)
         self.assertTrue(self.app.log_card.winfo_ismapped())
@@ -163,7 +166,7 @@ class ConsoleTests(unittest.TestCase):
 
     def test_removed_controls_are_absent_and_status_updates_still_work(self):
         for name in ("engine_combo", "model_combo", "safety_value", "safety_note",
-                     "tools_button", "tools_menu", "tools_popover"):
+                     "tools_button", "tools_menu", "tools_popover", "sidebar", "overview_button"):
             self.assertFalse(hasattr(self.app, name), name)
         self.assertEqual(len(self.app.stats_card.winfo_children()), 2)
         self.app._apply_device_status({"connected": True, "installed": True,

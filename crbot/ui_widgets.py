@@ -77,8 +77,9 @@ class HoverButton(tk.Canvas):
         width, height = max(4, self.winfo_width()), max(4, self.winfo_height())
         disabled = self._button_options["state"] == "disabled"
         fill = mix(self.normal_background, Palette.CARD_ALT, .75) if disabled else self._fill
-        outline = Palette.BLUE if self._focused and not disabled else fill
-        rounded_shape(self, width, height, 9, fill=fill, outline=outline, width=2)
+        if self._focused and not disabled:
+            fill = mix(fill, self.hover_background, .35)
+        rounded_shape(self, width, height, 9, fill=fill, outline=fill, width=1)
         anchor = self._button_options["anchor"]
         x = self._button_options["padx"] + 2 if anchor == "w" else width / 2
         self.create_text(x, height / 2 + int(self._pressed), text=self._display_text,
