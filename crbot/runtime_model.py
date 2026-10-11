@@ -5,12 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import current_stage_label
-
 DECISION_ENGINE_LABELS = {
     "legacy": "原有策略 · M3-E / 旧版本",
     "shadow": "推演观察 · 旧策略出牌",
-    "predictive": current_stage_label() + " / P1 推演",
+    "predictive": "SL4 · 自动部署回退 / P1 推演",
 }
 
 RUNTIME_MODEL_LABELS: dict[str, str] = {

@@ -83,10 +83,13 @@ class ConsoleTests(unittest.TestCase):
         self.root.update_idletasks()
         self.root.update()
         self.assertIn("P1", self.app.engine_combo["values"][-1])
-        from crbot import current_stage_label
+        from crbot import current_stage_label, release_label
         from tkinter.font import Font
         current = self.app.engine_combo["values"][-1]
-        self.assertIn(current_stage_label(), current)
+        self.assertIn("SL4", current)
+        self.assertNotIn("UI1", current)
+        self.assertIn(current_stage_label(), self.app.release_heading["text"])
+        self.assertEqual(self.app.release_heading["text"], release_label())
         label_width = Font(self.root, font=self.app.engine_combo["font"]).measure(current)
         self.assertLessEqual(label_width + 24, self.app.engine_combo.winfo_width())
         for widget in (self.app.engine_combo, self.app.model_combo, self.app.start_button,
@@ -129,6 +132,25 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(str(self.app.model_combo["state"]), "readonly")
         self.assertEqual(str(self.app.start_button["state"]), "normal")
         self.assertEqual(str(self.app.stop_button["state"]), "disabled")
+
+    def test_compact_layout_keeps_preview_and_log_usable_and_returns_to_large_layout(self):
+        self.root.geometry("1040x700+0+0")
+        self.root.deiconify()
+        self.root.update()
+        self.assertTrue(self.app._compact)
+        for widget in (self.app.preview_card, self.app.log_card):
+            self.assertGreaterEqual(widget.winfo_height(), 190)
+        self.app._toggle_preview_size()
+        self.root.update()
+        self.assertTrue(self.app.start_button.winfo_ismapped())
+        self.assertTrue(self.app.stop_button.winfo_ismapped())
+        self.app.overview_button.invoke()
+        self.root.update()
+        self.assertFalse(self.app.preview_expanded)
+        self.assertTrue(self.app.log_card.winfo_ismapped())
+        self.root.geometry("1280x860+0+0")
+        self.root.update()
+        self.assertFalse(self.app._compact)
 
     def test_model_updates_refresh_console_and_open_details_without_restart(self) -> None:
         registry = self.app.config_path.parent / "models/replay_policy/registry.json"

@@ -41,10 +41,11 @@ def main():
         'modules': manifest,
     }, indent=2), encoding='utf-8')
     from PIL import Image, ImageDraw, ImageFont
+    from crbot.ui_theme import Palette
     font_path = Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts/segoeui.ttf'
-    icon=Image.new('RGBA',(256,256),'#0B1120');d=ImageDraw.Draw(icon)
-    d.rounded_rectangle((8,8,248,248),radius=48,fill='#142137',outline='#397CF6',width=8)
-    d.text((128,125),'RL',font=ImageFont.truetype(str(font_path),104),fill='#44D7E8',anchor='mm')
+    icon=Image.new('RGBA',(256,256),Palette.BG);d=ImageDraw.Draw(icon)
+    d.rounded_rectangle((8,8,248,248),radius=48,fill=Palette.CARD,outline=Palette.BORDER,width=4)
+    d.text((128,125),'RL',font=ImageFont.truetype(str(font_path),104),fill=Palette.BLUE,anchor='mm')
     icon.save(resources/'royal-lab.ico',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
     git = shutil.which('git')
     gh = shutil.which('gh')

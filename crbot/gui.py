@@ -17,9 +17,11 @@ from typing import Any, Callable
 
 from PIL import Image, ImageTk
 
-from . import IMPLEMENTED_STAGES, implemented_stages_label, release_label
+from . import implemented_stages_label, release_label
 from .app_paths import data_root
 from .animations import Animator, fade_in, mix, motion_enabled
+from .ui_theme import FONT, MONO, Palette
+from .ui_widgets import HoverButton, Surface, ToolsPopover, animate_combobox
 from .adb import MumuDevice
 from .annotate import AnnotationWindow
 from .calibrate import CalibrationWindow
@@ -60,29 +62,6 @@ APP_ROOT = data_root()
 DEFAULT_CONFIG = APP_ROOT / "config.json"
 
 
-class Palette:
-    BG = "#0B1120"
-    SURFACE = "#101B2E"
-    CARD = "#142137"
-    CARD_ALT = "#1D304B"
-    BORDER = "#2B405C"
-    TEXT = "#F4F7FF"
-    MUTED = "#A6B7CE"
-    FAINT = "#8195B0"
-    BLUE = "#397CF6"
-    BLUE_HOVER = "#6098FF"
-    PURPLE = "#A78BFA"
-    CYAN = "#44D7E8"
-    GREEN = "#43D6A0"
-    AMBER = "#FFBE55"
-    RED = "#FF647C"
-    LOG = "#0D1728"
-
-
-FONT = "Microsoft YaHei UI"
-MONO = "Cascadia Mono"
-
-
 class QueueWriter:
     """Line-buffered stream that forwards worker output to Tk's main thread."""
 
@@ -102,56 +81,6 @@ class QueueWriter:
         if self.buffer.strip():
             self.messages.put(("log", self.buffer.strip()))
         self.buffer = ""
-
-
-class HoverButton(tk.Button):
-    def __init__(
-        self,
-        master: tk.Misc,
-        *,
-        background: str,
-        hover: str,
-        foreground: str = Palette.TEXT,
-        **kwargs: Any,
-    ):
-        self.normal_background = background
-        self.hover_background = hover
-        kwargs.setdefault("font", (FONT, 10, "bold"))
-        kwargs.setdefault("padx", 16)
-        kwargs.setdefault("pady", 11)
-        super().__init__(
-            master,
-            background=background,
-            activebackground=hover,
-            foreground=foreground,
-            disabledforeground=Palette.FAINT,
-            activeforeground=foreground,
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            cursor="hand2",
-            **kwargs,
-        )
-        self.animator = Animator(self)
-        self.bind("<Enter>", self._enter, add="+")
-        self.bind("<Leave>", self._leave, add="+")
-
-    def _enter(self, _event: tk.Event[Any]) -> None:
-        if str(self["state"]) != "disabled":
-            self._animate_to(self.hover_background)
-
-    def _leave(self, _event: tk.Event[Any]) -> None:
-        self._animate_to(self.normal_background)
-
-    def _animate_to(self, target: str) -> None:
-        start = self.cget("background")
-        def update(progress):
-            if str(self["state"]) == "disabled":
-                self.animator.cancel("hover")
-                self.configure(background=self.normal_background)
-            else:
-                self.configure(background=mix(start, target, progress))
-        self.animator.tween("hover", update, 140)
 
 
 class RoyalTrainerApp:
@@ -182,6 +111,9 @@ class RoyalTrainerApp:
         self._configure_window()
         self._build_interface()
         self._bind_shortcuts()
+        self._compact = None
+        self.root.bind("<Configure>", self._adapt_density, add="+")
+        self.root.after_idle(self._adapt_density)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_messages)
         if start_services:
@@ -198,7 +130,7 @@ class RoyalTrainerApp:
     def _configure_window(self) -> None:
         self.root.title(release_label())
         self.root.configure(background=Palette.BG)
-        width, height = 1260, 860
+        width, height = 1280, 860
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         width = min(width, max(1060, screen_w - 100))
@@ -240,39 +172,38 @@ class RoyalTrainerApp:
         )
 
     def _build_interface(self) -> None:
-        header = tk.Frame(self.root, background=Palette.SURFACE)
-        header.pack(fill="x")
-        brand = tk.Frame(header, background=Palette.SURFACE)
-        brand.pack(side="left", padx=24, pady=12)
-        self.release_heading = tk.Label(
-            brand, text=release_label(), font=(FONT, 12, "bold"),
-            foreground=Palette.TEXT, background=Palette.SURFACE,
-        )
-        self.release_heading.pack(anchor="w")
-        tk.Label(
-            brand, text='已接入：'+' · '.join(stage for stage,_ in IMPLEMENTED_STAGES), font=(FONT, 8),
-            foreground=Palette.MUTED, background=Palette.SURFACE,
-        ).pack(anchor="w", pady=(3, 0))
-
-        tools_button = tk.Menubutton(
-            header, text="工具 ▾", font=(FONT, 10),
-            background=Palette.CARD_ALT, foreground=Palette.TEXT,
-            activebackground=Palette.BORDER, activeforeground=Palette.TEXT,
-            relief="flat", borderwidth=0, padx=14, pady=9, cursor="hand2",
-        )
-        tools_button.pack(side="right", padx=(8, 24))
-        self.tools_menu = tk.Menu(
-            tools_button, tearoff=False, font=(FONT, 10),
-            background=Palette.SURFACE, foreground=Palette.TEXT,
-            activebackground=Palette.CARD_ALT, activeforeground=Palette.TEXT,
-        )
+        shell = tk.Frame(self.root, background=Palette.BG)
+        shell.pack(fill="both", expand=True)
+        self.sidebar = tk.Frame(shell, background=Palette.SURFACE, width=142)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+        tk.Label(self.sidebar, text="RL", font=("Segoe UI", 26, "bold"),
+                 foreground=Palette.BLUE, background=Palette.SURFACE).pack(anchor="w", padx=22, pady=(24, 0))
+        tk.Label(self.sidebar, text="ROYAL LAB", font=("Segoe UI", 9, "bold"),
+                 foreground=Palette.TEXT, background=Palette.SURFACE).pack(anchor="w", padx=22, pady=(0, 28))
+        self.overview_button = HoverButton(self.sidebar, text="◈  工作台", anchor="w",
+            background=Palette.SELECTION, hover="#C7DDFB", foreground=Palette.BLUE,
+            command=self._reveal_workspace, padx=14)
+        self.overview_button.pack(fill="x", padx=10, pady=4)
+        self.connection_button = HoverButton(self.sidebar, text="自定义 ADB", anchor="w",
+            background=Palette.SURFACE, hover=Palette.CARD_ALT, foreground=Palette.MUTED,
+            command=self.open_adb_connection_settings, padx=14)
+        self.connection_button.pack(fill="x", padx=10, pady=4)
+        self._refresh_connection_button()
+        HoverButton(self.sidebar, text="模型版本", anchor="w", background=Palette.SURFACE,
+            hover=Palette.CARD_ALT, foreground=Palette.MUTED,
+            command=self.show_model_versions, padx=14).pack(fill="x", padx=10, pady=4)
+        self.tools_button = HoverButton(self.sidebar, text="工具箱  ›", anchor="w",
+            background=Palette.SURFACE, hover=Palette.CARD_ALT, foreground=Palette.MUTED,
+            command=lambda: self.tools_popover.toggle(), padx=14)
+        self.tools_button.pack(fill="x", padx=10, pady=4)
+        self.tools_menu = tk.Menu(self.root, tearoff=False, font=(FONT, 10),
+            background=Palette.CARD, foreground=Palette.TEXT,
+            activebackground=Palette.CARD_ALT, activeforeground=Palette.TEXT)
         for label, command in (
-            ("画面标定", self.open_calibration),
-            ("训练数据", self.open_runs_folder),
-            ("精确标注（可选）", self.open_annotation),
-            ("无标注自学", self.check_learning_status),
-            ("自主学习状态", self.show_self_learning_status),
-            ("示范学习", self.start_demonstration),
+            ("画面标定", self.open_calibration), ("训练数据", self.open_runs_folder),
+            ("精确标注（可选）", self.open_annotation), ("无标注自学", self.check_learning_status),
+            ("自主学习状态", self.show_self_learning_status), ("示范学习", self.start_demonstration),
             ("双机数据同步", self.sync_training_data),
         ):
             self.tools_menu.add_command(label=label, command=command)
@@ -280,227 +211,216 @@ class RoyalTrainerApp:
         self.reduced_motion = tk.BooleanVar(value=not motion_enabled())
         self.tools_menu.add_checkbutton(label="减少动态效果", variable=self.reduced_motion,
                                        command=self._toggle_motion)
-        tools_button.configure(menu=self.tools_menu)
-
-        self.check_button = HoverButton(
-            header, text="连接并检测", background=Palette.CARD_ALT,
-            hover=Palette.BORDER, command=self.run_doctor,
-        )
-        self.check_button.pack(side="right")
-        self.connection_button = HoverButton(
-            header, text="自定义 ADB", background=Palette.SURFACE,
-            hover=Palette.CARD_ALT, foreground=Palette.MUTED,
-            command=self.open_adb_connection_settings, padx=12,
-        )
-        self.connection_button.pack(side="right", padx=8)
-        self._refresh_connection_button()
-        self.activity_dot = tk.Canvas(header, width=12, height=12, bg=Palette.SURFACE, highlightthickness=0)
-        self.activity_dot.pack(side="left", padx=(4, 2))
-        self.activity_dot.create_oval(3, 3, 9, 9, fill=Palette.MUTED, outline="", tags="dot")
+        self.tools_popover = ToolsPopover(self.root, self.tools_button, self.tools_menu)
+        tk.Label(self.sidebar, text="本地运行\n离线人机训练", justify="left", font=(FONT, 8),
+                 foreground=Palette.FAINT, background=Palette.SURFACE).pack(side="bottom", anchor="w", padx=22, pady=22)
+        tk.Frame(shell, width=1, background=Palette.BORDER).pack(side="left", fill="y")
+        workspace = tk.Frame(shell, background=Palette.BG)
+        workspace.pack(side="left", fill="both", expand=True, padx=22, pady=18)
+        header = tk.Frame(workspace, background=Palette.BG)
+        header.pack(fill="x", pady=(0, 16))
+        self.check_button = HoverButton(header, text="连接并检测", background=Palette.CARD,
+            hover=Palette.SELECTION, foreground=Palette.BLUE, command=self.run_doctor)
+        self.check_button.pack(side="right", padx=(12, 0))
+        status = tk.Frame(header, background=Palette.BG)
+        status.pack(side="right")
+        self.activity_dot = tk.Canvas(status, width=12, height=12, bg=Palette.BG, highlightthickness=0)
+        self.activity_dot.pack(side="left", padx=4)
+        self.activity_dot.create_oval(3, 3, 9, 9, fill=Palette.FAINT, outline="", tags="dot")
         self.activity_animation = Animator(self.activity_dot)
-        self.header_badge = tk.Label(
-            header, text="尚未连接", font=(FONT, 9),
-            foreground=Palette.MUTED, background=Palette.SURFACE,
-        )
+        self.header_badge = tk.Label(status, text="尚未连接", font=(FONT, 9),
+                                    foreground=Palette.MUTED, background=Palette.BG)
         self.header_badge.pack(side="left")
-
-        content = tk.Frame(self.root, background=Palette.BG)
-        content.pack(fill="both", expand=True, padx=24, pady=18)
+        brand = tk.Frame(header, background=Palette.BG)
+        brand.pack(side="left")
+        self.workspace_title = tk.Label(brand, text="训练工作台", font=(FONT, 20, "bold"),
+                 foreground=Palette.TEXT, background=Palette.BG)
+        self.workspace_title.pack(anchor="w")
+        self.release_heading = tk.Label(brand, text=release_label(), font=(FONT, 8),
+                                       foreground=Palette.MUTED, background=Palette.BG)
+        self.release_heading.pack(anchor="w", pady=(3, 0))
+        content = tk.Frame(workspace, background=Palette.BG)
+        self.content = content
+        content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=3, uniform="workspace")
         content.grid_columnconfigure(1, weight=2, uniform="workspace")
         content.grid_rowconfigure(2, weight=1)
-
-        stats = tk.Frame(content, background=Palette.BG)
-        self.stats_card=stats
-        stats.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        stats = self.stats_card = tk.Frame(content, background=Palette.BG)
+        stats.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         for column in range(3):
             stats.grid_columnconfigure(column, weight=1, uniform="stats")
-
-        self.device_value, self.device_note = self._stat_card(
-            stats, 0, "模拟器", "未检测", "等待连接设备", Palette.BLUE
-        )
-        self.safety_value, self.safety_note = self._stat_card(
-            stats, 1, "安全门", "待确认", "等待识别离线标志", Palette.PURPLE
-        )
-        self.battle_value, self.battle_note = self._stat_card(
-            stats, 2, "已完成", "0 局", "本次运行统计", Palette.GREEN
-        )
-
+        self.device_value, self.device_note = self._stat_card(stats, 0, "设备连接", "未检测", "等待连接模拟器", Palette.BLUE)
+        self.safety_value, self.safety_note = self._stat_card(stats, 1, "离线校验", "待确认", "等待识别离线入口", Palette.PURPLE)
+        self.battle_value, self.battle_note = self._stat_card(stats, 2, "完成对局", "0 局", "本次运行统计", Palette.GREEN)
         self._build_control_card(content)
         self._build_preview_card(content)
         self._build_log_card(content)
+        footer = tk.Frame(workspace, background=Palette.BG)
+        footer.pack(side="bottom", fill="x", pady=(10, 0))
+        content.pack_forget()
+        content.pack(fill="both", expand=True)
+        tk.Label(footer, text="Ctrl + Enter 开始    ·    Esc 停止    ·    F5 刷新", font=(FONT, 8),
+                 foreground=Palette.FAINT, background=Palette.BG).pack(side="left")
+        tk.Label(footer, text="仅离线人机", font=(FONT, 8), foreground=Palette.FAINT,
+                 background=Palette.BG).pack(side="right")
 
-    def _stat_card(
-        self,
-        parent: tk.Frame,
-        column: int,
-        title: str,
-        value: str,
-        note: str,
-        accent: str,
-    ) -> tuple[tk.Label, tk.Label]:
-        card = tk.Frame(
-            parent,
-            background=Palette.CARD,
-            highlightbackground=Palette.BORDER,
-            highlightthickness=1,
-        )
-        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 7, 0 if column == 2 else 7))
-        accent_bar = tk.Frame(card, background=accent, width=4, height=62)
-        accent_bar.pack(side="left", fill="y")
-        info = tk.Frame(card, background=Palette.CARD)
-        info.pack(fill="both", expand=True, padx=15, pady=11)
-        tk.Label(
-            info,
-            text=title,
-            font=(FONT, 8, "bold"),
-            foreground=Palette.MUTED,
-            background=Palette.CARD,
-        ).pack(anchor="w")
-        value_label = tk.Label(
-            info,
-            text=value,
-            font=(FONT, 19, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.CARD,
-        )
-        value_label.pack(anchor="w", pady=(2, 0))
-        note_label = tk.Label(
-            info,
-            text=note,
-            font=(FONT, 8),
-            foreground=Palette.FAINT,
-            background=Palette.CARD,
-        )
-        note_label.pack(anchor="w")
+    def _adapt_density(self, event=None) -> None:
+        if event is not None and event.widget is not self.root:
+            return
+        compact = self.root.winfo_height() <= 760
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.workspace_title.configure(font=(FONT, 16 if compact else 20, "bold"))
+        self.release_heading.configure(font=(FONT, 7 if compact else 8))
+        for value in (self.device_value, self.safety_value, self.battle_value):
+            value.configure(font=(FONT, 16 if compact else 20, "bold"))
+        for card in self.stats_card.winfo_children():
+            card.body.pack_configure(pady=8 if compact else 14)
+        for note in (self.device_note, self.safety_note, self.battle_note):
+            note.configure(font=(FONT, 7 if compact else 8))
+        for card in (self.control_card, self.preview_card, self.log_card):
+            card.body.pack_configure(pady=10 if compact else 14)
+        style = ttk.Style(self.root)
+        for combo in (self.engine_combo, self.model_combo, self.preview_mode_combo):
+            combo.configure(font=(FONT, 8 if compact else 9))
+            style.configure(combo.cget("style"), padding=5 if compact else 7)
+        for button in (self.start_button, self.stop_button):
+            button.configure(pady=6 if compact else 8, font=(FONT, 9 if compact else 10))
+        self.model_status_button.configure(font=(FONT, 7 if compact else 8), pady=2 if compact else 4)
+
+    def _reveal_workspace(self) -> None:
+        if self.preview_expanded:
+            self._toggle_preview_size()
+        for card in (self.control_card, self.preview_card, self.log_card):
+            card.reveal()
+
+    def _stat_card(self, parent, column, title, value, note, accent):
+        card = Surface(parent, padding=14)
+        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 5, 0 if column == 2 else 5))
+        tk.Label(card.body, text=title, font=(FONT, 9), fg=Palette.MUTED,
+                 bg=Palette.CARD).pack(anchor="w")
+        value_label = tk.Label(card.body, text=value, font=(FONT, 20, "bold"),
+                              fg=accent, bg=Palette.CARD, anchor="w", width=1)
+        value_label.pack(fill="x", pady=(4, 2))
+        note_label = tk.Label(card.body, text=note, font=(FONT, 8), fg=Palette.FAINT,
+                             bg=Palette.CARD, anchor="w", width=1)
+        note_label.pack(fill="x")
+        note_label.bind("<Configure>", lambda event: note_label.configure(wraplength=max(100,event.width)))
         return value_label, note_label
 
     def _build_preview_card(self, parent: tk.Frame) -> None:
-        card = tk.Frame(
-            parent,
-            background=Palette.CARD,
-            highlightbackground=Palette.BORDER,
-            highlightthickness=1,
-        )
-        self.preview_card=card
-        self.preview_expanded=False
-        card.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
-        card.grid_rowconfigure(1, weight=1)
+        self.preview_card = Surface(parent)
+        self.preview_expanded = False
+        self.preview_card.grid(row=2, column=0, sticky="nsew", padx=(0, 6))
+        card = self.preview_card.body
+        card.grid_rowconfigure(2, weight=1)
         card.grid_columnconfigure(0, weight=1)
-
         top = tk.Frame(card, background=Palette.CARD)
-        top.grid(row=0, column=0, sticky="ew", padx=16, pady=(13, 9))
-        tk.Label(
-            top,
-            text="实时画面",
-            font=(FONT, 11, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.CARD,
-        ).pack(side="left")
-        self.preview_state = tk.Label(
-            top,
-            text="●  等待画面",
-            font=(FONT, 8),
-            foreground=Palette.FAINT,
-            background=Palette.CARD,
-        )
-        self.preview_state.pack(side="left", padx=12)
-        self.preview_mode=tk.StringVar(value='同帧对照')
-        self.preview_mode_combo=ttk.Combobox(top,textvariable=self.preview_mode,
-            values=('游戏画面','方格战场','同帧对照','推演快照'),state='readonly',width=9,
-            style='Model.TCombobox',font=(FONT,8))
-        self.preview_mode_combo.pack(side='right',padx=4)
-        self.preview_mode_combo.bind('<<ComboboxSelected>>',lambda _event:self._set_preview_mode())
-        self.expand_preview_button=HoverButton(top,text='放大',command=self._toggle_preview_size,
-            background=Palette.CARD_ALT,foreground=Palette.MUTED,hover=Palette.BORDER,padx=8,pady=6)
-        self.expand_preview_button.pack(side='right',padx=4)
-        HoverButton(
-            top,
-            text="刷新",
-            background=Palette.CARD_ALT,
-            hover="#26314B",
-            foreground=Palette.MUTED,
-            command=self.refresh_preview,
-            padx=11,
-            pady=6,
-        ).pack(side="right")
-
-        preview_frame = tk.Frame(card, background="#070A12", highlightbackground="#20293D", highlightthickness=1)
-        preview_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        tk.Label(top, text="实时画面", font=(FONT, 12, "bold"), fg=Palette.TEXT,
+                 bg=Palette.CARD).pack(side="left")
+        self.preview_state = tk.Label(top, text="等待画面", font=(FONT, 8),
+                                      fg=Palette.FAINT, bg=Palette.CARD)
+        self.preview_state.pack(side="right")
+        options = tk.Frame(card, background=Palette.CARD)
+        options.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self.preview_mode = tk.StringVar(value="同帧对照")
+        self.preview_mode_combo = ttk.Combobox(options, textvariable=self.preview_mode,
+            values=("游戏画面", "方格战场", "同帧对照", "推演快照"), state="readonly", width=10, font=(FONT, 8))
+        self.preview_mode_combo.pack(side="left")
+        animate_combobox(self.preview_mode_combo)
+        self.preview_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._set_preview_mode())
+        self.expand_preview_button = HoverButton(options, text="放大", command=self._toggle_preview_size,
+            background=Palette.CARD_ALT, foreground=Palette.MUTED, hover=Palette.SELECTION, padx=10, pady=5)
+        self.expand_preview_button.pack(side="right", padx=(6, 0))
+        HoverButton(options, text="刷新", background=Palette.CARD_ALT, hover=Palette.SELECTION,
+                    foreground=Palette.MUTED, command=self.refresh_preview, padx=10, pady=5).pack(side="right")
+        preview_frame = tk.Frame(card, background=Palette.LOG)
+        preview_frame.grid(row=2, column=0, sticky="nsew")
         preview_frame.grid_rowconfigure(0, weight=1)
         preview_frame.grid_columnconfigure(0, weight=1)
-        self.preview_canvas = tk.Canvas(
-            preview_frame,
-            width=300,
-            height=180,
-            background="#070A12",
-            highlightthickness=0,
-        )
+        self.preview_canvas = tk.Canvas(preview_frame, width=240, height=140,
+                                       background=Palette.LOG, highlightthickness=0)
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
         self.preview_canvas.bind("<Configure>", lambda _event: self._render_preview())
         self._draw_preview_placeholder()
         from .grid_world_view import GridWorldWindow
-        self.grid_inspector=GridWorldWindow(preview_frame,self._grid_preview_source,embedded=True)
+        self.grid_inspector = GridWorldWindow(preview_frame, self._grid_preview_source, embedded=True)
         self._set_preview_mode()
 
     def _build_control_card(self, parent: tk.Frame) -> None:
-        controls = tk.Frame(parent, background=Palette.BG)
-        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        strategy_bar = tk.Frame(controls, background=Palette.BG)
-        strategy_bar.pack(fill="x", pady=(0, 6))
-        tk.Label(strategy_bar, text="版本", font=(FONT, 9), foreground=Palette.MUTED,
-                 background=Palette.BG).pack(side="left", padx=(0, 8))
+        self.control_card = Surface(parent, padding=14)
+        self.control_card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        controls = self.control_card.body
+        fields = tk.Frame(controls, background=Palette.CARD)
+        fields.pack(fill="x")
+        fields.grid_columnconfigure(0, weight=1)
+        fields.grid_columnconfigure(1, weight=1)
+        tk.Label(fields, text="决策方式", font=(FONT, 8), fg=Palette.MUTED,
+                 bg=Palette.CARD).grid(row=0, column=0, sticky="w", pady=(0, 5))
+        tk.Label(fields, text="规则配置", font=(FONT, 8), fg=Palette.MUTED,
+                 bg=Palette.CARD).grid(row=0, column=1, sticky="w", padx=(14, 0), pady=(0, 5))
         self.engine_var = tk.StringVar(value=DECISION_ENGINE_LABELS[self.decision_engine])
-        self.engine_combo = ttk.Combobox(strategy_bar, textvariable=self.engine_var,
-                                       values=list(DECISION_ENGINE_LABELS.values()), state="readonly",
-                                       width=28, style="Model.TCombobox", font=(FONT, 9))
-        self.engine_combo.pack(side="left")
+        self.engine_combo = ttk.Combobox(fields, textvariable=self.engine_var,
+            values=list(DECISION_ENGINE_LABELS.values()), state="readonly", width=28, font=(FONT, 9))
+        self.engine_combo.grid(row=1, column=0, sticky="ew")
+        animate_combobox(self.engine_combo)
         self.engine_combo.bind("<<ComboboxSelected>>", self._on_engine_selected)
-        tk.Label(strategy_bar, text="停止后切换；预测与实测结果分开记录", font=(FONT, 8),
-                 foreground=Palette.MUTED, background=Palette.BG).pack(side="left", padx=10)
-        bar = tk.Frame(controls, background=Palette.BG)
-        bar.pack(fill="x")
-        tk.Label(
-            bar, text="旧规则", font=(FONT, 9),
-            foreground=Palette.MUTED, background=Palette.BG,
-        ).pack(side="left", padx=(0, 8))
-        self.model_key_by_label = {
-            label: key for key, label in RUNTIME_MODEL_LABELS.items()
-        }
+        self.model_key_by_label = {label: key for key, label in RUNTIME_MODEL_LABELS.items()}
         self.model_var = tk.StringVar(value=runtime_model_label(self.runtime_model))
-        self.model_combo = ttk.Combobox(
-            bar, textvariable=self.model_var,
-            values=list(RUNTIME_MODEL_LABELS.values()), state="readonly",
-            width=24, style="Model.TCombobox", font=(FONT, 9),
-        )
-        self.model_combo.pack(side="left")
+        self.model_combo = ttk.Combobox(fields, textvariable=self.model_var,
+            values=list(RUNTIME_MODEL_LABELS.values()), state="readonly", width=22, font=(FONT, 9))
+        self.model_combo.grid(row=1, column=1, sticky="ew", padx=(14, 0))
+        animate_combobox(self.model_combo)
         self.model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
-        self.run_state_label = tk.Label(
-            bar, text="当前状态：待机", font=(FONT, 8),
-            foreground=Palette.MUTED, background=Palette.BG,
-        )
-        self.run_state_label.pack(side="left", padx=12)
-        self.stop_button = HoverButton(
-            bar, text="■  安全停止", background="#352033", hover="#47263B",
-            foreground=Palette.RED, command=self.stop_bot, state="disabled",
-        )
+        bar = tk.Frame(controls, background=Palette.CARD)
+        bar.pack(fill="x", pady=(10, 0))
+        self.run_state_label = tk.Label(bar, text="当前状态：待机", font=(FONT, 9),
+            foreground=Palette.MUTED, background=Palette.CARD)
+        self.run_state_label.pack(side="left")
+        self.stop_button = HoverButton(bar, text="■  安全停止", background=Palette.DANGER_BG,
+            hover=Palette.DANGER_HOVER, foreground=Palette.RED, command=self.stop_bot, state="disabled", pady=8)
         self.stop_button.pack(side="right")
-        self.start_button = HoverButton(
-            bar, text="▶  离线训练", background=Palette.BLUE,
-            hover=Palette.BLUE_HOVER, command=self.start_bot,
-        )
+        self.start_button = HoverButton(bar, text="▶  开始训练", background=Palette.BLUE,
+            hover=Palette.BLUE_HOVER, foreground="#FFFFFF", command=self.start_bot, pady=8)
         self.start_button.pack(side="right", padx=(0, 8))
-        self.model_status_button = HoverButton(
-            controls, text="正在读取模型…", font=(FONT, 8),
-            background=Palette.BG, hover=Palette.SURFACE,
-            foreground=Palette.MUTED, anchor="w", justify="left",
-            padx=0, pady=4, command=self.show_model_versions,
-        )
-        self.model_status_button.pack(fill="x", pady=(5, 0))
-        self.model_status_button.bind(
-            "<Configure>",
-            lambda event: self.model_status_button.configure(wraplength=max(100, event.width - 10)),
-        )
+        self.model_status_button = HoverButton(controls, text="正在读取模型…", font=(FONT, 8),
+            background=Palette.CARD, hover=Palette.SURFACE, foreground=Palette.MUTED,
+            anchor="w", justify="left", padx=4, pady=4, command=self.show_model_versions)
+        self.model_status_button.pack(fill="x", pady=(6, 0))
+        self.model_status_button.bind("<Configure>",
+            lambda event: self.model_status_button.configure(wraplength=max(100, event.width - 14)), add="+")
+
+    def _build_log_card(self, parent: tk.Frame) -> None:
+        self.log_card = Surface(parent)
+        self.log_card.grid(row=2, column=1, sticky="nsew", padx=(6, 0))
+        card = self.log_card.body
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(1, weight=1)
+        top = tk.Frame(card, background=Palette.CARD)
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        tk.Label(top, text="运行动态", font=(FONT, 12, "bold"), fg=Palette.TEXT,
+                 bg=Palette.CARD).pack(side="left")
+        self.log_counter = tk.Label(top, text="0 条事件", font=(FONT, 8), fg=Palette.FAINT, bg=Palette.CARD)
+        self.log_counter.pack(side="right")
+        log_wrap = tk.Frame(card, background=Palette.LOG)
+        log_wrap.grid(row=1, column=0, sticky="nsew")
+        log_wrap.grid_columnconfigure(0, weight=1)
+        log_wrap.grid_rowconfigure(0, weight=1)
+        self.log_text = tk.Text(log_wrap, height=4, width=24, spacing1=5, spacing3=5,
+            background=Palette.LOG, foreground=Palette.TEXT, insertbackground=Palette.TEXT,
+            selectbackground=Palette.SELECTION, selectforeground=Palette.TEXT, relief="flat",
+            borderwidth=0, font=(MONO, 9), padx=10, pady=8, wrap="word", state="disabled")
+        scroll = ttk.Scrollbar(log_wrap, orient="vertical", command=self.log_text.yview, style="Vertical.TScrollbar")
+        self.log_text.configure(yscrollcommand=scroll.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        for tag, color in (("time", Palette.FAINT), ("success", Palette.GREEN),
+            ("action", Palette.CYAN), ("warning", Palette.AMBER), ("error", Palette.RED), ("normal", Palette.TEXT)):
+            self.log_text.tag_configure(tag, foreground=color)
+        self.log_count = 0
+        self._append_log("工作台已就绪。连接模拟器后即可开始离线训练。", "normal")
 
     def _refresh_model_status(self) -> None:
         if self.closing:
@@ -531,6 +451,7 @@ class RoyalTrainerApp:
             return
         window = tk.Toplevel(self.root)
         self.model_details_window = window
+        window.animation = fade_in(window)
         window.title("模型版本 · 自动刷新")
         window.geometry("850x500")
         window.configure(background=Palette.BG)
@@ -545,72 +466,6 @@ class RoyalTrainerApp:
         text.pack(fill="both", expand=True)
         text.insert("1.0", self.model_details)
         text.configure(state="disabled")
-
-    def _build_log_card(self, parent: tk.Frame) -> None:
-        card = tk.Frame(
-            parent,
-            background=Palette.CARD,
-            highlightbackground=Palette.BORDER,
-            highlightthickness=1,
-        )
-        self.log_card=card
-        card.grid(row=2, column=1, sticky="nsew", padx=(8, 0))
-        card.grid_columnconfigure(0, weight=1)
-        card.grid_rowconfigure(1, weight=1)
-
-        top = tk.Frame(card, background=Palette.CARD)
-        top.grid(row=0, column=0, sticky="ew", padx=16, pady=(11, 7))
-        tk.Label(
-            top,
-            text="运行日志",
-            font=(FONT, 10, "bold"),
-            foreground=Palette.TEXT,
-            background=Palette.CARD,
-        ).pack(side="left")
-        self.log_counter = tk.Label(
-            top,
-            text="0 条事件",
-            font=(FONT, 8),
-            foreground=Palette.FAINT,
-            background=Palette.CARD,
-        )
-        self.log_counter.pack(side="right")
-
-        log_wrap = tk.Frame(card, background=Palette.LOG)
-        log_wrap.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 14))
-        log_wrap.grid_columnconfigure(0, weight=1)
-        log_wrap.grid_rowconfigure(0, weight=1)
-        self.log_text = tk.Text(
-            log_wrap,
-            height=5,
-            width=30,
-            spacing1=3,
-            spacing3=3,
-            background=Palette.LOG,
-            foreground="#C7D1E6",
-            insertbackground=Palette.TEXT,
-            selectbackground="#2D4778",
-            relief="flat",
-            borderwidth=0,
-            font=(MONO, 9),
-            padx=10,
-            pady=8,
-            wrap="word",
-            state="disabled",
-        )
-        scroll = ttk.Scrollbar(log_wrap, orient="vertical", command=self.log_text.yview,
-                               style="Vertical.TScrollbar")
-        self.log_text.configure(yscrollcommand=scroll.set)
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.log_text.tag_configure("time", foreground=Palette.FAINT)
-        self.log_text.tag_configure("success", foreground=Palette.GREEN)
-        self.log_text.tag_configure("action", foreground=Palette.CYAN)
-        self.log_text.tag_configure("warning", foreground=Palette.AMBER)
-        self.log_text.tag_configure("error", foreground=Palette.RED)
-        self.log_text.tag_configure("normal", foreground="#C7D1E6")
-        self.log_count = 0
-        self._append_log("控制台已就绪。可开始离线人机训练。", "normal")
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("<F5>", lambda _event: self.refresh_preview())
@@ -627,7 +482,7 @@ class RoyalTrainerApp:
                 "dot", fill=mix(Palette.BLUE, Palette.CYAN, t)))
 
     def _set_header(self, text: str, color: str) -> None:
-        self.header_badge.configure(text=f"●  {text}", foreground=color)
+        self.header_badge.configure(text=text, foreground=color)
 
     def _set_run_state(self, text: str, color: str = Palette.MUTED) -> None:
         self.run_state_label.configure(text=f"当前状态：{text}", foreground=color)
@@ -884,7 +739,7 @@ class RoyalTrainerApp:
             actions,
             text="恢复自动发现",
             background=Palette.CARD_ALT,
-            hover="#25304A",
+            hover=Palette.SELECTION,
             foreground=Palette.MUTED,
             command=restore_auto_connection,
             padx=14,
@@ -895,6 +750,7 @@ class RoyalTrainerApp:
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         port_entry.focus_set()
         port_entry.selection_range(0, "end")
+        dialog.animation = fade_in(dialog)
 
     def _start_background(self, target: Callable[[], None], name: str) -> bool:
         if self.background_busy:
@@ -1506,6 +1362,7 @@ class RoyalTrainerApp:
         return paired if paired is not None else (self.current_image,None)
 
     def _set_preview_mode(self):
+        self.preview_card.reveal()
         if self.preview_mode.get()=='游戏画面':
             self.grid_inspector.window.grid_remove()
             self.preview_canvas.grid()
@@ -1517,6 +1374,7 @@ class RoyalTrainerApp:
             self.grid_inspector.refresh(force=True)
 
     def _toggle_preview_size(self):
+        self.preview_card.reveal()
         self.preview_expanded=not self.preview_expanded
         if self.preview_expanded:
             self.stats_card.grid_remove();self.log_card.grid_remove()
@@ -1524,7 +1382,7 @@ class RoyalTrainerApp:
             self.expand_preview_button.configure(text='还原')
         else:
             self.stats_card.grid();self.log_card.grid()
-            self.preview_card.grid_configure(columnspan=1,padx=(0,8))
+            self.preview_card.grid_configure(columnspan=1,padx=(0,6))
             self.expand_preview_button.configure(text='放大')
 
     def _show_image(self, image: Image.Image) -> None:
@@ -1633,10 +1491,12 @@ class RoyalTrainerApp:
                 self.last_frame_identity = id(frame)
                 self._show_image(frame)
 
-        self.root.after(max(1,math.ceil((1/30-(time.perf_counter()-started))*1000)), self._poll_messages)
+        delay = max(1, math.ceil((1/30-(time.perf_counter()-started))*1000)) if self._bot_is_running() else 100
+        self.root.after(delay, self._poll_messages)
 
     def _finish_bot(self, error: str | None) -> None:
-        self.sync_worker.wake.set()
+        if self.sync_worker is not None:
+            self.sync_worker.wake.set()
         battles = self.engine.completed_battles if self.engine is not None else 0
         self.battle_value.configure(text=f"{battles} 局")
         self.battle_note.configure(text="本次运行已结束")
@@ -1669,6 +1529,7 @@ class RoyalTrainerApp:
             self.stop_event.set()
             if self.engine is not None:
                 self.engine.request_stop()
+        self.tools_popover.close()
         self.closing = True
         if self.sync_worker is not None:
             self.sync_worker.close()

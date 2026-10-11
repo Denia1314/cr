@@ -308,10 +308,10 @@ class SelectionTests(unittest.TestCase):
                 save_decision_engine(p, "shadow")
             self.assertEqual(target.read_text(), '{bad')
 
-    def test_stage_is_in_actual_predictor_option_not_legacy_option(self):
-        from crbot import current_stage_label
+    def test_rule_labels_are_separate_from_the_application_stage(self):
         from crbot.runtime_model import RUNTIME_MODEL_LABELS
-        self.assertEqual(DECISION_ENGINE_LABELS["predictive"], current_stage_label() + " / P1 推演")
+        self.assertEqual(DECISION_ENGINE_LABELS["predictive"], "SL4 · 自动部署回退 / P1 推演")
+        self.assertNotIn("UI1", DECISION_ENGINE_LABELS["predictive"])
         self.assertIn("M3-E", RUNTIME_MODEL_LABELS["m3_c3"])
 
 

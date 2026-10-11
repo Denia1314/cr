@@ -8,6 +8,9 @@ from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from .ui_theme import Palette
+from .ui_widgets import HoverButton
+
 
 @lru_cache(maxsize=8)
 def font(size=14):
@@ -44,31 +47,31 @@ def current_entities(packet):
 
 
 def render_grid(packet, size=(450,700)):
-    image=Image.new('RGB',size,'#101a2a');draw=ImageDraw.Draw(image)
+    image=Image.new('RGB',size,'#F8FAFD');draw=ImageDraw.Draw(image)
     w,h=size;compact=h<280
     scale=max(.1,min((w-24)/18,(h-(50 if compact else 120))/32));ox=(w-18*scale)/2;oy=26 if compact else 60
     def point(x,y):return ox+x*scale,oy+y*scale
     elixir=packet.get('elixir')
     elixir_text='未知' if elixir is None else f'{elixir:.1f}'
-    cached_text(image,(8,5 if compact else 10),f"方格战场 · 圣水 {elixir_text}",size=10 if compact else 14,fill='#eef4ff')
+    cached_text(image,(8,5 if compact else 10),f"方格战场 · 圣水 {elixir_text}",size=10 if compact else 14,fill='#1D2939')
     live=packet.get('status')=='live_tracking'
-    if not compact:cached_text(image,(12,32),'实时位置跟踪 · 兵种非逐帧重识别' if live else '当前观测：蓝=我方 红=敌方 黄框=身份未知',size=11,fill='#9fb2cb')
-    draw.rectangle((*point(0,15),*point(18,17)),fill='#154567')
-    for bridge in packet.get('bridges',[]):draw.rectangle((*point(bridge-1,15),*point(bridge+1,17)),fill='#967a50')
-    for x in range(19):draw.line((*point(x,0),*point(x,32)),fill='#25344a')
-    for y in range(33):draw.line((*point(0,y),*point(18,y)),fill='#25344a')
+    if not compact:cached_text(image,(12,32),'实时位置跟踪 · 兵种非逐帧重识别' if live else '当前观测：蓝=我方 红=敌方 黄框=身份未知',size=11,fill='#536478')
+    draw.rectangle((*point(0,15),*point(18,17)),fill='#D9EBFA')
+    for bridge in packet.get('bridges',[]):draw.rectangle((*point(bridge-1,15),*point(bridge+1,17)),fill='#CAB68F')
+    for x in range(19):draw.line((*point(x,0),*point(x,32)),fill='#DCE5EF')
+    for y in range(33):draw.line((*point(0,y),*point(18,y)),fill='#DCE5EF')
     boxes=[]
     visible = list(current_entities(packet))
     hidden = len(packet.get('entities', [])) - len(visible)
     for e in visible:
-        x,y=point(e['x'],e['y']);color='#5daaff' if e['side']==1 else '#ff707d'
-        if e.get('identity_estimated') and not e.get('tower'):color='#e7bd62'
+        x,y=point(e['x'],e['y']);color='#2563EB' if e['side']==1 else '#C0394B'
+        if e.get('identity_estimated') and not e.get('tower'):color='#996000'
         path=e.get('path') or []
         if len(path)>1:draw.line([point(*p) for p in path],fill=color,width=1)
         radius=max(4,scale*(.65 if e.get('tower') else .30))
         box=(x-radius,y-radius,x+radius,y+radius)
         destroyed=e.get('destroyed',False)
-        draw.rectangle(box,outline=color,width=2,fill='#263047' if e.get('identity_estimated') or destroyed else color)
+        draw.rectangle(box,outline=color,width=2,fill='#E7ECF3' if e.get('identity_estimated') or destroyed else color)
         if destroyed:
             draw.line(box,fill=color,width=2)
             draw.line((box[0],box[3],box[2],box[1]),fill=color,width=2)
@@ -81,15 +84,15 @@ def render_grid(packet, size=(450,700)):
         elif e.get('level') is not None:label+=f" L{e['level']}"
         if e.get('identity_estimated') or e.get('hp_estimated'):label+='?'
         if (e.get('attributes') or {}).get('air'):label+='↑'
-        cached_text(image,(x+radius+2,y-radius),label,size=10,fill='#f0f4ff')
+        cached_text(image,(x+radius+2,y-radius),label,size=10,fill='#334155')
         boxes.append((box,e))
     action=packet.get('action') or {}
     if action.get('card_id'):
         geo=packet['geometry'];l,t,r,b=geo['bounds'];x,y=point((action['x']-l)/(r-l)*18,(action['y']-t)/(b-t)*32)
-        draw.ellipse((x-9,y-9,x+9,y+9),outline='#ffe37e',width=3)
+        draw.ellipse((x-9,y-9,x+9,y+9),outline='#996000',width=3)
     error=packet.get('calibration',{}).get('mean_position_error_tiles')
-    if not compact:cached_text(image,(12,h-44),f"兵种快照年龄：{packet.get('model_age_s',0):.1f} 秒" if live else f"位置预测误差：{error if error is not None else '等待可比观测'} 格",size=12,fill='#b9c6da')
-    cached_text(image,(8,h-19),f'历史/部署假设 {hidden} 项未画入当前观测' if hidden else '路线为模型预测；黄框身份未知，点击查看',size=10 if compact else 12,fill='#b9c6da')
+    if not compact:cached_text(image,(12,h-44),f"兵种快照年龄：{packet.get('model_age_s',0):.1f} 秒" if live else f"位置预测误差：{error if error is not None else '等待可比观测'} 格",size=12,fill='#536478')
+    cached_text(image,(8,h-19),f'历史/部署假设 {hidden} 项未画入当前观测' if hidden else '路线为模型预测；黄框身份未知，点击查看',size=10 if compact else 12,fill='#536478')
     return image,boxes
 
 
@@ -108,10 +111,10 @@ def compose_frame(screenshot,packet,w,h,mode):
         layers.append((left,0,grid))
         boxes=[((b[0]+left,b[1],b[2]+left,b[3]),e) for b,e in boxes]
     else:
-        waiting=Image.new('RGB',(w-half,h),'#0c1321')
+        waiting=Image.new('RGB',(w-half,h),'#F8FAFD')
         draw=ImageDraw.Draw(waiting)
         draw.multiline_text(((w-half)//2,h//2),'等待 P1 战场数据\n进入对局后显示',font=font(11),
-                            fill='#8195b0',anchor='mm',align='center',spacing=6)
+                            fill='#66768B',anchor='mm',align='center',spacing=6)
         layers.append((half,0,waiting))
     return layers,boxes
 
@@ -135,7 +138,7 @@ class GridWorldWindow:
         self.pending_render=None
         self.ready_render=None
         self.present_after=self.next_tick
-        self.window=tk.Frame(parent,bg='#0c1321') if embedded else tk.Toplevel(parent)
+        self.window=tk.Frame(parent,bg='#F8FAFD') if embedded else tk.Toplevel(parent)
         if not embedded:self.window.title('方格战场 · 实时模型检查')
         self.timer_api=None
         try:
@@ -149,17 +152,18 @@ class GridWorldWindow:
             self.window.geometry('1040x760');self.window.minsize(800,600)
         self.window.grid_rowconfigure(1,weight=1);self.window.grid_columnconfigure(0,weight=1)
         self.label=tk.Label(self.window,text='等待 P1 战场数据',anchor='w',
-                            bg='#0c1321',fg='#9fb2cb',font=('Microsoft YaHei UI',8),width=1)
+                            bg='#F8FAFD',fg='#536478',font=('Microsoft YaHei UI',8),width=1)
         self.label.grid(row=0,column=0,sticky='ew')
-        self.canvas=tk.Canvas(self.window,bg='#0c1321',highlightthickness=0,width=300,height=160)
+        self.canvas=tk.Canvas(self.window,bg='#F8FAFD',highlightthickness=0,width=300,height=160)
         self.canvas.grid(row=1,column=0,sticky='nsew')
         self.details=tk.Text(self.window,width=18,height=1,wrap='word',font=('Microsoft YaHei UI',9),
-                             bg='#142137',fg='#eef4ff',insertbackground='#eef4ff',relief='flat')
+                             bg='#FFFFFF',fg='#1D2939',insertbackground='#1D2939',relief='flat')
         self.details.grid(row=1 if embedded else 0,column=1,rowspan=1 if embedded else 2,sticky='nsew')
         if embedded:
             self.details.grid_remove()
-            self.close_details=tk.Button(self.window,text='收起属性 ×',command=self.hide_details,
-                bg='#142137',fg='#9fb2cb',relief='flat',font=('Microsoft YaHei UI',8))
+            self.close_details=HoverButton(self.window,text='收起属性 ×',command=self.hide_details,
+                background=Palette.CARD,foreground=Palette.MUTED,hover=Palette.CARD_ALT,
+                font=('Microsoft YaHei UI',8),padx=8,pady=5)
         self.canvas.bind('<Button-1>',self.select)
         self.after_id=self.window.after(0,self.tick)
 
@@ -179,7 +183,8 @@ class GridWorldWindow:
             # Poll readiness separately from presentation. Waiting a whole
             # 33 ms for a just-finished render otherwise halves live FPS when
             # capture and UI clocks fall on opposite sides of a frame boundary.
-            self.after_id=self.window.after(4,self.tick)
+            active = self.window.winfo_ismapped() and self.packet is not None
+            self.after_id=self.window.after(4 if active else 100,self.tick)
             return
         self.next_tick += self.period
         if self.next_tick < now-self.period:
@@ -204,7 +209,7 @@ class GridWorldWindow:
             key=(id(packet),id(screenshot),*dimensions)
             displayed=ready[0] if ready else self.last
             if key!=displayed:
-                w,h=max(80,dimensions[0]),max(80,dimensions[1])
+                w,h=max(80,dimensions[0]),max(24,dimensions[1])
                 future=self.renderer.submit(compose_frame,screenshot,packet,w,h,self.mode)
                 self.pending_render=(future,key,packet)
         now=time.perf_counter()
@@ -223,7 +228,7 @@ class GridWorldWindow:
         key=(id(packet),id(screenshot),self.canvas.winfo_width(),self.canvas.winfo_height(),self.mode)
         if key==self.last and not force:return
         new_packet=packet is not None and (self.last is None or key[:2]!=self.last[:2])
-        self.last=key;w=max(80,key[2]);h=max(80,key[3]);half=w//2 if self.mode=='compare' else 0
+        self.last=key;w=max(80,key[2]);h=max(24,key[3]);half=w//2 if self.mode=='compare' else 0
         combined,boxes=compose_frame(screenshot,packet,w,h,self.mode)
         self.present(key,packet,combined,boxes,new_packet)
 
