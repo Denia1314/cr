@@ -37,3 +37,10 @@ and [AGPL-3.0 text](https://www.gnu.org/licenses/agpl-3.0.html).
 
 Weights and machine-specific verification reports are excluded from the code
 repository. Private model synchronization carries the notice with the assets.
+
+## Clash-Royale-Detection-Dataset slices
+
+Source: https://github.com/wty-yy/Clash-Royale-Detection-Dataset
+Pinned revision: 31b4151fedb1b914e99c3c122c16dca61cb2b905.
+Repository license: MIT; the full upstream LICENSE is copied with imported local assets.
+Imported images remain local training assets. YOLO training/inference uses the existing optional Ultralytics dependency and its applicable license.

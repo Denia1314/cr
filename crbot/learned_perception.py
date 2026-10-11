@@ -40,6 +40,14 @@ class LearnedBattlefieldDetector:
         self.last_detection_succeeded = False
         self.allies_observed = False
         model_path = self.registry.champion_model_path()
+        if training_config.get("slice_model_path"):
+            try:
+                from .slice_detector import SliceBattlefield
+                self.pretrained = SliceBattlefield(project_root, catalog, training_config)
+                self.runtime_metadata = self.pretrained.metadata
+            except Exception as exc:
+                self.error = str(exc)
+            return
         if self.champion is None or model_path is None:
             if training_config.get("pretrained_enabled", True):
                 try:
