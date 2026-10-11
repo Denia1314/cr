@@ -176,4 +176,3 @@ int main(int argc,char **argv) {
     if(start_ticks((pid_t)pid)!=started)return 2;
     emit_footer(failed,discovery_truncated);for(unsigned j=0;j<count;++j){free(regions[j].bytes);free(regions[j].stable);}free(regions);close(mem);return 0;
 }
-
