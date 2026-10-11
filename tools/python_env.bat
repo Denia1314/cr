@@ -1,6 +1,7 @@
 @echo off
 rem Called inside each launcher's setlocal; exports BOT_ROOT, BOT_PY and BOT_PYW.
 set "PYTHONUTF8=1"
+chcp 65001 >nul
 for %%I in ("%~dp0..") do set "BOT_ROOT=%%~fI\"
 cd /d "%BOT_ROOT%"
 set "BOT_PY=%BOT_ROOT%.venv\Scripts\python.exe"
@@ -25,11 +26,22 @@ where py >nul 2>nul
 if errorlevel 1 goto missing
 set "BOT_PY=py"
 :ready
-if /i not "%~2"=="deps" exit /b 0
+set "BOT_ENV="
+for /f "delims=" %%E in ('""%BOT_PY%" "%BOT_ROOT%tools\ensure_gpu.py" --print-environment"') do set "BOT_ENV=%%E"
+if not defined BOT_ENV goto dependency_failed
+if /i not "%~2"=="deps" goto environment_only
 "%BOT_PY%" "%BOT_ROOT%tools\ensure_gpu.py"
 if errorlevel 1 exit /b 1
-if exist "%BOT_ROOT%.venv\Scripts\python.exe" set "BOT_PY=%BOT_ROOT%.venv\Scripts\python.exe"
-if exist "%BOT_ROOT%.venv\Scripts\pythonw.exe" set "BOT_PYW=%BOT_ROOT%.venv\Scripts\pythonw.exe"
+goto use_shared
+:environment_only
+"%BOT_PY%" "%BOT_ROOT%tools\ensure_gpu.py" --environment-only
+if errorlevel 1 exit /b 1
+:use_shared
+set "BOT_PY=%BOT_ENV%\Scripts\python.exe"
+set "BOT_PYW=%BOT_ENV%\Scripts\pythonw.exe"
+if not exist "%BOT_PY%" goto dependency_failed
+if /i "%~1"=="ui" if not exist "%BOT_PYW%" goto dependency_failed
+if /i not "%~2"=="deps" exit /b 0
 "%BOT_PY%" -c "import cv2, numpy, PIL" >nul 2>nul
 if not errorlevel 1 exit /b 0
 echo Required Python packages are missing. Installing them now...

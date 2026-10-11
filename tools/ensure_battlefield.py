@@ -44,6 +44,22 @@ def ensure(root=ROOT):
             subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", other], check=True)
         subprocess.run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
                         f"{package}=={ORT_VERSION}"], check=True)
+    # Cache only the fixed public baseline, never personal models or replays.
+    from tools.ensure_gpu import shared_home
+    from crbot.battlefield_assets import ASSETS, RELATIVE_ROOT, verify_asset
+    from crbot.atomic_file import atomic_write
+    cache = shared_home() / 'public-assets'
+    for name in ASSETS:
+        source = root / RELATIVE_ROOT / name
+        target = cache / RELATIVE_ROOT / name
+        if verify_asset(source, name) and not verify_asset(target, name):
+            atomic_write(target, source.read_bytes())
+    install_assets(cache)
+    for name in ASSETS:
+        source = cache / RELATIVE_ROOT / name
+        target = root / RELATIVE_ROOT / name
+        if not verify_asset(target, name):
+            atomic_write(target, source.read_bytes())
     result = install_assets(root)
     print(f"Battlefield baseline ready: {result['version']} (local accuracy not yet certified)", flush=True)
     return result

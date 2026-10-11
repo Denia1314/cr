@@ -1,4 +1,4 @@
-"""Prepare CUDA in the project environment before a Windows launcher starts."""
+"""Prepare reusable per-user Python/CUDA before a Windows launcher starts."""
 from __future__ import annotations
 
 import os
@@ -6,6 +6,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import hashlib
+import time
+from contextlib import contextmanager
 
 ROOT = Path(__file__).resolve().parents[1]
 CUDA_CHECK = (
@@ -14,6 +17,82 @@ CUDA_CHECK = (
     "assert (x@x).sum().item()==32768; "
     "print('GPU verified:',torch.cuda.get_device_name(0),'torch='+torch.__version__)"
 )
+
+
+def shared_home():
+    return Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData/Local') / 'RoyalLab'
+
+
+def environment_root():
+    custom = os.environ.get('CRBOT_PYTHON_ENV')
+    if custom:
+        path = Path(custom).expanduser()
+        if not path.is_absolute():
+            raise ValueError('CRBOT_PYTHON_ENV must be an absolute path.')
+        return path
+    return shared_home() / 'python-envs' / f'python-{sys.version_info.major}.{sys.version_info.minor}'
+
+
+def environment_python():
+    return environment_root() / 'Scripts/python.exe'
+
+
+@contextmanager
+def environment_lock():
+    import msvcrt
+    root = environment_root()
+    root.parent.mkdir(parents=True, exist_ok=True)
+    with root.with_suffix(root.suffix + '.setup.lock').open('a+b') as handle:
+        handle.seek(0, 2)
+        if handle.tell() == 0:
+            handle.write(b'0')
+            handle.flush()
+        deadline = time.monotonic() + 1800
+        announced = False
+        while True:
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if not announced:
+                    print('Another launcher is preparing the shared environment; waiting...', flush=True)
+                    announced = True
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('Shared environment setup is still busy; retry after it finishes.')
+                time.sleep(.25)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def create_environment():
+    python = environment_python()
+    if python.exists():
+        return 0
+    # A local venv may be the bootstrap interpreter; keep the shared environment's
+    # base outside that project so deleting a checkout cannot break it.
+    base = getattr(sys, '_base_executable', sys.executable)
+    return run([base, '-m', 'venv', str(environment_root())]).returncode
+
+
+def ensure_requirements(cuda=False):
+    requirement = 'requirements-training.txt' if cuda else 'requirements.txt'
+    files = [ROOT / 'requirements.txt'] + ([ROOT / requirement] if cuda else [])
+    signature = hashlib.sha256(b''.join(p.read_bytes() for p in files)).hexdigest()
+    marker = environment_root() / ('.requirements-cuda' if cuda else '.requirements-cpu')
+    checked = run([str(environment_python()), '-c',
+                   'import cv2,numpy,PIL' + ('; from ultralytics import YOLO' if cuda else '')], capture=True)
+    if checked.returncode or not marker.is_file() or marker.read_text() != signature:
+        if run([str(environment_python()), '-m', 'pip', 'install', '--disable-pip-version-check',
+                '-r', str(ROOT / requirement)]).returncode:
+            return 1
+        if run([str(environment_python()), '-m', 'pip', 'check'], capture=True).returncode:
+            return 1
+        marker.write_text(signature)
+    return 0
 
 
 def run(args, *, capture=False):
@@ -48,14 +127,14 @@ def ensure_gpu(force=False):
         print('No NVIDIA driver detected; using existing CPU environment. '
               'For an NVIDIA PC, install its driver and run setup_gpu.bat.', flush=True)
         return 0
-    python = ROOT / '.venv/Scripts/python.exe'
+    python = environment_python()
     if not python.exists():
-        if run([sys.executable, '-m', 'venv', str(ROOT / '.venv')]).returncode:
+        if create_environment():
             return 1
     checked = run([str(python), '-c', CUDA_CHECK], capture=True)
     if checked.returncode:
         print(checked.stdout, flush=True)
-        print('Installing CUDA PyTorch into .venv (large download on first launch)...', flush=True)
+        print(f'Installing CUDA PyTorch into {environment_root()} (one-time preparation)...', flush=True)
         # Explicit local versions also replace an already installed CPU build.
         args = [str(python), '-m', 'pip', 'install', '--upgrade',
                 'torch==2.11.0+cu128', 'torchvision==0.26.0+cu128',
@@ -76,12 +155,17 @@ def ensure_gpu(force=False):
 
 def main():
     try:
-        result = ensure_gpu('--force' in sys.argv)
-        if result == 0:
-            python = ROOT / '.venv/Scripts/python.exe'
-            result = run([str(python) if python.is_file() else sys.executable,
-                          str(ROOT / 'tools/ensure_battlefield.py')]).returncode
-    except (OSError, subprocess.SubprocessError) as exc:
+        with environment_lock():
+            print(f'Shared Python environment: {environment_root()}', flush=True)
+            result = create_environment()
+            if result == 0 and '--environment-only' not in sys.argv:
+                cuda = '--force' in sys.argv or (os.environ.get('CRBOT_COMPUTE_DEVICE', '').lower() != 'cpu' and has_nvidia())
+                result = ensure_gpu(force=cuda)
+                if result == 0:
+                    result = ensure_requirements(cuda)
+                if result == 0:
+                    result = run([str(environment_python()), str(ROOT / 'tools/ensure_battlefield.py')]).returncode
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f'GPU setup error: {exc}', flush=True)
         result = 1
     if result:
@@ -91,4 +175,7 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    if '--print-environment' in sys.argv:
+        print(environment_root())
+    else:
+        raise SystemExit(main())

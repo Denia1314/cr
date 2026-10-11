@@ -26,7 +26,7 @@ SL2 验证软件链路与受控样例，不生成或激活生产冠军。SL3 在
 
 v2 参数随 NPZ 保存并校验，旧 v1 NPZ 保留原算法，不改策略兼容性键。标签仍是已观察的胜负关联，不是反事实动作收益；未见卡牌或不足 3 场相似对局时放弃评分。总体候选通过但动作评分未通过时仍禁止自动实战试验与部署。实现更新、候选生成、评分准入、同步、实际加载及实战通过分别记录。
 
-可运行 `.venv\Scripts\python.exe tools\evaluate_action_value.py` 只读冻结已完成回放并生成 `reports/action-value-audit.json`，比较 v1/v2 在相同数据和划分上的结果。加 `--train-candidate` 会从同一快照训练完整回放候选并注册，始终使用 `candidate_only=True`，不提升冠军、不启动游戏；候选发布仍走现有私有数据同步。该手动入口不会降低质量要求，也不改变自动学习的新增数据或间隔门槛。
+可运行 `& "$env:LOCALAPPDATA\RoyalLab\python-envs\python-3.12\Scripts\python.exe" tools\evaluate_action_value.py` 只读冻结已完成回放并生成 `reports/action-value-audit.json`，比较 v1/v2 在相同数据和划分上的结果。加 `--train-candidate` 会从同一快照训练完整回放候选并注册，始终使用 `candidate_only=True`，不提升冠军、不启动游戏；候选发布仍走现有私有数据同步。该手动入口不会降低质量要求，也不改变自动学习的新增数据或间隔门槛。
 
 ## 日常使用
 
@@ -71,10 +71,10 @@ v2 参数随 NPZ 保存并校验，旧 v1 NPZ 保留原算法，不改策略兼�
 在指定训练机启动离线训练即可；默认开启 `self_learning.enabled`。3.12.1 起，点击开始后先进入对局采集，不在首个大厅提前执行耗时的候选训练。每完成 20 个可信对局后检查候选；中断任务也在该局间检查点恢复。训练期间暂不开新局，完成后丢弃旧画面、重新验证离线入口。采集机继续采集与私有同步，不争抢训练角色。希望立即处理已有数据或恢复中断任务时，可手动运行单轮；它不会启动模拟器：
 
 ```powershell
-.venv\Scripts\python.exe -m crbot self-learn status
-.venv\Scripts\python.exe -m crbot self-learn cycle
-.venv\Scripts\python.exe -m crbot self-learn pause
-.venv\Scripts\python.exe -m crbot self-learn resume
+& "$env:LOCALAPPDATA\RoyalLab\python-envs\python-3.12\Scripts\python.exe" -m crbot self-learn status
+& "$env:LOCALAPPDATA\RoyalLab\python-envs\python-3.12\Scripts\python.exe" -m crbot self-learn cycle
+& "$env:LOCALAPPDATA\RoyalLab\python-envs\python-3.12\Scripts\python.exe" -m crbot self-learn pause
+& "$env:LOCALAPPDATA\RoyalLab\python-envs\python-3.12\Scripts\python.exe" -m crbot self-learn resume
 ```
 
 `status` 只读。`pause` 持久暂停自主学习，正在运行的子进程会由监督器中止；对局本身继续。`resume` 只恢复学习许可，不启动游戏；下次审计边界继续。控制台“安全停止”停止对局及当前学习子进程，下次用户主动启动后可恢复未完成快照。中断恢复是重新运行同一任务/快照，不是恢复每一步训练计算。
