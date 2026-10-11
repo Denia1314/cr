@@ -5,6 +5,7 @@ import math
 import sys
 import tkinter as tk
 from tkinter import font as tkfont
+from tkinter import ttk
 
 from .animations import Animator, mix
 from .ui_theme import FONT, Palette
@@ -38,6 +39,7 @@ class AnimatedSelect(HoverButton):
         self.field_chars = width
         self.popup = None
         self.rows = []
+        self.scroll_canvas = None
         self.active_index = 0
         self._closing = False
         self._close_on_release = False
@@ -212,11 +214,28 @@ class AnimatedSelect(HoverButton):
         panel.pack(fill="both", expand=True, padx=8, pady=8)
         self.active_index = self.values.index(self.get()) if self.get() in self.values else 0
         self.rows = []
+        self.scroll_canvas = None
+        rows_parent = panel
+        if len(self.values) > 10:
+            self.scroll_canvas = tk.Canvas(panel, bg=Palette.CARD, highlightthickness=0)
+            scrollbar = ttk.Scrollbar(panel, orient="vertical", command=self.scroll_canvas.yview)
+            scrollbar.pack(side="right", fill="y")
+            self.scroll_canvas.pack(side="left", fill="both", expand=True)
+            self.scroll_canvas.configure(yscrollcommand=scrollbar.set)
+            rows_parent = tk.Frame(self.scroll_canvas, bg=Palette.CARD)
+            item = self.scroll_canvas.create_window(0, 0, window=rows_parent, anchor="nw")
+            self.scroll_canvas.bind("<Configure>", lambda e: self.scroll_canvas.itemconfigure(item, width=e.width))
+            popup.bind("<MouseWheel>", lambda e: self.scroll_canvas.yview_scroll(-int(e.delta/120), "units"))
         for index, value in enumerate(self.values):
-            row = ChoiceRow(panel, text=str(value), selected=value == self.get(),
+            row = ChoiceRow(rows_parent, text=str(value), selected=value == self.get(),
                             font=self._button_options["font"], command=lambda i=index: self._choose(i))
             row.pack(fill="x", pady=2)
             self.rows.append(row)
+        if self.scroll_canvas is not None:
+            rows_parent.update_idletasks()
+            self.scroll_canvas.configure(width=rows_parent.winfo_reqwidth(),
+                height=min(rows_parent.winfo_reqheight(), 440, max(120, self.owner.winfo_screenheight()-160)),
+                scrollregion=(0, 0, rows_parent.winfo_reqwidth(), rows_parent.winfo_reqheight()))
         popup.bind("<Configure>", lambda e: self._draw_popup(e, backdrop))
         popup.bind("<Down>", lambda _e: self._move(1))
         popup.bind("<Up>", lambda _e: self._move(-1))
@@ -268,7 +287,17 @@ class AnimatedSelect(HoverButton):
     def _activate(self, index):
         if self.popup is not None and self.rows:
             self.active_index = index % len(self.rows)
-            self.rows[self.active_index].focus_set()
+            row = self.rows[self.active_index]
+            if self.scroll_canvas is not None:
+                self.scroll_canvas.update_idletasks()
+                total = row.master.winfo_reqheight()
+                top = self.scroll_canvas.canvasy(0)
+                bottom = top+self.scroll_canvas.winfo_height()
+                if row.winfo_y() < top:
+                    self.scroll_canvas.yview_moveto(row.winfo_y()/total)
+                elif row.winfo_y()+row.winfo_height() > bottom:
+                    self.scroll_canvas.yview_moveto((row.winfo_y()+row.winfo_height()-self.scroll_canvas.winfo_height())/total)
+            row.focus_set()
         return "break"
 
     def _move(self, delta):
@@ -322,6 +351,7 @@ class AnimatedSelect(HoverButton):
         if event.widget is self.popup:
             self.popup = None
             self.rows = []
+            self.scroll_canvas = None
             self._closing = False
 
     def _popup_focus_out(self, _event):

@@ -84,7 +84,7 @@ class ConsoleTests(unittest.TestCase):
         from crbot import current_stage_label, release_label
         self.assertIn(current_stage_label(), self.app.release_heading["text"])
         self.assertEqual(self.app.release_heading["text"], release_label())
-        for widget in (self.app.check_button, self.app.connection_button, self.app.start_button,
+        for widget in (self.app.check_button, self.app.connection_button, self.app.card_library_button, self.app.start_button,
                        self.app.stop_button, self.app.release_heading):
             left = widget.winfo_rootx() - self.root.winfo_rootx()
             top = widget.winfo_rooty() - self.root.winfo_rooty()

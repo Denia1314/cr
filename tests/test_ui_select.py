@@ -11,6 +11,24 @@ from crbot.ui_theme import Palette
 
 
 class AnimatedSelectTests(unittest.TestCase):
+    def test_long_class_list_scrolls_to_last_item_and_stays_on_screen(self):
+        variable = tk.StringVar(value="class-0")
+        select = AnimatedSelect(self.root, textvariable=variable,
+            values=[f"class-{i}" for i in range(154)])
+        select.pack(fill="x")
+        self.root.update()
+        with patch.dict(os.environ, {"CRBOT_REDUCED_MOTION": "1"}):
+            select.open()
+            select._activate(153)
+            self.root.update()
+        self.assertIsNotNone(select.scroll_canvas)
+        self.assertLess(select.popup.winfo_height(), self.root.winfo_screenheight())
+        self.assertGreater(select.scroll_canvas.yview()[0], .8)
+        select._choose(153)
+        self.assertEqual(variable.get(), "class-153")
+        select.destroy()
+        self.assertFalse(self.errors)
+
     def setUp(self):
         self.root = tk.Tk()
         self.root.geometry("600x450+30+30")

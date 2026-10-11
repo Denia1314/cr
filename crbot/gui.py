@@ -97,6 +97,7 @@ class RoyalTrainerApp:
         self.model_details_window: tk.Toplevel | None = None
         self.model_details_text: tk.Text | None = None
         self.model_details = ""
+        self.card_library_window = None
         try:
             initial_config, _ = load_config(self.config_path)
             self.runtime_model = load_runtime_model(self.config_path, initial_config)
@@ -160,6 +161,10 @@ class RoyalTrainerApp:
             background=Palette.CARD, hover=Palette.CARD_ALT, foreground=Palette.MUTED,
             command=self.open_adb_connection_settings, padx=14)
         self.connection_button.pack(side="right", padx=(12, 0))
+        self.card_library_button = HoverButton(header, text="卡牌库",
+            background=Palette.CARD, hover=Palette.SELECTION, foreground=Palette.MUTED,
+            command=self.open_card_library, font=(FONT, 9), padx=12)
+        self.card_library_button.pack(side="right", padx=(12, 0))
         self._refresh_connection_button()
         status = tk.Frame(header, background=Palette.BG)
         status.pack(side="right")
@@ -477,6 +482,22 @@ class RoyalTrainerApp:
             self.connection_button.configure(
                 text="自定义 ADB", foreground=Palette.MUTED
             )
+
+    def open_card_library(self) -> None:
+        if self.card_library_window and self.card_library_window.window.winfo_exists():
+            self.card_library_window.window.lift()
+            self.card_library_window.window.focus_force()
+            return
+        try:
+            from .card_library import CardLibrary
+            from .card_library_ui import CardLibraryWindow
+            config, config_path = load_config(self.config_path)
+            catalog = resolve_project_path(config_path,
+                config.get("dataset", {}).get("card_catalog", "data/cards.json"))
+            self.card_library_window = CardLibraryWindow(self.root,
+                CardLibrary(config_path.parent, catalog))
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("卡牌库", str(exc), parent=self.root)
 
     def open_adb_connection_settings(self) -> None:
         if self._bot_is_running():
