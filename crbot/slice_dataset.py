@@ -104,17 +104,28 @@ def export_synthetic(source: Path, output: Path, *, seed=20261011) -> dict:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('import', 'export', 'train'))
+    parser.add_argument('action', choices=('import', 'export', 'export-real', 'train'))
     parser.add_argument('--source', type=Path, default=Path(DEFAULT_SOURCE))
     parser.add_argument('--output', type=Path, default=Path('training/external/katacr-slices'))
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--batch', type=int, default=8)
     parser.add_argument('--device', default='auto')
     parser.add_argument('--base-model', default='yolo11n.pt')
+    parser.add_argument('--slices', type=Path, default=Path('training/external/katacr-slices'))
+    parser.add_argument('--per-battle', type=int, default=8)
+    parser.add_argument('--units-only', action='store_true')
+    parser.add_argument('--focus-units', nargs='*', default=[])
     args = parser.parse_args(argv)
     if args.action == 'import':
         result = import_slices(args.source, args.output)
         result = {k: v for k, v in result.items() if k not in {'records', 'auxiliary'}}
+    elif args.action == 'export-real':
+        from .real_battle_dataset import export_real
+        from .cards import CardCatalog
+        catalog = CardCatalog.load(Path('data/cards.json')) if args.units_only else None
+        result = export_real(args.source, args.slices, args.output, per_battle=args.per_battle,
+                             catalog=catalog, focus_units=args.focus_units)
+        result.pop('records')
     elif args.action == 'export':
         result = export_synthetic(args.source, args.output)
         result.pop('source_hashes')
@@ -122,8 +133,8 @@ def main(argv=None):
         from ultralytics import YOLO
         from .gpu import vision_device
         manifest = json.loads((args.source / 'manifest.json').read_text())
-        if manifest.get('kind') != 'synthetic_bootstrap':
-            raise ValueError('Train requires an exported synthetic dataset')
+        if manifest.get('kind') not in {'synthetic_bootstrap', 'real_battle_bootstrap'}:
+            raise ValueError('Train requires an exported slice or real battle dataset')
         model = YOLO(args.base_model)
         model.train(data=str((args.source / 'data.yaml').resolve()), epochs=args.epochs,
                     batch=args.batch, device=vision_device(args.device), workers=0,
@@ -131,6 +142,7 @@ def main(argv=None):
         result = dict(model=str(model.trainer.best), source=SOURCE, revision=REVISION,
                       kind='external_slice_candidate', classes=manifest['classes'],
                       model_sha256=hashlib.sha256(Path(model.trainer.best).read_bytes()).hexdigest(),
+                      training_dataset_kind=manifest['kind'],
                       local_quality_validated=False, battle_acceptance=False, promoted=False)
         atomic_write(Path(model.trainer.save_dir) / 'manifest.json', json.dumps(result, indent=2).encode())
     print(json.dumps(result, ensure_ascii=False, indent=2))

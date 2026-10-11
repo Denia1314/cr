@@ -63,6 +63,7 @@ class SliceDatasetTests(unittest.TestCase):
     def test_slice_identity_requires_visible_team_badge(self):
         detector = SliceBattlefield.__new__(SliceBattlefield)
         detector.catalog = object()
+        detector.metadata = {}
         detector.config, detector.device, detector.calls = {}, 'cpu', 0
         detector.model = MagicMock()
         detector.model.names = {0: 'hog-rider'}
@@ -81,3 +82,14 @@ class SliceDatasetTests(unittest.TestCase):
             self.assertEqual(observation['side'], 0)
             self.assertEqual(observation['confidence'], .9)
             self.assertFalse(observation['deployment_confirmed'])
+            detector.metadata = {'training_dataset_kind':'real_battle_bootstrap'}
+            observation = detector.detect(image)[0]
+            self.assertEqual(detector.model.predict.call_args.args[0].height, 512)
+            self.assertAlmostEqual(observation['bbox'][1], .24)
+            self.assertAlmostEqual(observation['bbox'][3], .4)
+            detector.fallback = MagicMock()
+            detector.fallback.detect.return_value = [{'identity_source':'public_pretrained'}]
+            badges.return_value = {}
+            self.assertEqual(detector.detect(image), [{'identity_source':'public_pretrained'}])
+            self.assertEqual(detector.last_primary_units, 0)
+            self.assertTrue(detector.last_fallback_used)

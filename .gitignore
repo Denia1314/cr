@@ -5,6 +5,7 @@ runs/
 demonstrations/
 captures/
 models/
+*.pt
 training/
 *.log
 

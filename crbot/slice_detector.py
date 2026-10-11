@@ -27,9 +27,21 @@ class SliceBattlefield:
         self.catalog, self.config = catalog, config
         self.device = vision_device(config.get('device', 'auto'))
         self.calls = 0
+        self.fallback = None
+        self.fallback_error = ''
+        if config.get('slice_fallback_enabled', True) and config.get('pretrained_enabled', True):
+            try:
+                from .pretrained_battlefield import PretrainedBattlefield
+                self.fallback = PretrainedBattlefield(root, catalog, config)
+            except Exception as exc:
+                self.fallback_error = str(exc)
 
     def detect(self, image):
-        prediction = self.model.predict(image, conf=float(self.config.get('runtime_confidence', .7)),
+        # Upstream part2 labels cover the arena, excluding the hand panel.
+        arena_model = self.metadata.get('training_dataset_kind') == 'real_battle_bootstrap'
+        bottom = round(image.height * .8) if arena_model else image.height
+        source = image.crop((0, 0, image.width, bottom)) if arena_model else image
+        prediction = self.model.predict(source, conf=float(self.config.get('runtime_confidence', .7)),
                                         imgsz=int(self.config.get('image_size', 640)),
                                         device=self.device, verbose=False)[0]
         self.last_raw_boxes = len(prediction.boxes.cls.cpu().tolist()) if prediction.boxes is not None else 0
@@ -40,6 +52,7 @@ class SliceBattlefield:
                                              prediction.boxes.xyxyn.cpu().tolist()):
                 name = self.model.names[int(index)]
                 card_id = unit_card_id(name.replace('-', '_'), self.catalog)
+                box = [box[0], box[1]*bottom/image.height, box[2], box[3]*bottom/image.height]
                 if card_id and .20 <= (box[1]+box[3])/2 <= .80:
                     candidates.append((card_id, name, confidence, box))
         badges = associate_badges([c[3] for c in candidates], find_level_badges(image))
@@ -54,12 +67,27 @@ class SliceBattlefield:
                                level_badge_bbox=badge['bbox'], identity_source='external_slice_candidate',
                                deployment_confirmed=False))
         self.calls += 1
+        self.last_primary_units = len(result)
+        self.last_fallback_used = False
+        if not result and getattr(self, 'fallback', None) is not None:
+            try:
+                result = self.fallback.detect(image)
+                self.last_fallback_used = True
+                self.fallback_error = ''
+            except Exception as exc:
+                self.fallback_error = str(exc)
         self.last_accepted_units = len(result)
         return result
 
     def status(self):
-        return dict(source='external_slice_candidate', version=self.metadata['revision'][:12],
+        return dict(source='external_slice_candidate', version='katacr-' + self.metadata['model_sha256'][:12],
+                    source_revision=self.metadata['revision'],
+                    dataset_kind=self.metadata.get('training_dataset_kind', 'synthetic_bootstrap'),
                     device=self.device, inference_calls=self.calls, local_quality_validated=False,
                     raw_boxes=getattr(self, 'last_raw_boxes', 0),
+                    primary_units=getattr(self, 'last_primary_units', 0),
                     accepted_units=getattr(self, 'last_accepted_units', 0),
+                    fallback_loaded=getattr(self, 'fallback', None) is not None,
+                    fallback_used=getattr(self, 'last_fallback_used', False),
+                    fallback_error=getattr(self, 'fallback_error', ''),
                     battle_acceptance=False, promoted=False)
