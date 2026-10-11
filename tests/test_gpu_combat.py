@@ -154,5 +154,52 @@ class GPUCombatTests(unittest.TestCase):
         self.assertEqual(b.compute['combat_device'],'cuda:0')
         self.assertTrue(all(e['evaluated']>1 for e in b.hand_evaluations))
 
+    def test_delayed_death_damage_and_tower_multiplier_match_reference(self):
+        self.require_gpu()
+        from dataclasses import replace
+        state=self.scene(enemy='balloon')
+        balloon=state.entities[-1];balloon.x,balloon.y=3.,27.;balloon.hp=1.
+        balloon.spec=replace(balloon.spec,death_tower_multiplier=.35)
+        state.impacts=[(.25,1,balloon.uid,3.,27.,100.,0.,True,1.)]
+        expected=state.clone()
+        self.assertTrue(self.gpu.supports(state))
+        self.sim.advance(expected,6.)
+        self.gpu.advance([state],6.,time.perf_counter()+20)
+        self.assert_state(expected,state)
+        self.assertGreater(state.damage[1],0)
+
+    def test_chain_and_multiple_bolts_match_reference(self):
+        self.require_gpu()
+        states=[]
+        for card in ('electro_spirit','electro_wizard'):
+            state=self.scene(card,3.,21.,'knight')
+            # Isolate ongoing chain/bolt combat after deployment; the wizard's
+            # separate spawn pulse remains an explicitly unsupported effect.
+            state.effects=[]
+            state.entities[-1].x,state.entities[-1].y=3.,20.
+            for x,y in ((4.,20.),(5.,20.),(5.5,21.)):
+                self.sim.add(state,self.sim.kb.roster('knight')[0][0],-1,x,y)
+            states.append(state)
+        refs=[s.clone() for s in states]
+        self.assertTrue(all(self.gpu.supports(s) for s in states))
+        for s in refs:self.sim.advance(s,5.)
+        self.gpu.advance(states,5.,time.perf_counter()+20)
+        for a,b in zip(refs,states):
+            self.assert_state(a,b)
+            self.assertEqual(a.uncertainties,b.uncertainties)
+
+    def test_wait_only_log_explains_unaffordable_hand(self):
+        from tests.test_prediction import world
+        from crbot.predictive_planner import PredictivePlanner
+        planner=PredictivePlanner(self.sim.kb,{'fast_defense':True,'budget_ms':2000})
+        result=planner.plan(world(elixir=1.4,hand=((0,'mega_knight'),(1,'goblin_giant'),
+                                                  (2,'elite_barbarians'),(3,'valkyrie'))))
+        self.assertEqual(len(result.candidates),1)
+        self.assertEqual(result.compute['affordable_card_count'],0)
+        self.assertEqual(result.compute['planned_hand_count'],4)
+        self.assertIn('1.4',result.reason)
+        self.assertIn('最低 4',result.reason)
+        self.assertIn('无可支付出牌候选',result.reason)
+
 
 if __name__=='__main__':unittest.main()

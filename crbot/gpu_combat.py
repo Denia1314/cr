@@ -17,7 +17,8 @@ FIELDS = ('uid','side','x','y','hp','shield','ready_at','expires_at','target','v
           'radius','air','ground_target','air_target','building_only','building',
           'splash','projectile_speed','charge_distance','charge_multiplier',
           'charge_damage','ramp_time0','ramp_time1','ramp_damage0','ramp_damage1',
-          'stun','pushback','minimum_range','ignore_pushback')
+          'stun','pushback','minimum_range','ignore_pushback','death_damage','death_radius',
+          'death_tower_multiplier','death_delay','death_air','chain_count','chain_radius','attack_targets')
 N, P = 96, 512
 
 
@@ -49,20 +50,37 @@ class GPUCombat:
             from .battle_simulation import SimState
             self.available = True
             self.advance([SimState()], .25, time.perf_counter()+10)
+            # Exercise route-heavy batches before a short live frame deadline;
+            # an empty single branch does not warm CUDA local-memory capacity.
+            knight=self.sim.kb.unit('Knight',self.sim.level)
+            tower=self.sim.kb.unit('PrincessTower',self.sim.level)
+            if knight is not None and tower is not None:
+                warm=SimState()
+                self.sim.add(warm,knight,1,12.,23.)
+                self.sim.add(warm,tower,-1,3.,4.,tower=True)
+                self.advance([warm.clone() for _ in range(self.batch_size)],.5,time.perf_counter()+10)
         except Exception as exc:
             self.error = f'{type(exc).__name__}: {exc}'
             self.available = False
 
     def supports(self, state):
+        return not self.unsupported_reasons(state)
+
+    def unsupported_reasons(self, state):
+        reasons=set()
         if len(state.entities) > N or len(state.impacts) > P or state.effects:
-            return False
+            if len(state.entities)>N:reasons.add('entity_capacity')
+            if len(state.impacts)>P:reasons.add('projectile_capacity')
+            if state.effects:reasons.add('area_effects')
         for e in state.entities:
             u = e.spec
-            if (u.spawn or u.death_spawn or u.death_damage or u.resource_period
-                    or u.resource_on_death or u.dash_damage or u.reflected_damage
-                    or u.chain_count > 1 or u.attack_targets > 1 or e.cloned or e.dash_phase):
-                return False
-        return all(len(i) <= 13 for i in state.impacts)
+            for name,active in (('periodic_spawn',u.spawn),('death_spawn',u.death_spawn),
+                ('resource_generation',u.resource_period or u.resource_on_death),
+                ('dash',u.dash_damage or e.dash_phase),('reflection',u.reflected_damage),
+                ('chain_capacity',u.chain_count>32),('target_capacity',u.attack_targets>32),('clone',e.cloned)):
+                if active:reasons.add(f'{u.name}:{name}')
+        if any(len(i)>13 for i in state.impacts):reasons.add('projectile_format')
+        return sorted(reasons)
 
     @staticmethod
     def pack_entity(e):
@@ -75,7 +93,8 @@ class GPUCombat:
             u.radius,u.air,'ground' in u.targets,'air' in u.targets,u.building_only,u.building,
             u.splash,u.projectile_speed,u.charge_distance,u.charge_multiplier,u.charge_damage,
             u.ramp_times[0],u.ramp_times[1],u.ramp_damage[0],u.ramp_damage[1],
-            u.stun,u.pushback,u.minimum_range,u.ignore_pushback]
+            u.stun,u.pushback,u.minimum_range,u.ignore_pushback,u.death_damage,u.death_radius,
+            u.death_tower_multiplier,u.death_delay,u.death_air,u.chain_count,u.chain_radius,u.attack_targets]
 
     def advance(self, states, duration, deadline):
         if not states or duration <= 0:
@@ -86,7 +105,7 @@ class GPUCombat:
         b=len(states)
         entities=np.zeros((b,N,len(FIELDS)),np.float64)
         impacts=np.zeros((b,P,13),np.float64)
-        meta=np.zeros((b,10),np.float64)
+        meta=np.zeros((b,11),np.float64)
         for k,s in enumerate(states):
             if not self.supports(s):
                 raise ValueError('unsupported GPU combat state')
@@ -96,7 +115,7 @@ class GPUCombat:
                 row[2]=-1 if row[2] is None else row[2]
                 impacts[k,i]=row
             meta[k]=[s.time,len(s.entities),len(s.impacts),s.elixir[1],s.elixir[-1],
-                     s.damage[1],s.damage[-1],s.tower_shots[1],s.tower_shots[-1],s.seconds_per_elixir]
+                     s.damage[1],s.damage[-1],s.tower_shots[1],s.tower_shots[-1],s.seconds_per_elixir,0.]
         packed=time.perf_counter()
         cp=self.cp
         de,di,dm=cp.asarray(entities),cp.asarray(impacts),cp.asarray(meta)
@@ -125,6 +144,7 @@ class GPUCombat:
             s.time=float(m[0]);s.elixir={1:float(m[3]),-1:float(m[4])}
             s.damage={1:float(m[5]),-1:float(m[6])}
             s.tower_shots={1:int(m[7]),-1:int(m[8])}
+            if m[10]:s.uncertainties.add('chain_travel_time_estimate')
             for i,e in enumerate(s.entities):
                 row=entities[k,i]
                 for field in FIELDS[:22]:

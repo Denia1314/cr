@@ -1,5 +1,5 @@
 // Reference-order detailed combat. No fast-math; independent branch per thread.
-#define NF 49
+#define NF 57
 #define NE 96
 #define NI 512
 #define INFINITY __longlong_as_double(0x7ff0000000000000ULL)
@@ -118,7 +118,7 @@ extern "C" __global__ void advance_battles(double* entities,double* impacts,doub
  unsigned long long* routeKeys,int* routeValues,
  int batches,double duration,double step,int grid,double b0,double b1,unsigned long long budget) {
  int k=blockIdx.x*blockDim.x+threadIdx.x;if(k>=batches)return;
- double* e=entities+k*NE*NF;double* events=impacts+k*NI*13;double* m=metadata+k*10;
+ double* e=entities+k*NE*NF;double* events=impacts+k*NI*13;double* m=metadata+k*11;
  int count=(int)m[1],pending=(int)m[2];double end=m[0]+fmax(0.,duration);
  unsigned long long began=timer();
  int cacheStart[NE],cacheGoal[NE],cacheNext[NE];unsigned long long cacheHash[NE];
@@ -175,7 +175,6 @@ extern "C" __global__ void advance_battles(double* entities,double* impacts,doub
    if(d<=E(a,REACH)) {
     if(E(a,WINDING_TARGET)!=E(t,UID)){E(a,WINDING_TARGET)=E(t,UID);E(a,LOCKED_AT)=time;E(a,READY_AT)=fmax(E(a,READY_AT),time+E(a,FIRST_HIT));}
     if(time<E(a,READY_AT)||E(a,DAMAGE)<=0)continue;
-    if(pending>=NI){codes[k]=2;return;}
     double damage=E(a,DAMAGE);
     if(E(a,CHARGE_DISTANCE) && E(a,WALKED)>=E(a,CHARGE_DISTANCE))damage=E(a,CHARGE_DAMAGE)?E(a,CHARGE_DAMAGE):damage;
     else if(E(a,RAMP_TIME0)) {
@@ -184,10 +183,41 @@ extern "C" __global__ void advance_battles(double* entities,double* impacts,doub
      else if(held>=E(a,RAMP_TIME0))damage=E(a,RAMP_DAMAGE0);
     }
     E(a,WALKED)=0;
-    double* p=events+(pending++)*13;
-    p[0]=time+(E(a,PROJECTILE_SPEED)?d/E(a,PROJECTILE_SPEED):0);p[1]=E(a,SIDE);p[2]=E(t,UID);
-    p[3]=E(t,X);p[4]=E(t,Y);p[5]=damage;p[6]=E(a,SPLASH);p[7]=E(a,AIR_TARGET);p[8]=1.;
-    p[9]=E(a,STUN);p[10]=E(a,PUSHBACK);p[11]=E(a,UID);p[12]=0;
+    int victims[32],nv=1;victims[0]=t;
+    if(E(a,CHAIN_COUNT)>1) {
+     while(nv<(int)E(a,CHAIN_COUNT)) {
+      int previous=victims[nv-1],chosen=-1;double best=INFINITY;
+      for(int j=0;j<count;j++) {
+       if(E(j,SIDE)==E(a,SIDE)||E(j,HP)<=0||(E(j,AIR)?!E(a,AIR_TARGET):!E(a,GROUND_TARGET)))continue;
+       bool used=false;for(int v=0;v<nv;v++)if(victims[v]==j)used=true;if(used)continue;
+       double gap=distance(e,previous,j);if(gap>E(a,CHAIN_RADIUS))continue;
+       if(gap<best ||(gap==best && chosen>=0 && E(j,UID)<E(chosen,UID))){chosen=j;best=gap;}
+      }
+      if(chosen<0)break;victims[nv++]=chosen;
+     }
+     m[10]=1;
+    } else if(E(a,ATTACK_TARGETS)>1) {
+     while(nv<(int)E(a,ATTACK_TARGETS)) {
+      int chosen=-1;double best=INFINITY;
+      for(int j=0;j<count;j++) {
+       if(E(j,SIDE)==E(a,SIDE)||E(j,HP)<=0||(E(j,AIR)?!E(a,AIR_TARGET):!E(a,GROUND_TARGET)))continue;
+       bool used=false;for(int v=0;v<nv;v++)if(victims[v]==j)used=true;if(used)continue;
+       double gap=distance(e,a,j);if(gap>E(a,REACH))continue;
+       if(gap<best ||(gap==best && chosen>=0 && E(j,UID)<E(chosen,UID))){chosen=j;best=gap;}
+      }
+      if(chosen<0)break;victims[nv++]=chosen;
+     }
+    }
+    double chainDelay=0.;int previous=a,bolts=E(a,CHAIN_COUNT)>1?nv:(int)E(a,ATTACK_TARGETS);
+    for(int v=0;v<bolts;v++) {
+     if(pending>=NI){codes[k]=2;return;}int victim=victims[v%nv];
+     double delay=E(a,PROJECTILE_SPEED)?distance(e,a,victim)/E(a,PROJECTILE_SPEED):0.;
+     if(E(a,CHAIN_COUNT)>1){chainDelay+=E(a,PROJECTILE_SPEED)?distance(e,previous,victim)/E(a,PROJECTILE_SPEED):0.;delay=chainDelay;previous=victim;}
+     double* p=events+(pending++)*13;
+     p[0]=time+delay;p[1]=E(a,SIDE);p[2]=E(victim,UID);
+     p[3]=E(victim,X);p[4]=E(victim,Y);p[5]=damage;p[6]=E(a,SPLASH);p[7]=E(a,AIR_TARGET);p[8]=1.;
+     p[9]=E(a,STUN);p[10]=E(a,PUSHBACK);p[11]=E(a,UID);p[12]=0;
+    }
     double factor=(time<E(a,HASTE_UNTIL)?E(a,HASTE):1.)*(time<E(a,SLOW_UNTIL)?E(a,ATTACK_SLOW):1.);
     E(a,READY_AT)=time+E(a,PERIOD)/factor;if(E(a,TOWER))m[E(a,SIDE)==1?7:8]++;
    } else if(E(a,SPEED)>0 && !E(a,TOWER)) {
@@ -208,7 +238,15 @@ extern "C" __global__ void advance_battles(double* entities,double* impacts,doub
     E(a,WALKED)+=walk;E(a,X)=nx;E(a,Y)=ny;
    }
   }
-  for(int j=0;j<count;j++)if(E(j,HP)<=0)E(j,UID)=-1;
+  for(int j=0;j<count;j++)if(E(j,HP)<=0 && E(j,UID)>=0) {
+   if(E(j,DEATH_DAMAGE)) {
+    if(pending>=NI){codes[k]=2;return;}double* p=events+(pending++)*13;
+    for(int f=0;f<13;f++)p[f]=0;
+    p[0]=time+E(j,DEATH_DELAY);p[1]=E(j,SIDE);p[2]=-1;p[3]=E(j,X);p[4]=E(j,Y);
+    p[5]=E(j,DEATH_DAMAGE);p[6]=E(j,DEATH_RADIUS);p[7]=E(j,DEATH_AIR);p[8]=E(j,DEATH_TOWER_MULTIPLIER);
+   }
+   E(j,UID)=-1;
+  }
  }
  m[2]=pending;
 }

@@ -263,6 +263,9 @@ class PredictivePlanner:
                                                     database_comparison=card_evidence(self.kb, cid, self.sim.level, observed_enemies),
                                                     full_domain=bool(self.config.get("all_placement_points",False)) and not bounded_recovery))
             result.compute['stage_ms']['spatial_ranking'] = round((time.perf_counter()-stage_started)*1000, 2)
+            result.compute['own_elixir']=round(initial.elixir[1],2)
+            result.compute['planned_hand_count']=len(initial.hands[1])
+            result.compute['affordable_card_count']=sum(e['positions']>0 for e in result.hand_evaluations)
             stage_started = time.perf_counter()
             horizon = max(4, min(15, float(self.config.get("horizon_s", 8))))
             if result.enemy_forecast:
@@ -291,6 +294,9 @@ class PredictivePlanner:
             coarse_rows = []
             root_order = {(a.slot,a.card_id,a.x,a.y): i for i,a in enumerate(roots)}
             initial_scenarios = [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
+            if self.gpu_combat is not None:
+                result.compute['gpu_fallback_reasons']=sorted({reason for state in initial_scenarios
+                    for reason in self.gpu_combat.unsupported_reasons(state)})
             if self.gpu_combat is not None and self.gpu_combat.available and all(self.gpu_combat.supports(s) for s in initial_scenarios):
                 finalization_reserve=min(.015,max(0.,(deadline-self.clock())/4))
                 deadline-=finalization_reserve
@@ -563,6 +569,17 @@ class PredictivePlanner:
         if self.config.get("all_placement_points",False):
             result.reason = f"格点评分 {result.compute['spatial_scored']}；战斗精算 {result.compute['combat_evaluated']}/{result.compute['spatial_scored']}；" + result.reason
         result.compute['usable_comparison'] = bool(result.candidates)
+        if result.compute.get('planned_hand_count') and result.compute.get('spatial_scored')==0:
+            costs=[self.kb.cards[e['card_id']].get('elixir') for e in result.hand_evaluations
+                   if e['status']=='insufficient_elixir']
+            known=[cost for cost in costs if cost is not None]
+            if known:
+                result.reason=f"当前 {result.compute['own_elixir']:g} 费；可规划 {result.compute['planned_hand_count']} 张牌，最低 {min(known):g} 费；无可支付出牌候选，仅比较等待；"+result.reason
+        if result.compute.get('gpu_fallback_reasons'):
+            reasons=result.compute['gpu_fallback_reasons']
+            result.reason+='；GPU 回退原因：'+','.join(reasons[:4])+(f'（共 {len(reasons)} 项）' if len(reasons)>4 else '')
+        elif self.gpu_combat is not None and not self.gpu_combat.available:
+            result.reason+='；CUDA 后端不可用：'+(self.gpu_combat.error or 'CPU device selected')
         result.compute['completed_fair_rounds'] = published_round
         if result.status in {'ready', 'wait'}:
             result.reason = f"选择 {result.action.label}；" + result.reason
