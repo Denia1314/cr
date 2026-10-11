@@ -12,6 +12,7 @@ if exist "training\exports\katacr-bootstrap\manifest.json" goto train
 "%BOT_PY%" -m crbot.slice_dataset export --source training/external/katacr-slices --output training/exports/katacr-bootstrap
 if errorlevel 1 exit /b 1
 :train
+rem Automatically resume saved progress, or fine-tune the latest completed model.
 "%BOT_PY%" -m crbot.slice_dataset train --source training/exports/katacr-bootstrap --output models/battlefield/katacr --epochs 50 --device auto
 pause
 exit /b

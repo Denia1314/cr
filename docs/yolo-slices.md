@@ -1,5 +1,24 @@
 # YOLO 切片接入（V2 / 3.13.0）
 
+## V4 / 3.15.4 持续训练与模型选择
+
+两个训练 BAT 和 `slice_dataset train` 默认先检查同一输出目录的最新检查点。空的 candidate 目录不参与选择。检查点有优化器状态且原计划尚未完成时，用 last.pt 真正恢复原轮次、优化器与原计划总轮数；未完成第一轮、没有保存检查点时，最多只能从此前保存的成果开始。训练已经完成或优化器状态已被去除时，使用最新一轮的 best.pt 新建目录继续微调，轮次从 1 计数，但权重没有重置。BAT 保留用户设置的追加 100 轮。
+
+新增图片或修改标签时，数据指纹变化会切换为使用现有权重微调，而不是恢复旧优化器日程；类别不兼容或已完成模型校验失败时明确报错，不悄悄回退到旧模型。指纹记录数据清单、配置、标签和图像内容。未保存历史指纹的旧运行至少检查类别与来源路径。输入数据仍是指定的导出目录，BAT 不会自动合并新切片或新的对局截图；需要重新导出新的训练集后指定 --source。
+
+```powershell
+# 只查看下次会使用哪份权重，不开始训练
+python -m crbot.slice_dataset train --source training/exports/katacr-real-units-v3 --output models/battlefield/katacr-real-units-v3 --epochs 100 --plan
+# 正常运行：中断就恢复，完成后从最新成果追加微调
+python -m crbot.slice_dataset train --source training/exports/katacr-real-units-v3 --output models/battlefield/katacr-real-units-v3 --epochs 100 --batch 16
+```
+
+只有明确加 `--fresh` 才跳过已有运行、使用 --base-model；该操作也新建目录，不删除旧成果。每次开始会输出 training_start，记录 mode/model/completed_epochs/dataset_changed，并保存 training-state.json；结束的 manifest 也记录训练起点。
+
+当前明确试用的机器人模型已切换到完成 100 轮的 candidate-3/best.pt，版本 katacr-27cb994de08a。`slice_auto_latest_completed=true` 在启动新任务时选择同系列中最新完成且校验通过、类别兼容的 best.pt；没有 manifest 的中断运行不会启用。保留公开模型回退和未实战验收状态，不改冠军注册表，不在进行中的对局热替换。
+
+实际小规模 GPU 验证覆盖保存第 1 轮后中断、从第 2 轮恢复并完成、完成后选择 best.pt 微调；本机 --plan 验证下一次会选 candidate-3，实际加载和真实截图推理验证通过。本次没有启动新的完整 100 轮训练。
+
 用户后续明确要求先直接启用：当前运行配置优先加载 `models/battlefield/katacr-real-units-v3/candidate/weights/best.pt`（模型标识 `katacr-2b0171bc060e`），`slice_fallback_enabled=true`。候选结果通过原有置信度、类别映射和等级徽标筛选后进入敌我单位观测及战场威胁判断；没有有效单位时使用公开模型回退。此为显式试用，历史失败复测结论及未验收标记保留。关闭旧窗口并重新打开后，启动新任务生效。
 
 ## V3 / 3.15.0 真实战场训练

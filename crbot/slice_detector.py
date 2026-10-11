@@ -16,6 +16,10 @@ class SliceBattlefield:
         path = Path(config['slice_model_path'])
         if not path.is_absolute():
             path = root / path
+        if config.get('slice_auto_latest_completed', False):
+            from .yolo_continuation import latest_completed_model
+            path = latest_completed_model(path)
+        self.model_path = path
         self.metadata = json.loads((path.parent.parent / 'manifest.json').read_text())
         if self.metadata.get('kind') != 'external_slice_candidate' or self.metadata.get('revision') != REVISION:
             raise ValueError('Invalid external slice candidate manifest')
@@ -92,6 +96,7 @@ class SliceBattlefield:
 
     def status(self):
         return dict(source='external_slice_candidate', version='katacr-' + self.metadata['model_sha256'][:12],
+                    model_path=str(self.model_path),
                     source_revision=self.metadata['revision'],
                     dataset_kind=self.metadata.get('training_dataset_kind', 'synthetic_bootstrap'),
                     device=self.device, inference_calls=self.calls, local_quality_validated=False,

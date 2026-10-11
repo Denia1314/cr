@@ -115,6 +115,8 @@ def main(argv=None):
     parser.add_argument('--per-battle', type=int, default=8)
     parser.add_argument('--units-only', action='store_true')
     parser.add_argument('--focus-units', nargs='*', default=[])
+    parser.add_argument('--fresh', action='store_true', help='Explicitly start from base weights instead of continuing')
+    parser.add_argument('--plan', action='store_true', help='Show selected checkpoint without training')
     args = parser.parse_args(argv)
     if args.action == 'import':
         result = import_slices(args.source, args.output)
@@ -135,14 +137,27 @@ def main(argv=None):
         manifest = json.loads((args.source / 'manifest.json').read_text())
         if manifest.get('kind') not in {'synthetic_bootstrap', 'real_battle_bootstrap'}:
             raise ValueError('Train requires an exported slice or real battle dataset')
-        model = YOLO(args.base_model)
-        model.train(data=str((args.source / 'data.yaml').resolve()), epochs=args.epochs,
-                    batch=args.batch, device=vision_device(args.device), workers=0,
-                    project=str(args.output.resolve()), name='candidate', exist_ok=False)
+        from .yolo_continuation import choose_start
+        plan = choose_start(args.source, args.output, args.base_model, fresh=args.fresh)
+        print(json.dumps({'training_start':plan},ensure_ascii=False,indent=2),flush=True)
+        if args.plan:
+            return 0
+        model = YOLO(plan['model'])
+        def save_training_state(trainer):
+            atomic_write(Path(trainer.save_dir)/'training-state.json',json.dumps(plan,indent=2).encode())
+        model.add_callback('on_train_start',save_training_state)
+        kwargs = dict(data=str((args.source / 'data.yaml').resolve()),
+                      batch=args.batch, device=vision_device(args.device), workers=0)
+        if plan['mode'] == 'resume':
+            model.train(resume=True, **kwargs)
+        else:
+            model.train(epochs=args.epochs, project=str(args.output.resolve()),
+                        name='candidate', exist_ok=False, **kwargs)
         result = dict(model=str(model.trainer.best), source=SOURCE, revision=REVISION,
                       kind='external_slice_candidate', classes=manifest['classes'],
                       model_sha256=hashlib.sha256(Path(model.trainer.best).read_bytes()).hexdigest(),
                       training_dataset_kind=manifest['kind'],
+                      training_start=plan,
                       local_quality_validated=False, battle_acceptance=False, promoted=False)
         atomic_write(Path(model.trainer.save_dir) / 'manifest.json', json.dumps(result, indent=2).encode())
     print(json.dumps(result, ensure_ascii=False, indent=2))
