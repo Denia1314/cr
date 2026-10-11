@@ -543,7 +543,10 @@ class PredictivePlanner:
             if result.status == 'wait' and reserve_audit.get('blocked') and not result.compute.get('tower_emergency_defense',{}).get('active'):
                 requirements = [o['required'] for o in reserve_audit.get('options', []) if not o['accepted']]
                 needed = min(requirements, default=float(self.config.get('attack_reserve',3)))
-                result.reason += f"；留费防下一波：出牌后需保留至少 {needed:g} 费"
+                if world.elixir >= 9.5:
+                    result.reason += "；满费允许动用预留，部分方案未满足安全立即部队展开条件"
+                else:
+                    result.reason += f"；留费防下一波：出牌后需保留至少 {needed:g} 费"
         result.elapsed_ms = round((self.clock() - started) * 1000, 2)
         return result
 

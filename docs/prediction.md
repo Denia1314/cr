@@ -386,3 +386,12 @@ placement_mode=database_emergency_estimate，completed_combat_comparison=false�
 ## 3.12.10 特殊兵种机制
 
 登场、跃击/冲刺、反击和连锁攻击按数据库字段进入时间推进模拟；落点预筛选也考虑登场覆盖和跃击机会。策略记录升级为 `spatial_v6_grid_unit_mechanics`，`database_comparison` 增加 `special_mechanisms` 和 `deployment_effects`，区分已经执行的机制、待支持字段与登场伤害参数。全卡覆盖及数值限制见 [特殊机制覆盖表](unit-mechanics.md)。
+
+
+## 满费时释放防守预留（3.15.2）
+
+修复截图中满费仍反复 WAIT 并提示必须保留 4 费的问题。原先防守预留筛选会提前删除高费部队，防溢出也要求出牌后继续保留 attack_reserve；两者叠加导致可支付高费牌被长期排除。
+
+当前圣水至少 9.5 时，已完成立即推演的可支付部队牌可以突破预留限制：其最坏分支掉塔、塔伤及迫近暴露不得超过同轮立即 WAIT，部署暴露惩罚不得超过 0.25。法术和建筑不获得此满费豁免，只有未来连招结果不能作为证据。常态评分不再因满费动用预留而额外处罚；防溢出继续要求评分相对立即 WAIT 最多损失 3 分，按低费、评分、塔损选择安全立即出牌。低于 9.5 时维持原留费要求，危险落点和没有完整比较的方案仍不能强制执行。
+
+诊断 development_reserve.options.elixir_cap_override 记录每个方案是否满足满费豁免，elixir_overflow.changed 记录是否从 WAIT 改选。软件回归包括只剩高费部队、4 费预留、9.49/9.5/10 圣水边界、不增加塔损及部署风险；真实对局行为仍需重启当前机器人后验收。

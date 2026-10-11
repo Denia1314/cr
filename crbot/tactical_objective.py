@@ -144,7 +144,8 @@ def avoid_overflow(best, candidates, world, kb, reserve=3., score_key='score', p
         if not cid or (action['slot'], cid) not in world.hand:
             continue
         card = kb.cards[cid]; cost = card.get('elixir')
-        if cost is None or cost > world.elixir-reserve or not kb.roster(cid) or card.get('kind') in {'spell', 'building'}:
+        retained = 0. if world.elixir >= 9.5 else reserve
+        if cost is None or cost > world.elixir-retained or not kb.roster(cid) or card.get('kind') in {'spell', 'building'}:
             continue
         if not row.get('branches') or loss(row) > ceiling + 1e-6:
             continue
@@ -191,7 +192,10 @@ def score_action(score,parts,world,kb,action,phase,reserve=3.,geometry=None):
     parts['deployment_exposure_penalty'] = round(exposure, 4)
     score -= exposure
     if phase=='defend':return score
-    reserve_penalty=max(0,reserve-(world.elixir-cost))*1.5
+    # At the cap, saving an answer must not permanently exclude expensive roots.
+    # The completed immediate comparison still checks tower risk and exposure.
+    effective_reserve = 0. if world.elixir >= 9.5 else reserve
+    reserve_penalty=max(0,effective_reserve-(world.elixir-cost))*1.5
     # Attack commitments must leave an answer; tower-finishing damage retains its large benefit.
     score-=reserve_penalty
     if action.card_id is None:
@@ -200,7 +204,7 @@ def score_action(score,parts,world,kb,action,phase,reserve=3.,geometry=None):
         card=kb.cards[action.card_id]
         if card.get('kind')=='building':score-=3
         if 'win_condition' in card.get('roles',[]):score+=.3
-        if phase=='develop' and world.elixir<reserve+cost and parts.get('enemy_tower_damage',0)<100:
+        if phase=='develop' and world.elixir<effective_reserve+cost and parts.get('enemy_tower_damage',0)<100:
             score-=2
     return score
 
@@ -263,12 +267,20 @@ def guard_development_reserve(candidates, world, kb, phase, reserve=3., *, urgen
         proof = immediate_by_action.get(action_key(row))
         # A promised future combo is not proof that spending the reserve now is safe.
         mitigation = bool(proof and proof.get('branches')) and tower_loss(proof) < waiting_loss-30
-        accepted = after >= required or mitigation
+        # Near cap, permit an affordable immediate troop development only when
+        # every completed branch is no worse for towers than immediate WAIT.
+        # Deferred combo outcomes cannot supply this evidence.
+        cap_release = bool(world.elixir >= 9.5 and after >= 0 and proof and proof.get('branches')
+            and kb.roster(cid, level) and kb.cards[cid].get('kind') not in {'spell', 'building'}
+            and tower_loss(proof) <= waiting_loss + 1e-6
+            and max(b.get('deployment_exposure_penalty', 0) for b in proof['branches']) <= .25)
+        accepted = after >= required or mitigation or cap_release
         if accepted:
             allowed.append(row)
         diagnostic['options'].append(dict(card_id=cid, slot=action['slot'], x=action['x'], y=action['y'],
             elixir_after=round(after,3), required=required, retained_defenders=cards,
-            uncovered_layers=missing, tower_mitigation_override=mitigation, accepted=accepted))
+            uncovered_layers=missing, tower_mitigation_override=mitigation,
+            elixir_cap_override=cap_release, accepted=accepted))
     diagnostic.update(active=True, blocked=len(candidates)-len(allowed),
                       reason='reserve_next_defense' if len(allowed)<len(candidates) else 'reserve_satisfied')
     return allowed, diagnostic

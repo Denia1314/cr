@@ -56,11 +56,50 @@ class ElixirOverflowTests(unittest.TestCase):
         bad = self.row('knight', -4)
         self.assertIs(avoid_overflow(self.wait, [self.wait, bad], self.snapshot, self.kb)[0], self.wait)
 
-    def test_preserves_reserve_and_does_not_cycle_spells_buildings(self):
-        for cid in ('fireball', 'cannon', 'mega_knight'):
+    def test_does_not_cycle_spells_buildings(self):
+        for cid in ('fireball', 'cannon'):
             row = self.row(cid, 0)
             snapshot = world(elixir=9.5, hand=((0, cid),))
             self.assertIs(avoid_overflow(self.wait, [self.wait, row], snapshot, self.kb)[0], self.wait)
+
+    def test_high_cost_troop_can_spend_below_reserve_at_cap(self):
+        play = self.row('mega_knight', -1)
+        for elixir, expected in ((9.49, None), (9.5, 'mega_knight'), (10, 'mega_knight')):
+            snapshot = world(elixir=elixir, hand=((0, 'mega_knight'),))
+            best, _ = avoid_overflow(self.wait, [self.wait, play], snapshot, self.kb, reserve=4)
+            self.assertEqual(best['action']['card_id'], expected)
+
+    def test_full_planner_does_not_reserve_four_forever_with_high_cost_hand(self):
+        from tests.test_urgent_tower_defense import row
+        roots = [SimAction(), SimAction('mega_knight', 0, .3, .72)]
+        for elixir, damage, expected in ((9.49, 0, 'wait'), (9.5, 0, 'ready'), (10, 0, 'ready'), (10, 1, 'wait')):
+            planner = PredictivePlanner(self.kb, dict(unified_tactics=True, fast_defense=True,
+                development_reserve_gate=True, attack_reserve=4))
+            planner.clock = lambda: 0.
+            snapshot = world(elixir=elixir, hand=((0, 'mega_knight'), (1, 'musketeer')))
+            with patch.object(planner, 'candidates', return_value=roots), \
+                 patch.object(planner, 'evaluate_root', side_effect=lambda w,a,*args: row(a,damage if a.card_id else 0,99 if a.card_id else 100)), \
+                 patch.object(planner, 'refine_combinations', return_value=[]):
+                result = planner.plan(snapshot)
+            self.assertEqual(result.status, expected)
+            if expected == 'ready':
+                self.assertEqual(result.action.card_id, 'mega_knight')
+                self.assertTrue(result.compute['development_reserve']['options'][0]['elixir_cap_override'])
+                self.assertTrue(result.compute['elixir_overflow']['changed'])
+            elif elixir == 10:
+                self.assertIn('满费允许动用预留', result.reason)
+                self.assertNotIn('出牌后需保留至少', result.reason)
+
+    def test_cap_scoring_does_not_penalize_spending_defense_reserve(self):
+        from crbot.tactical_objective import score_action
+        action = SimAction('mega_knight', 0, .3, .72)
+        for elixir in (9.5, 10):
+            snapshot = world(elixir=elixir, hand=((0, 'mega_knight'),))
+            self.assertEqual(score_action(10, {}, snapshot, self.kb, action, 'develop', reserve=4),
+                             score_action(10, {}, snapshot, self.kb, action, 'develop', reserve=0))
+        snapshot = world(elixir=9, hand=((0, 'mega_knight'),))
+        self.assertLess(score_action(10, {}, snapshot, self.kb, action, 'develop', reserve=4),
+                        score_action(10, {}, snapshot, self.kb, action, 'develop', reserve=0))
 
     def test_conditional_wait_safety_and_existing_defense_are_preserved(self):
         waiting = copy.deepcopy(self.wait); waiting['branches'][0]['own_tower_damage'] = 100

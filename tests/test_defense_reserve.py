@@ -15,6 +15,23 @@ class DefenseReserveTests(unittest.TestCase):
     def scenario(self, elixir=6):
         return world(elixir=elixir, tracks=(), hand=((0,'knight'),(1,'musketeer'),(2,'ice_golem'),(3,'electro_spirit')))
 
+    def test_cap_release_requires_safe_completed_immediate_troop(self):
+        import copy
+        waiting = row(SimAction(), 0)
+        play = row(SimAction('mega_knight', 0, .3, .72), 0)
+        snapshot = world(elixir=10, hand=((0,'mega_knight'),(1,'musketeer')))
+        allowed, audit = guard_development_reserve([waiting,play],snapshot,self.kb,'develop',reserve=4)
+        self.assertIn(play, allowed)
+        self.assertTrue(audit['options'][0]['elixir_cap_override'])
+        for field, value in (('own_tower_damage',1),('own_towers_remaining',1),
+                             ('imminent_tower_exposure',1),('deployment_exposure_penalty',.3)):
+            unsafe = copy.deepcopy(play); unsafe['branches'][0][field] = value
+            allowed, _ = guard_development_reserve([waiting,unsafe],snapshot,self.kb,'develop',reserve=4)
+            self.assertNotIn(unsafe, allowed)
+        allowed, _ = guard_development_reserve([waiting,play],snapshot,self.kb,'develop',reserve=4,
+                                              immediate_candidates=[waiting])
+        self.assertNotIn(play, allowed)
+
     def test_crisis_equal_worst_branch_uses_reserve_and_mean_damage(self):
         from crbot.battle_world import Track
         from crbot.tactical_objective import emergency_tower_defense
@@ -162,7 +179,7 @@ class DefenseReserveTests(unittest.TestCase):
         self.assertEqual(choices,[waiting])
         self.assertFalse(any(o['tower_mitigation_override'] for o in status['options']))
 
-    def test_overflow_does_not_reintroduce_an_unfunded_next_defense(self):
+    def test_full_elixir_can_release_reserve_for_safe_immediate_development(self):
         p=PredictivePlanner(self.kb,dict(fast_defense=True,unified_tactics=True,development_reserve_gate=True))
         p.clock=lambda:0
         roots=[SimAction(),SimAction('musketeer',0,.3,.72),SimAction('mega_knight',1,.3,.72)]
@@ -170,5 +187,7 @@ class DefenseReserveTests(unittest.TestCase):
              patch.object(p,'evaluate_root',side_effect=lambda w,a,*args:row(a,0,-1 if a.card_id else 0)), \
              patch.object(p,'refine_combinations',return_value=[]):
             result=p.plan(world(elixir=10,tracks=(),hand=((0,'musketeer'),(1,'mega_knight'))))
-        self.assertEqual(result.status,'wait')
-        self.assertEqual(result.compute['development_reserve']['blocked'],2)
+        self.assertEqual(result.status,'ready')
+        self.assertEqual(result.action.card_id,'musketeer')
+        self.assertEqual(result.compute['development_reserve']['blocked'],0)
+        self.assertTrue(all(o['elixir_cap_override'] for o in result.compute['development_reserve']['options']))
