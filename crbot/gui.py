@@ -21,7 +21,8 @@ from . import implemented_stages_label, release_label
 from .app_paths import data_root
 from .animations import Animator, fade_in, mix, motion_enabled
 from .ui_theme import FONT, MONO, Palette
-from .ui_widgets import HoverButton, Surface, ToolsPopover, animate_combobox
+from .ui_widgets import HoverButton, Surface, ToolsPopover
+from .ui_select import AnimatedSelect
 from .adb import MumuDevice
 from .annotate import AnnotationWindow
 from .calibrate import CalibrationWindow
@@ -139,10 +140,6 @@ class RoyalTrainerApp:
         y = max(0, (screen_h - height) // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
         self.root.minsize(1040, 700)
-        self.root.option_add("*TCombobox*Listbox.font", (FONT, 10))
-        self.root.option_add("*TCombobox*Listbox.background", Palette.SURFACE)
-        self.root.option_add("*TCombobox*Listbox.foreground", Palette.TEXT)
-        self.root.option_add("*TCombobox*Listbox.selectBackground", Palette.BLUE)
         style = ttk.Style(self.root)
         style.theme_use("clam")
         style.configure("Vertical.TScrollbar", background=Palette.CARD_ALT,
@@ -152,24 +149,6 @@ class RoyalTrainerApp:
                         arrowcolor=Palette.MUTED)
         style.map("Vertical.TScrollbar", background=[("active", Palette.BORDER),
                                                      ("disabled", Palette.LOG)])
-        style.configure(
-            "Model.TCombobox",
-            fieldbackground=Palette.SURFACE,
-            background=Palette.CARD_ALT,
-            foreground=Palette.TEXT,
-            arrowcolor=Palette.MUTED,
-            bordercolor=Palette.BORDER,
-            lightcolor=Palette.BORDER,
-            darkcolor=Palette.BORDER,
-            padding=7,
-        )
-        style.map(
-            "Model.TCombobox",
-            fieldbackground=[("readonly", Palette.SURFACE), ("disabled", Palette.CARD)],
-            foreground=[("readonly", Palette.TEXT), ("disabled", Palette.FAINT)],
-            selectbackground=[("readonly", Palette.SURFACE)],
-            selectforeground=[("readonly", Palette.TEXT)],
-        )
 
     def _build_interface(self) -> None:
         shell = tk.Frame(self.root, background=Palette.BG)
@@ -281,10 +260,8 @@ class RoyalTrainerApp:
             note.configure(font=(FONT, 7 if compact else 8))
         for card in (self.control_card, self.preview_card, self.log_card):
             card.body.pack_configure(pady=10 if compact else 14)
-        style = ttk.Style(self.root)
         for combo in (self.engine_combo, self.model_combo, self.preview_mode_combo):
-            combo.configure(font=(FONT, 8 if compact else 9))
-            style.configure(combo.cget("style"), padding=5 if compact else 7)
+            combo.configure(font=(FONT, 8 if compact else 9), pady=5 if compact else 7)
         for button in (self.start_button, self.stop_button):
             button.configure(pady=6 if compact else 8, font=(FONT, 9 if compact else 10))
         self.model_status_button.configure(font=(FONT, 7 if compact else 8), pady=2 if compact else 4)
@@ -326,10 +303,9 @@ class RoyalTrainerApp:
         options = tk.Frame(card, background=Palette.CARD)
         options.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self.preview_mode = tk.StringVar(value="同帧对照")
-        self.preview_mode_combo = ttk.Combobox(options, textvariable=self.preview_mode,
+        self.preview_mode_combo = AnimatedSelect(options, textvariable=self.preview_mode,
             values=("游戏画面", "方格战场", "同帧对照", "推演快照"), state="readonly", width=10, font=(FONT, 8))
         self.preview_mode_combo.pack(side="left")
-        animate_combobox(self.preview_mode_combo)
         self.preview_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._set_preview_mode())
         self.expand_preview_button = HoverButton(options, text="放大", command=self._toggle_preview_size,
             background=Palette.CARD_ALT, foreground=Palette.MUTED, hover=Palette.SELECTION, padx=10, pady=5)
@@ -362,17 +338,15 @@ class RoyalTrainerApp:
         tk.Label(fields, text="规则配置", font=(FONT, 8), fg=Palette.MUTED,
                  bg=Palette.CARD).grid(row=0, column=1, sticky="w", padx=(14, 0), pady=(0, 5))
         self.engine_var = tk.StringVar(value=DECISION_ENGINE_LABELS[self.decision_engine])
-        self.engine_combo = ttk.Combobox(fields, textvariable=self.engine_var,
+        self.engine_combo = AnimatedSelect(fields, textvariable=self.engine_var,
             values=list(DECISION_ENGINE_LABELS.values()), state="readonly", width=28, font=(FONT, 9))
         self.engine_combo.grid(row=1, column=0, sticky="ew")
-        animate_combobox(self.engine_combo)
         self.engine_combo.bind("<<ComboboxSelected>>", self._on_engine_selected)
         self.model_key_by_label = {label: key for key, label in RUNTIME_MODEL_LABELS.items()}
         self.model_var = tk.StringVar(value=runtime_model_label(self.runtime_model))
-        self.model_combo = ttk.Combobox(fields, textvariable=self.model_var,
+        self.model_combo = AnimatedSelect(fields, textvariable=self.model_var,
             values=list(RUNTIME_MODEL_LABELS.values()), state="readonly", width=22, font=(FONT, 9))
         self.model_combo.grid(row=1, column=1, sticky="ew", padx=(14, 0))
-        animate_combobox(self.model_combo)
         self.model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
         bar = tk.Frame(controls, background=Palette.CARD)
         bar.pack(fill="x", pady=(10, 0))

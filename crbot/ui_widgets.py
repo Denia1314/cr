@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import font as tkfont, ttk
+from tkinter import font as tkfont
 from .animations import Animator, fade_in, mix
 from .ui_theme import FONT, Palette
 
@@ -212,44 +212,6 @@ class Surface(tk.Frame):
             self._border = mix(Palette.SELECTION, Palette.BORDER, progress)
             self._draw()
         self.animator.tween("reveal", update, 280)
-
-
-def animate_combobox(widget: ttk.Combobox):
-    """Independent hover/focus border so changing one field affects no others."""
-    style = ttk.Style(widget)
-    name = f"Field{id(widget)}.TCombobox"
-    style.configure(name, padding=7, foreground=Palette.TEXT,
-                    fieldbackground=Palette.SURFACE, background=Palette.CARD_ALT,
-                    bordercolor=Palette.BORDER, lightcolor=Palette.BORDER,
-                    darkcolor=Palette.BORDER, arrowcolor=Palette.MUTED)
-    style.map(name, fieldbackground=[("disabled", Palette.CARD_ALT), ("readonly", Palette.SURFACE)],
-              foreground=[("disabled", Palette.FAINT), ("readonly", Palette.TEXT)],
-              selectbackground=[("readonly", Palette.SURFACE)],
-              selectforeground=[("readonly", Palette.TEXT)])
-    widget.configure(style=name)
-    animator = Animator(widget)
-    border = Palette.BORDER
-    focused = False
-    def transition(target):
-        start = border
-        def update(progress):
-            nonlocal border
-            border = mix(start, target, progress)
-            style.configure(name, bordercolor=border, lightcolor=border, darkcolor=border)
-        animator.tween("border", update, 140)
-    def focus_in(_e):
-        nonlocal focused
-        focused = True
-        transition(Palette.BLUE)
-    def focus_out(_e):
-        nonlocal focused
-        focused = False
-        transition(Palette.BORDER)
-    widget.bind("<Enter>", lambda _e: transition(Palette.BLUE) if str(widget["state"]) != "disabled" else None, add="+")
-    widget.bind("<Leave>", lambda _e: transition(Palette.BLUE if focused else Palette.BORDER), add="+")
-    widget.bind("<FocusIn>", focus_in, add="+")
-    widget.bind("<FocusOut>", focus_out, add="+")
-    return animator
 
 
 class ToolsPopover:

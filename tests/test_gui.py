@@ -133,6 +133,20 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(str(self.app.start_button["state"]), "normal")
         self.assertEqual(str(self.app.stop_button["state"]), "disabled")
 
+    def test_animated_lists_save_existing_keys_and_route_preview_mode(self):
+        import os
+        from crbot.runtime_model import load_decision_engine, load_runtime_model
+        self.root.deiconify()
+        self.root.update()
+        with patch.dict(os.environ, {"CRBOT_REDUCED_MOTION": "1"}):
+            self.app.engine_combo._choose(1)
+            self.assertEqual(load_decision_engine(self.app.config_path), "shadow")
+            self.app.model_combo._choose(0)
+            self.assertEqual(load_runtime_model(self.app.config_path), "v5")
+            self.app.preview_mode_combo._choose(0)
+            self.assertEqual(self.app.preview_mode.get(), "游戏画面")
+            self.assertEqual(self.app.grid_inspector.window.winfo_manager(), "")
+
     def test_compact_layout_keeps_preview_and_log_usable_and_returns_to_large_layout(self):
         self.root.geometry("1040x700+0+0")
         self.root.deiconify()
