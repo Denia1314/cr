@@ -32,6 +32,7 @@ class SliceBattlefield:
         prediction = self.model.predict(image, conf=float(self.config.get('runtime_confidence', .7)),
                                         imgsz=int(self.config.get('image_size', 640)),
                                         device=self.device, verbose=False)[0]
+        self.last_raw_boxes = len(prediction.boxes.cls.cpu().tolist()) if prediction.boxes is not None else 0
         candidates = []
         if prediction.boxes is not None:
             for index, confidence, box in zip(prediction.boxes.cls.cpu().tolist(),
@@ -53,9 +54,12 @@ class SliceBattlefield:
                                level_badge_bbox=badge['bbox'], identity_source='external_slice_candidate',
                                deployment_confirmed=False))
         self.calls += 1
+        self.last_accepted_units = len(result)
         return result
 
     def status(self):
         return dict(source='external_slice_candidate', version=self.metadata['revision'][:12],
                     device=self.device, inference_calls=self.calls, local_quality_validated=False,
+                    raw_boxes=getattr(self, 'last_raw_boxes', 0),
+                    accepted_units=getattr(self, 'last_accepted_units', 0),
                     battle_acceptance=False, promoted=False)

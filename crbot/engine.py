@@ -83,7 +83,8 @@ class BotEngine:
                 ):
                     status = self.policy.learned_detector.status()
                     version = status.get("version", "unknown")
-                    qualification = "公开预训练，待本地准确率验收" if status.get("source") == "public_pretrained" else "本地已验证"
+                    qualification = ("切片训练候选，未实战验收" if status.get("source") == "external_slice_candidate"
+                                     else "公开预训练，待本地准确率验收" if status.get("source") == "public_pretrained" else "本地已验证")
                     print(f"[策略] 战场模型：{version}（{qualification}；{status.get('device', 'auto')}）")
                 else:
                     reason = getattr(self.policy.learned_detector, "error", "")
