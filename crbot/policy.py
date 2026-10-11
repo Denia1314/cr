@@ -1248,6 +1248,15 @@ class BattlePolicy:
             threats = detect_lane_threats(current, previous, ignore_points)
         if self.learned_detector is not None:
             threats = self.learned_detector.detect(current, threats)
+            detector = self.learned_detector
+            packet = dict(revision=getattr(self, '_yolo_revision', 0)+1,
+                at=now, detections=[dict(o) for o in getattr(detector,'observed_enemies',[]) + getattr(detector,'observed_allies',[])],
+                model=detector.status())
+            for observation in packet['detections']:
+                card=self.catalog.get(observation.get('card_id')) if self.catalog else None
+                if card:observation['name_zh']=card.name_zh or card.name_en
+            self.yolo_frame = (current, packet)
+            self._yolo_revision = packet['revision']
         self._observed_image, self._observed_threats = current, threats
         self._observed_at = now
         self._threat_observed_at = now

@@ -257,7 +257,7 @@ class RoyalTrainerApp:
         options.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self.preview_mode = tk.StringVar(value="同帧对照")
         self.preview_mode_combo = AnimatedSelect(options, textvariable=self.preview_mode,
-            values=("游戏画面", "方格战场", "同帧对照", "推演快照"), state="readonly", width=10, font=(FONT, 8))
+            values=("游戏画面", "YOLO识别", "同帧对照", "推演快照"), state="readonly", width=10, font=(FONT, 8))
         self.preview_mode_combo.pack(side="left")
         self.preview_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._set_preview_mode())
         self.expand_preview_button = HoverButton(options, text="放大", command=self._toggle_preview_size,
@@ -1216,6 +1216,9 @@ class RoyalTrainerApp:
         self._set_preview_mode()
 
     def _grid_preview_source(self):
+        if self.preview_mode.get()!='推演快照':
+            paired=getattr(getattr(self.engine,'policy',None),'yolo_frame',None) if self.engine else None
+            return paired if paired is not None else (self.current_image,None)
         stream=getattr(self.engine,'live_grid_stream',None) if self.engine else None
         if stream is not None and self.preview_mode.get()!='推演快照':
             return stream.latest() or (self.current_image,None)
@@ -1231,7 +1234,8 @@ class RoyalTrainerApp:
             self._render_preview()
         else:
             self.preview_canvas.grid_remove()
-            self.grid_inspector.mode='grid' if self.preview_mode.get()=='方格战场' else 'compare'
+            self.grid_inspector.mode=('yolo' if self.preview_mode.get()=='YOLO识别' else
+                                      'compare' if self.preview_mode.get()=='推演快照' else 'yolo_compare')
             self.grid_inspector.window.grid(row=0,column=0,sticky='nsew')
             self.grid_inspector.refresh(force=True)
 

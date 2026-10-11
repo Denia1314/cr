@@ -97,6 +97,8 @@ def render_grid(packet, size=(450,700)):
 
 
 def compose_frame(screenshot,packet,w,h,mode):
+    if mode in {'yolo', 'yolo_compare'}:
+        return compose_yolo(screenshot,packet,w,h,mode)
     half=w//2 if mode=='compare' else 0
     layers=[];boxes=[]
     if half and screenshot is not None:
@@ -116,6 +118,47 @@ def compose_frame(screenshot,packet,w,h,mode):
         draw.multiline_text(((w-half)//2,h//2),'等待 P1 战场数据\n进入对局后显示',font=font(11),
                             fill='#66768B',anchor='mm',align='center',spacing=6)
         layers.append((half,0,waiting))
+    return layers,boxes
+
+
+def compose_yolo(screenshot, packet, w, h, mode):
+    """Draw only detector observations on their exact source frame."""
+    halves = 2 if mode == 'yolo_compare' else 1
+    pane = w // halves
+    if screenshot is None:
+        image=Image.new('RGB',(w,h),'#F8FAFD')
+        ImageDraw.Draw(image).text((10,10),'等待游戏画面与 YOLO 识别',font=font(12),fill='#536478')
+        return [(0,0,image)], []
+    scale=min(pane/screenshot.width,h/screenshot.height)
+    size=(max(1,round(screenshot.width*scale)),max(1,round(screenshot.height*scale)))
+    shot=screenshot.convert('RGB').resize(size,Image.Resampling.BILINEAR)
+    left=(pane-size[0])//2;top=(h-size[1])//2
+    marked=Image.new('RGB',(pane,h),'#F8FAFD');marked.paste(shot,(left,top))
+    draw=ImageDraw.Draw(marked);boxes=[]
+    for index, observation in enumerate((packet or {}).get('detections', [])):
+        bbox=observation.get('bbox')
+        if not bbox or len(bbox)!=4:continue
+        x1,y1,x2,y2=[max(0,min(1,float(v))) for v in bbox]
+        if x2<=x1 or y2<=y1:continue
+        box=(left+x1*size[0],top+y1*size[1],left+x2*size[0],top+y2*size[1])
+        ally=observation.get('side')==1
+        color='#2563EB' if ally else '#E34455'
+        draw.rectangle(box,outline=color,width=2)
+        source=' · 回退' if observation.get('identity_source')=='public_pretrained' else ''
+        label=f"{'我方' if ally else '敌方'} {observation.get('name_zh') or observation.get('card_id','未知')} {observation.get('confidence',0):.0%}{source}"
+        face=font(10 if pane<300 else 12)
+        width=min(pane,round(draw.textlength(label,font=face))+6)
+        tx=min(box[0],pane-width);ty=max(0,box[1]-18)
+        draw.rectangle((tx,ty,tx+width,ty+18),fill=color)
+        draw.text((tx+3,ty),label,font=face,fill='white')
+        boxes.append((box,dict(observation,id=f"yolo:{(packet or {}).get('revision',0)}:{index}")))
+    if packet is None or not packet.get('detections'):
+        draw.rectangle((0,0,pane,23),fill='#F8FAFD')
+        draw.text((4,3),'当前帧无有效 YOLO 单位' if packet else '等待 YOLO 识别结果',font=font(11),fill='#536478')
+    offset=pane if halves==2 else 0
+    layers=[(offset,0,marked)]
+    if halves==2:layers.insert(0,(left,top,shot))
+    boxes=[((b[0]+offset,b[1],b[2]+offset,b[3]),o) for b,o in boxes]
     return layers,boxes
 
 
@@ -265,9 +308,13 @@ class GridWorldWindow:
     def update_label(self):
         self.label_packet=self.packet
         if self.packet is not None:
+            if self.mode in {'yolo','yolo_compare'}:
+                model=self.packet.get('model',{})
+                self.label.configure(text=f"YOLO 识别 · 更新 {self.source_fps:.1f} FPS · {len(self.packet.get('detections',[]))} 个单位 · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方",wraplength=max(80,self.canvas.winfo_width()))
+                return
             self.label.configure(text=f"目标 30 FPS · 新数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型" +
                 ('' if self.embedded else '\n'+self.packet.get('decision','')[:65]),wraplength=max(80,self.canvas.winfo_width()))
-        else:self.label.configure(text='等待 P1 战场数据 · 游戏画面可独立查看')
+        else:self.label.configure(text='等待 YOLO 识别结果 · 游戏画面可独立查看' if self.mode in {'yolo','yolo_compare'} else '等待 P1 战场数据 · 游戏画面可独立查看')
 
     def hide_details(self):
         self.selected_id=None

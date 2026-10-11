@@ -1,6 +1,6 @@
 """MuMu offline-AI battle automation reference implementation."""
 
-__version__ = "3.15.0"
+__version__ = "3.15.1"
 
 # Delivered capabilities, not model identities or claims of battle acceptance.
 # Keep chronological order; all release displays derive from this catalog.
@@ -21,6 +21,7 @@ IMPLEMENTED_STAGES = (
     ("V2", "YOLO 切片训练接入"),
     ("UI1", "浅色轻量工作台"),
     ("V3", "真实战场标注训练"),
+    ("UI2", "YOLO 识别画面"),
 )
 
 

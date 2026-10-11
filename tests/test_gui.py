@@ -43,7 +43,7 @@ class ConsoleTests(unittest.TestCase):
         from PIL import Image
         old=(Image.new('RGB',(20,40)),{'revision':1,'entities':[]})
         live=(Image.new('RGB',(20,40)),{'revision':10,'entities':[]})
-        self.app.engine=SimpleNamespace(policy=SimpleNamespace(grid_frame=old),
+        self.app.engine=SimpleNamespace(policy=SimpleNamespace(grid_frame=old,yolo_frame=live),
                                        live_grid_stream=SimpleNamespace(latest=lambda:live))
         self.assertIs(self.app._grid_preview_source(),live)
         self.app.preview_mode.set('推演快照')
@@ -57,15 +57,15 @@ class ConsoleTests(unittest.TestCase):
         self.assertIs(self.app.grid_inspector.window.winfo_toplevel(),self.root)
         paired=Image.new('RGB',(100,200),'red')
         packet={'revision':1,'entities':[]}
-        self.app.engine=SimpleNamespace(policy=SimpleNamespace(grid_frame=(paired,packet)))
+        self.app.engine=SimpleNamespace(policy=SimpleNamespace(yolo_frame=(paired,packet)))
         self.app._show_image(Image.new('RGB',(100,200),'blue'))
         self.assertIs(self.app._grid_preview_source()[0],paired)
         self.app.preview_mode.set('游戏画面');self.app._set_preview_mode()
         self.assertEqual(self.app.grid_inspector.window.winfo_manager(),'')
-        self.app.preview_mode.set('方格战场');self.app._set_preview_mode()
-        self.assertEqual(self.app.grid_inspector.mode,'grid')
+        self.app.preview_mode.set('YOLO识别');self.app._set_preview_mode()
+        self.assertEqual(self.app.grid_inspector.mode,'yolo')
         self.app.show_grid_world()
-        self.assertEqual(self.app.grid_inspector.mode,'compare')
+        self.assertEqual(self.app.grid_inspector.mode,'yolo_compare')
         self.app._toggle_preview_size()
         self.assertEqual(self.app.preview_card.grid_info()['columnspan'],2)
         self.assertEqual(self.app.log_card.winfo_manager(),'')
