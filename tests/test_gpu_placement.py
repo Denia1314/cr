@@ -44,6 +44,25 @@ class PlacementBatchTests(unittest.TestCase):
         actual = placement_points(p.sim,state,'musketeer',1,limit=24)
         self.assertEqual(expected,actual)
 
+    def test_mixed_roster_batch_matches_weighted_constituent_scores(self):
+        p=PredictivePlanner(self.kb,{})
+        state=p.initial(world(),7,1)
+        enemies=[e for e in state.entities if e.side==-1 and not e.tower]
+        towers=[e for e in state.entities if e.side==1 and e.tower]
+        projected=[(e,(e.x,e.y)) for e in enemies]
+        roster=self.kb.roster('goblin_gang')
+        points=[(3.,18.),(8.,22.),(15.,28.)]
+        for device in ('cpu','cuda'):
+            if device=='cuda':
+                try:
+                    import torch
+                    if not torch.cuda.is_available():continue
+                except ImportError:continue
+            batch=PlacementBatch(device,trajectory=True)
+            expected=sum(np.asarray(batch.score(points,u,projected,towers,count=n))*n for u,n in roster)/sum(n for _,n in roster)
+            actual=batch.score_roster(points,roster,projected,towers)
+            np.testing.assert_allclose(actual,expected,rtol=1e-12,atol=1e-12)
+
     def test_endangered_tower_is_saved_instead_of_choosing_cheap_loss(self):
         from dataclasses import replace
         w = world()

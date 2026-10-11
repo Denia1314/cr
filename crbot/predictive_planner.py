@@ -52,9 +52,14 @@ class PredictivePlanner:
         self.sim.placement_grid_step = float(config.get("placement_grid_step", 1.))
         self.clock = time.perf_counter
         self.combat_pool = None
+        self.gpu_combat = None
         self._urgent_recovery = False
 
     def warm_pool(self):
+        if self.config.get('gpu_combat', False) and self.gpu_combat is None:
+            from .gpu_combat import GPUCombat
+            self.gpu_combat = GPUCombat(self.sim,str(self.config.get('compute_device','auto')),
+                                       int(self.config.get('gpu_combat_batch_size',128)))
         if self.config.get('parallel_combat', False) and self.combat_pool is None:
             from .parallel_combat import CombatPool
             self.combat_pool = CombatPool(self.kb.payload, self.config)
@@ -174,6 +179,7 @@ class PredictivePlanner:
 
     def plan(self, world: WorldSnapshot, *, action_scorer=None, learning_status=None) -> PlanResult:
         self.warm_pool()
+        gpu_before = (self.gpu_combat.completed,self.gpu_combat.fallbacks) if self.gpu_combat is not None else (0,0)
         combat_mode = 'serial'
         fast = bool(self.config.get("fast_defense", False))
         started = self.clock()
@@ -193,7 +199,10 @@ class PredictivePlanner:
         published_round = 0
         coarse_rows = []
         coarse_deadline=deadline
-        refinement_start=started+(deadline-started)*.5
+        # Spend most of the existing budget on different immediate roots;
+        # optional two-card refinements must not end spatial coverage at one/card.
+        root_fraction = max(.5, min(.9, float(self.config.get('root_comparison_budget_fraction', .85))))
+        refinement_start=started+(deadline-started)*root_fraction
         result = PlanResult(world.revision, world.at, world.at + float(self.config.get("max_plan_age_s", 1.0)),
                             "unavailable", knowledge_version=self.kb.version)
         if self.sim.grid_navigation:
@@ -230,7 +239,7 @@ class PredictivePlanner:
                 deadline=started+max(.01,min(.24,float(self.config.get('dense_defense_budget_ms',240))/1000))
                 total_deadline=deadline
                 coarse_deadline=deadline
-                refinement_start=started+(deadline-started)*.5
+                refinement_start=started+(deadline-started)*root_fraction
             result.compute['defense_timing']=dict(urgent=urgent,dense=dense,budget_ms=round((deadline-started)*1000),
                 enemy_elixir_interval=list(world.enemy_elixir),enemy_elixir_estimate=world.enemy_elixir_estimate,
                 enemy_hand_observed=False)
@@ -280,8 +289,18 @@ class PredictivePlanner:
                     scenarios.insert(0, (world.enemy_elixir[0], .65, False))
                     scenarios.insert(1, (world.enemy_elixir_estimate, .85, False))
             coarse_rows = []
+            root_order = {(a.slot,a.card_id,a.x,a.y): i for i,a in enumerate(roots)}
             initial_scenarios = [self.initial(world, cost, hp) for cost, hp, _ in scenarios]
-            if (self.combat_pool is not None and self.combat_pool.available
+            if self.gpu_combat is not None and self.gpu_combat.available and all(self.gpu_combat.supports(s) for s in initial_scenarios):
+                finalization_reserve=min(.015,max(0.,(deadline-self.clock())/4))
+                deadline-=finalization_reserve
+                coarse_deadline=min(coarse_deadline,deadline)
+                refinement_start=min(refinement_start,started+(deadline-started)*root_fraction)
+                result.compute['gpu_finalization_reserve_ms']=round(finalization_reserve*1000,2)
+                combat_mode = 'cuda_batched'
+                rows = self.gpu_combat.rows(self,world,roots,scenarios,horizon,result.tactical_phase,
+                                            coarse_deadline,initial_scenarios,stop_at=refinement_start)
+            elif (self.combat_pool is not None and self.combat_pool.available
                     and all(future.done() for future in self.combat_pool.pending)):
                 combat_mode = 'parallel'
                 rows = self.combat_pool.rows(world, roots, scenarios, horizon, result.tactical_phase, coarse_deadline, completion_order=True)
@@ -304,8 +323,7 @@ class PredictivePlanner:
                             and any(r['action']['card_id'] is None for r in coarse_rows)):
                         # Commit equal spatial rounds across all usable cards. A timeout cannot
                         # prefer a card simply because its next location happened to finish first.
-                        order = {(a.slot,a.card_id,a.x,a.y): i for i,a in enumerate(roots)}
-                        coarse_rows.sort(key=lambda r: order[(r['action']['slot'],r['action']['card_id'],r['action']['x'],r['action']['y'])])
+                        coarse_rows.sort(key=lambda r: root_order[(r['action']['slot'],r['action']['card_id'],r['action']['x'],r['action']['y'])])
                         counts = {}
                         balanced = []
                         for row in coarse_rows:
@@ -316,7 +334,7 @@ class PredictivePlanner:
                         result.candidates = balanced
                         result.completed_depth = 1
                         published_round = completed_round
-                        if fast and self.config.get('unified_tactics',False) and self.clock()>=refinement_start:
+                        if combat_mode!='cuda_batched' and fast and self.config.get('unified_tactics',False) and self.clock()>=refinement_start:
                             break
             if hasattr(rows,'close'):
                 rows.close()
@@ -524,6 +542,18 @@ class PredictivePlanner:
         if self.combat_pool is not None:
             result.compute["parallel_combat"] = self.combat_pool.status()
             result.compute["parallel_combat"]['last_mode'] = combat_mode
+        if self.gpu_combat is not None:
+            result.compute['gpu_combat'] = self.gpu_combat.status()
+            gpu_roots=self.gpu_combat.completed-gpu_before[0]
+            cpu_roots=self.gpu_combat.fallbacks-gpu_before[1]
+            result.compute['gpu_combat'].update(frame_gpu_roots=gpu_roots,frame_cpu_fallback_roots=cpu_roots)
+            result.compute['combat_device']='cuda_with_cpu_fallback' if gpu_roots and cpu_roots else self.gpu_combat.device if gpu_roots else 'cpu'
+            if gpu_roots:
+                result.simulation_version='spatial_v7_cuda_supported_mechanics'
+            if combat_mode!='cuda_batched' and self.gpu_combat.available:
+                cpu_roots=len(result.candidates)
+                result.compute['gpu_combat']['frame_cpu_fallback_roots']=cpu_roots
+            result.reason+=f'；CUDA 完整精算 {gpu_roots} / 特殊机制 CPU 回退 {cpu_roots}'
         result.compute["arena_geometry"]=asdict(self.sim.geometry)
         result.compute["grid_step_tiles"] = self.sim.placement_grid_step
         result.compute["all_placement_points"] = bool(self.config.get("all_placement_points",False)) and not bounded_recovery

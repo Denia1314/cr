@@ -41,19 +41,28 @@ def _route(start, goal, bridges, blocked, air):
     return ()
 
 
-def obstacles(state, mover, target):
+@lru_cache(maxsize=4096)
+def _obstacle_footprints(shapes):
     blocked = set()
-    if mover.spec.air:
-        return ()
-    for entity in state.entities:
-        if entity.uid in (mover.uid,target.uid) or entity.hp <= 0 or not (entity.tower or entity.spec.building):
-            continue
-        radius = entity.spec.radius + min(.4,mover.spec.radius)
-        for x in range(max(0,int(entity.x-radius)),min(18,int(entity.x+radius)+1)):
-            for y in range(max(0,int(entity.y-radius)),min(32,int(entity.y+radius)+1)):
-                if math.hypot(x+.5-entity.x,y+.5-entity.y) < radius:
+    for ex, ey, radius in shapes:
+        for x in range(max(0,int(ex-radius)),min(18,int(ex+radius)+1)):
+            for y in range(max(0,int(ey-radius)),min(32,int(ey+radius)+1)):
+                if math.hypot(x+.5-ex,y+.5-ey) < radius:
                     blocked.add((x,y))
     return tuple(sorted(blocked))
+
+
+def obstacles(state, mover, target):
+    if mover.spec.air:
+        return ()
+    shapes = tuple((e.x, e.y, e.spec.radius+min(.4,mover.spec.radius)) for e in state.entities
+                   if e.uid not in (mover.uid,target.uid) and e.hp > 0 and (e.tower or e.spec.building))
+    return _obstacle_footprints(shapes)
+
+
+@lru_cache(maxsize=4096)
+def _blocked_set(blocked):
+    return frozenset(blocked)
 
 
 def route(state, mover, target, geometry):
@@ -62,8 +71,9 @@ def route(state, mover, target, geometry):
     blocked=obstacles(state,mover,target)
     if (mover.y-16)*(target.y-16)>=0:
         steps=max(1,math.ceil(math.hypot(target.x-mover.x,target.y-mover.y)*3))
+        blocked_set = _blocked_set(blocked)
         if all(passable(*cell(mover.x+(target.x-mover.x)*i/steps,
-                             mover.y+(target.y-mover.y)*i/steps),geometry.bridges,blocked)
+                             mover.y+(target.y-mover.y)*i/steps),geometry.bridges,blocked_set)
                for i in range(1,steps+1)):
             return [(mover.x,mover.y),(target.x,target.y)]
     nodes = _route(cell(mover.x,mover.y),cell(target.x,target.y),tuple(geometry.bridges),

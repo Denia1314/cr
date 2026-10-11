@@ -114,7 +114,26 @@ class PlacementBatch:
         self.calls+=1
         return result
 
-    def score(self, points, spec, projected, towers, *, count=1):
+    def score_roster(self, points, roster, projected, towers):
+        """Aggregate mixed-card constituents before one GPU-to-host transfer."""
+        if not projected:
+            return None
+        def calculate():
+            original_device = self.device
+            xp, arr = self._arrays()
+            shared_points = arr(points)
+            combined = None
+            for spec, count in roster:
+                values = self.score(shared_points, spec, projected, towers, count=count, _tensor=True)
+                if self.device != original_device:
+                    raise RuntimeError('GPU roster switched device; recompute complete roster on CPU')
+                weighted = values*count
+                combined = weighted if combined is None else combined+weighted
+            combined = combined/sum(count for _,count in roster)
+            return combined.tolist() if self.device == 'cpu' else combined.cpu().tolist()
+        return self._run(calculate)
+
+    def score(self, points, spec, projected, towers, *, count=1, _tensor=False):
         # Precompute immutable card attributes once; all positions share this batch.
         if not projected:
             return None
@@ -135,18 +154,18 @@ class PlacementBatch:
         cover = [[t.x,t.y,t.spec.reach+t.spec.radius,t.spec.damage/max(.1,t.spec.period)] for t in towers]
         eligible = [[float(('air' if e.spec.air else 'ground') in t.spec.targets) for t in towers] for e,_ in projected]
         try:
-            result = self._compute(points, rows, cover, eligible, spec)
+            result = self._compute(points, rows, cover, eligible, spec, return_tensor=_tensor)
         except (RuntimeError, ImportError, OSError) as exc:
             self.error = str(exc)
             self.device = 'cpu'
-            result = self._compute(points, rows, cover, eligible, spec)
+            result = self._compute(points, rows, cover, eligible, spec, return_tensor=_tensor)
         self.calls += 1
         if self.calls == 1 and self.device.startswith("cuda"):
             print(f"[GPU] Defensive placement ranking: {self.device}, positions={len(points)}")
         self.positions += len(points)
         return result
 
-    def _compute(self, points, rows, cover, eligible, spec):
+    def _compute(self, points, rows, cover, eligible, spec, *, return_tensor=False):
         if self.device == 'cpu':
             xp = np
             arr = lambda a: np.asarray(a,dtype=np.float64)
@@ -154,7 +173,7 @@ class PlacementBatch:
         else:
             import torch
             xp = torch
-            arr = lambda a: torch.tensor(a,dtype=torch.float64,device=self.device)
+            arr = lambda a: torch.as_tensor(a,dtype=torch.float64,device=self.device)
             clamp = lambda a: a.clamp_min(0)
         p, e = arr(points), arr(rows)
         distance = ((p[:,None,:]-e[None,:,:2])**2).sum(axis=-1)**.5
@@ -193,4 +212,6 @@ class PlacementBatch:
             tower_damage=((hp>0)*(ticks>=arrival[:,:,None])*e[None,:,None,8]*self.trajectory_step).sum(axis=-1)
             value-=tower_damage/150
         result = value.sum(axis=-1)
+        if return_tensor:
+            return result
         return result.tolist() if self.device == 'cpu' else result.cpu().tolist()

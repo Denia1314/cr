@@ -84,7 +84,7 @@ def ensure_requirements(cuda=False):
     signature = hashlib.sha256(b''.join(p.read_bytes() for p in files)).hexdigest()
     marker = environment_root() / ('.requirements-cuda' if cuda else '.requirements-cpu')
     checked = run([str(environment_python()), '-c',
-                   'import cv2,numpy,PIL' + ('; from ultralytics import YOLO' if cuda else '')], capture=True)
+                   'import cv2,numpy,PIL' + ('; from ultralytics import YOLO; import cupy' if cuda else '')], capture=True)
     if checked.returncode or not marker.is_file() or marker.read_text() != signature:
         if run([str(environment_python()), '-m', 'pip', 'install', '--disable-pip-version-check',
                 '-r', str(ROOT / requirement)]).returncode:

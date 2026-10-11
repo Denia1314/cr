@@ -15,7 +15,7 @@ def initialize(payload, config, barrier):
     global _planner
     from .knowledge import KnowledgeBase
     from .predictive_planner import PredictivePlanner
-    _planner = PredictivePlanner(KnowledgeBase(payload), {**config, 'parallel_combat': False, 'gpu_placement': False})
+    _planner = PredictivePlanner(KnowledgeBase(payload), {**config, 'parallel_combat': False, 'gpu_placement': False, 'gpu_combat': False})
     if config.get('gpu_placement', False):
         # Enemy-response shortlists retain the same batched ranking semantics,
         # without creating a CUDA context in each CPU worker.

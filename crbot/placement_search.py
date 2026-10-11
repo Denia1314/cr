@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 
 
 def screen(x, y):
@@ -14,12 +15,12 @@ def spatial_rounds(ranked, side):
     for row in ranked:
         depth = row[1][1] if side == 1 else 32-row[1][1]
         band = 0 if depth < 21 else 1 if depth < 26 else 2
-        groups.setdefault(band, []).append(row)
+        groups.setdefault(band, deque()).append(row)
     result = []
     # Preserve heuristic order between bands, and every point within each band.
     while groups:
         for band in list(groups):
-            result.append(groups[band].pop(0))
+            result.append(groups[band].popleft())
             if not groups[band]:
                 del groups[band]
     return result
@@ -115,15 +116,17 @@ def placement_points(sim, state, card_id, side, *, limit=12, quick=False):
             return sum(unit_value(p, member, count)*count for member, count in roster) / sum(n for _, n in roster)
     else:
         return []
+    normalized_points = None
     if limit is None:
         from .placement_domain import deployment_domain
-        points = [sim.xy(x,y) for x,y in deployment_domain(sim,state,card_id,side,step=getattr(sim,"placement_grid_step",1.))]
+        normalized_points = deployment_domain(sim,state,card_id,side,step=getattr(sim,"placement_grid_step",1.))
+        points = [sim.xy(x,y) for x,y in normalized_points]
     ranked = []
     seen = set()
-    for point in points:
-        x, y = sim.screen(*point)
-        if limit is None:
-            x, y = round(x,12), round(y,12)
+    for index, point in enumerate(points):
+        # The finite domain already has exact normalized deployment coordinates.
+        # Avoid converting thousands of points back through arena geometry.
+        x, y = normalized_points[index] if normalized_points is not None else sim.screen(*point)
         key = (round(x, 4), round(y, 4))
         if key in seen or (limit is not None and not sim.legal_placement(state, card_id, side, x, y)):
             continue
@@ -140,13 +143,21 @@ def placement_points(sim, state, card_id, side, *, limit=12, quick=False):
         elif roster:
             # Every constituent participates; e.g. a front unit cannot hide the
             # ranged/air-targeting members of a mixed card.
-            scores = [batch.score(positions, member, projected, towers, count=count)
-                      for member, count in roster] if hasattr(batch, 'roster_scoring') else [None]
-            if all(v is not None for v in scores):
-                values = [sum(v[i]*count for v, (_, count) in zip(scores, roster))/sum(n for _, n in roster)
-                          for i in range(len(positions))]
+            if len(roster)>1 and hasattr(batch, 'score_roster'):
+                values = batch.score_roster(positions, roster, projected, towers)
+                scores = []
+            else:
+                scores = [batch.score(positions, member, projected, towers, count=count)
+                          for member, count in roster] if hasattr(batch, 'roster_scoring') else [None]
+            if scores and all(v is not None for v in scores):
+                import numpy as np
+                combined = np.zeros(len(positions), dtype=np.float64)
+                for score, (_, count) in zip(scores, roster):
+                    combined += np.asarray(score, dtype=np.float64)*count
+                values = combined / sum(count for _, count in roster)
+    special = bool(special_events or any(spec.dash_damage for spec, _ in roster))
     ranked = [((values[i] if values is not None else value(point))+
-               (placement_special_bonus(point,roster,projected,special_events) if roster and not spell else 0), point, normalized)
+               (placement_special_bonus(point,roster,projected,special_events) if special and not spell else 0), point, normalized)
               for i, (_, point, normalized) in enumerate(ranked)]
     ranked.sort(key=lambda r: r[0], reverse=True)
     if roster and not spell:
