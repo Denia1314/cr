@@ -1,5 +1,7 @@
 # YOLO 切片接入（V2 / 3.13.0）
 
+本机已按用户要求直接启用 `training.slice_model_path=models/battlefield/katacr/candidate/weights/best.pt`，优先加载完成 50 轮训练的切片候选模型。此为显式使用候选，不改变冠军注册表及未验收标记。停止并重新启动机器人任务后生效；仅更新配置不会替换已运行实例中的模型。权重仍保存在本地，另一台机器使用此配置前需要自行准备对应权重和候选 manifest。回退时删除此配置项，即恢复既有冠军/公开基线选择流程。
+
 来源：https://github.com/wty-yy/Clash-Royale-Detection-Dataset
 固定版本：`31b4151fedb1b914e99c3c122c16dca61cb2b905`，上游 MIT 许可随素材保存。
 
