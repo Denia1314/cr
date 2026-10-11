@@ -1,6 +1,7 @@
 """Explicit experimental YOLO adapter; unit identity and badge team evidence."""
 import json
 import hashlib
+import time
 from pathlib import Path
 
 from .gpu import vision_device
@@ -37,6 +38,7 @@ class SliceBattlefield:
                 self.fallback_error = str(exc)
 
     def detect(self, image):
+        started = time.perf_counter()
         # Upstream part2 labels cover the arena, excluding the hand panel.
         arena_model = self.metadata.get('training_dataset_kind') == 'real_battle_bootstrap'
         bottom = round(image.height * .8) if arena_model else image.height
@@ -44,6 +46,7 @@ class SliceBattlefield:
         prediction = self.model.predict(source, conf=float(self.config.get('runtime_confidence', .7)),
                                         imgsz=int(self.config.get('image_size', 640)),
                                         device=self.device, verbose=False)[0]
+        primary_finished = time.perf_counter()
         self.last_raw_boxes = len(prediction.boxes.cls.cpu().tolist()) if prediction.boxes is not None else 0
         candidates = []
         if prediction.boxes is not None:
@@ -55,7 +58,9 @@ class SliceBattlefield:
                 box = [box[0], box[1]*bottom/image.height, box[2], box[3]*bottom/image.height]
                 if card_id and .20 <= (box[1]+box[3])/2 <= .80:
                     candidates.append((card_id, name, confidence, box))
-        badges = associate_badges([c[3] for c in candidates], find_level_badges(image))
+        level_badges = find_level_badges(image)
+        badges_finished = time.perf_counter()
+        badges = associate_badges([c[3] for c in candidates], level_badges)
         result = []
         for i, (card_id, name, confidence, box) in enumerate(candidates):
             badge = badges.get(i)
@@ -69,14 +74,20 @@ class SliceBattlefield:
         self.calls += 1
         self.last_primary_units = len(result)
         self.last_fallback_used = False
-        if not result and getattr(self, 'fallback', None) is not None:
+        # Both models require the same current-frame team badge evidence. With
+        # none present the fallback cannot accept a unit; still run the primary
+        # YOLO every frame, and reuse badge extraction when fallback is useful.
+        if not result and level_badges and getattr(self, 'fallback', None) is not None:
             try:
-                result = self.fallback.detect(image)
+                result = self.fallback.detect(image, level_badges=level_badges)
                 self.last_fallback_used = True
                 self.fallback_error = ''
             except Exception as exc:
                 self.fallback_error = str(exc)
         self.last_accepted_units = len(result)
+        self.last_primary_ms = (primary_finished-started)*1000
+        self.last_badges_ms = (badges_finished-primary_finished)*1000
+        self.last_fallback_ms = getattr(self.fallback, 'last_ms', 0.) if self.last_fallback_used else 0.
         return result
 
     def status(self):
@@ -90,4 +101,7 @@ class SliceBattlefield:
                     fallback_loaded=getattr(self, 'fallback', None) is not None,
                     fallback_used=getattr(self, 'last_fallback_used', False),
                     fallback_error=getattr(self, 'fallback_error', ''),
+                    primary_ms=round(getattr(self, 'last_primary_ms', 0.),3),
+                    badges_ms=round(getattr(self, 'last_badges_ms', 0.),3),
+                    fallback_ms=round(getattr(self, 'last_fallback_ms', 0.),3),
                     battle_acceptance=False, promoted=False)

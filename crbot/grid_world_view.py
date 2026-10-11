@@ -310,7 +310,9 @@ class GridWorldWindow:
         if self.packet is not None:
             if self.mode in {'yolo','yolo_compare'}:
                 model=self.packet.get('model',{})
-                self.label.configure(text=f"YOLO 识别 · 更新 {self.source_fps:.1f} FPS · {len(self.packet.get('detections',[]))} 个单位 · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方",wraplength=max(80,self.canvas.winfo_width()))
+                speed = (f"识别 {self.packet['recognition_fps']:.1f} FPS · 单帧 {self.packet['inference_ms']:.0f} ms · "
+                         if 'recognition_fps' in self.packet else '')
+                self.label.configure(text=f"YOLO 识别 · {speed}更新 {self.source_fps:.1f} FPS · {len(self.packet.get('detections',[]))} 个单位 · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方",wraplength=max(80,self.canvas.winfo_width()))
                 return
             self.label.configure(text=f"目标 30 FPS · 新数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型" +
                 ('' if self.embedded else '\n'+self.packet.get('decision','')[:65]),wraplength=max(80,self.canvas.winfo_width()))

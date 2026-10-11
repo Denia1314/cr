@@ -213,6 +213,7 @@ class BotEngine:
             "hand_matching": hand_status,
             "live_grid": self.live_grid_stream.status() if getattr(self,'live_grid_stream',None) else {"enabled":False},
             "battlefield_recognition": self.policy.learned_detector.status() if getattr(self.policy, "learned_detector", None) is not None else {"loaded": False},
+            "yolo_stream": self.yolo_stream.status() if getattr(self, 'yolo_stream', None) else {"enabled": False},
             "perception_stream": self.perception_stream.status() if getattr(self, "perception_stream", None) else {"enabled": False},
             "capture": {**self.frame_stream.status(),"backend":getattr(self.device,"capture_backend","unknown"),"ipc_error":getattr(self.device,"capture_ipc_error","")} if getattr(self,"frame_stream",None) else {"backend":"synchronous"},
             "replay_model": {
@@ -1215,11 +1216,18 @@ class BotEngine:
         self.frame_stream=None
         self.perception_stream=None
         self.live_grid_stream=None
+        self.yolo_stream=None
         if self.config.get('automation',{}).get('latest_frame_capture',False):
             from .frame_stream import LatestFrameStream
             self.frame_stream=LatestFrameStream(getattr(self.device,'screenshot_fast',self.device.screenshot),
                 interval=float(self.config.get('timing',{}).get('capture_interval_s',1/40))).start()
         try:
+            if self.frame_stream is not None and self.config.get('automation', {}).get('continuous_yolo', True) and getattr(self.policy, 'learned_detector', None) is not None:
+                from .learned_perception import LearnedBattlefieldDetector
+                from .yolo_stream import YoloStream
+                self.yolo_stream = YoloStream(self.frame_stream,
+                    lambda: LearnedBattlefieldDetector(self.project_root, self.policy.catalog, self.config.get('training', {})),
+                    self.policy.catalog, self.config.get('automation', {}).get('yolo_target_fps', 20)).start()
             if self.frame_stream is not None and self.config.get('automation',{}).get('continuous_perception',False):
                 from .live_grid import LiveGridStream
                 self.live_grid_stream=LiveGridStream(self.frame_stream,
@@ -1230,6 +1238,7 @@ class BotEngine:
                 self.perception_stream = PerceptionStream(self.frame_stream, self.policy.hand_recognizer).start()
             self._run_single_marker(package)
         finally:
+            if self.yolo_stream is not None:self.yolo_stream.close()
             if self.live_grid_stream is not None:self.live_grid_stream.close()
             if self.perception_stream is not None:
                 self.perception_stream.close()

@@ -31,6 +31,10 @@ UNSUPPORTED = frozenset({"brawler", "elixir_golem_medium", "elixir_golem_small",
     "giant_snowball", "golemite", "hog", "lava_pup", "phoenix_egg", "phoenix_small",
     "rascal_boy", "rascal_girl", "royal_guardian"})
 
+# Exact existing FP16 / 255 conversion for every possible byte. Avoid CPU
+# half-precision division over half a million elements on each fallback frame.
+_NORMALIZED_PIXELS = np.arange(256, dtype=np.float16) / 255
+
 
 def unit_card_id(name, catalog):
     if name in UNSUPPORTED:
@@ -48,9 +52,9 @@ def prepare_image(image, height=480, width=352):
     scale = min(width / crop.width, height / crop.height)
     nw, nh = max(1, int(crop.width * scale)), max(1, int(crop.height * scale))
     left, padtop = (width - nw + 1) // 2, (height - nh + 1) // 2
-    pixels = np.full((height, width, 3), 114, dtype=np.float16)
-    pixels[padtop:padtop + nh, left:left + nw] = np.asarray(crop.resize((nw, nh)), dtype=np.float16)
-    tensor = np.ascontiguousarray(pixels.transpose(2, 0, 1)[None] / 255)
+    pixels = np.full((height, width, 3), 114, dtype=np.uint8)
+    pixels[padtop:padtop + nh, left:left + nw] = np.asarray(crop.resize((nw, nh)), dtype=np.uint8)
+    tensor = np.ascontiguousarray(_NORMALIZED_PIXELS[pixels].transpose(2, 0, 1)[None])
     return tensor, (left, padtop, nw, nh, top, bottom, image.width, image.height)
 
 
@@ -112,7 +116,7 @@ class PretrainedBattlefield:
         tensor, _ = prepare_image(Image.new("RGB", (540, 960)))
         self.session.run(None, {self.input_name: tensor})
 
-    def detect(self, image):
+    def detect(self, image, *, level_badges=None):
         started = time.perf_counter()
         tensor, transform = prepare_image(image)
         rows = np.asarray(self.session.run(None, {self.input_name: tensor})[0])[0]
@@ -140,7 +144,8 @@ class PretrainedBattlefield:
                 rejected["invalid"] += 1
                 continue
             candidates.append((card_id, unit_name, bbox, confidence))
-        badges = associate_badges([c[2] for c in candidates], find_level_badges(image))
+        badges = associate_badges([c[2] for c in candidates],
+                                  find_level_badges(image) if level_badges is None else level_badges)
         for index, (card_id, unit_name, bbox, confidence) in enumerate(candidates):
             badge = badges.get(index)
             if badge is None:

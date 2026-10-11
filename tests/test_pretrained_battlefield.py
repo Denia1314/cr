@@ -20,6 +20,15 @@ from crbot.pretrained_battlefield import PretrainedBattlefield, classify_side, p
 from tests.test_learning import make_card
 
 
+class FastPreprocessingContractTests(unittest.TestCase):
+    def test_byte_normalization_is_bit_identical_to_original_fp16_contract(self):
+        pixels = (np.arange(640*352*3) % 256).astype(np.uint8).reshape(640,352,3)
+        tensor, _ = prepare_image(Image.fromarray(pixels))
+        expected = np.ascontiguousarray(pixels[32:512].astype(np.float16).transpose(2,0,1)[None] / 255)
+        np.testing.assert_array_equal(tensor, expected)
+        self.assertEqual(tensor.dtype, np.float16)
+
+
 class AdapterTests(unittest.TestCase):
     def test_letterbox_roundtrip_for_both_screen_ratios_and_odd_sizes(self):
         for w,h in [(540,960),(1080,1920),(1080,2400),(541,961),(960,540)]:

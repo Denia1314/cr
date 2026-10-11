@@ -18,6 +18,19 @@ from tests.test_prediction import knowledge, world
 
 
 class BadgeEvidenceTests(unittest.TestCase):
+    def test_fast_color_mask_preserves_thresholds_and_arena_exclusions(self):
+        import cv2
+        rgb = np.random.default_rng(23).integers(0,256,(160,90,3),dtype=np.uint8)
+        r,g,b = rgb.astype(float).transpose(2,0,1)
+        expected = ((rgb.min(2)>160)&(rgb.max(2).astype(int)-rgb.min(2)<65)) | ((r>170)&(g>125)&(b<g*.65))
+        top,bottom,left,right = round(.18*160),round(.78*160),round(.08*90),round(.92*90)
+        expected[:top]=False; expected[bottom:]=False; expected[:,:left]=False; expected[:,right:]=False
+        expected[round(.68*160):,round(.75*90):]=False
+        original = cv2.connectedComponentsWithStats
+        with patch('crbot.unit_badges.cv2.connectedComponentsWithStats', wraps=original) as connected:
+            find_level_badges(Image.fromarray(rgb))
+        np.testing.assert_array_equal(connected.call_args.args[0], expected[top:bottom,left:right].astype('uint8'))
+
     def test_red_eleven_is_enemy_and_blue_eleven_is_ally_even_with_opposite_model(self):
         for side,scores in ((-1,[.99,.01]),(1,[.01,.99])):
             crop=find_level_badges(badge_image(side),arena_only=False)

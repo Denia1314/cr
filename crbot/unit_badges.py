@@ -13,22 +13,26 @@ def find_level_badges(image, *, arena_only=True):
         small = small.resize((540, round(image.height*scale)), Image.Resampling.BILINEAR)
     rgb = np.asarray(small)
     height, width = rgb.shape[:2]
-    r,g,b=rgb.astype(float).transpose(2,0,1)
-    white = ((rgb.min(2)>160) & (rgb.max(2).astype(int)-rgb.min(2)<65)) | ((r>170)&(g>125)&(b<g*.65))
+    # Keep identical color thresholds without repeatedly reducing full RGB
+    # arrays or allocating three float64 planes on every recognition frame.
+    top = round(.18*height) if arena_only else 0
+    bottom = round(.78*height) if arena_only else height
+    left = round(.08*width) if arena_only else 0
+    right = round(.92*width) if arena_only else width
+    r,g,b = cv2.split(rgb[top:bottom,left:right])
+    minimum = cv2.min(r, cv2.min(g,b))
+    maximum = cv2.max(r, cv2.max(g,b))
+    white = ((minimum>160) & (cv2.subtract(maximum,minimum)<65)) | ((r>170)&(g>125)&(b.astype(np.uint16)*20<g.astype(np.uint16)*13))
     if arena_only:
-        white[:round(.18*height)] = False
-        white[round(.78*height):] = False
-        white[:,:round(.08*width)] = False
-        white[:,round(.92*width):] = False
         # Champion ability control is UI, outside the visible fighting area.
-        white[round(.68*height):,round(.75*width):] = False
+        white[max(0,round(.68*height)-top):,max(0,round(.75*width)-left):] = False
     _, labels, stats, _ = cv2.connectedComponentsWithStats(white.astype("uint8"))
     pixel = width / 540 if arena_only else 1.
     glyphs=[]
     for label,(x,y,w,h,area) in enumerate(stats[1:],1):
         if not (max(1,round(pixel))<=w<=13*pixel and 6*pixel<=h<=17*pixel and area>=5*pixel**2):
             continue
-        glyphs.append((int(x),int(y),int(w),int(h),label))
+        glyphs.append((int(x)+left,int(y)+top,int(w),int(h),label))
     groups=[];remaining=set(range(len(glyphs)))
     while remaining:
         seed=remaining.pop();group=[seed];pending=[seed]
@@ -52,13 +56,13 @@ def find_level_badges(image, *, arena_only=True):
         if len(group)==1:
             # A lone solid highlight is not a numeral. Single digits need shape.
             gx,gy,gw,gh,label=group[0]
-            occupancy=float((labels[gy:gy+gh,gx:gx+gw]==label).mean())
+            occupancy=float((labels[gy-top:gy+gh-top,gx-left:gx+gw-left]==label).mean())
             if not .42<=gw/gh<=.95 or occupancy>.82:
                 continue
         px=max(2,round(3*pixel));py=max(1,round(2*pixel))
-        left,top=max(0,x-px),max(0,y-py)
+        patch_left,patch_top=max(0,x-px),max(0,y-py)
         rgt,btm=min(width,right+px),min(height,bottom+py)
-        patch=rgb[top:btm,left:rgt].astype(float)
+        patch=rgb[patch_top:btm,patch_left:rgt].astype(float)
         r,g,b=patch.transpose(2,0,1)
         red=(r>90)&(r>g*1.6)&(r>b*1.05)
         blue=(b>100)&(b>r*1.6)&(b>g*1.05)
@@ -75,12 +79,12 @@ def find_level_badges(image, *, arena_only=True):
             continue
         ones=[]
         for gx,gy,gw,gh,label in group:
-            glyph=labels[gy:gy+gh,gx:gx+gw]==label
+            glyph=labels[gy-top:gy+gh-top,gx-left:gx+gw-left]==label
             ones.append(gw/gh<=.48 and float(glyph.mean(axis=0).max())>=.85)
         level=11 if len(group)==2 and all(ones) else None
         result.append(dict(side=1 if index==0 else -1,level=level,
             x=(x+right)/2/width,y=(y+bottom)/2/height,
-            bbox=[left/width,top/height,rgt/width,btm/height],
+            bbox=[patch_left/width,patch_top/height,rgt/width,btm/height],
             confidence=.95,evidence="level_badge"))
     return result
 

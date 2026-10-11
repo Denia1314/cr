@@ -87,6 +87,7 @@ class LearnedBattlefieldDetector:
         self,
         image: Image.Image,
         fallback: dict[str, LaneThreat],
+        *, include_health: bool = True,
     ) -> dict[str, LaneThreat]:
         self.observed_allies = []
         self.observed_enemies = []
@@ -146,7 +147,7 @@ class LearnedBattlefieldDetector:
             x, y = (x1+x2)/2, (y1+y2)/2
             lane = "left" if x < .5 else "right"
             observation = {**detection, "x": round(x,4), "y": round(y,4), "lane": lane,
-                           **read_unit_health(image, bbox, side=detection["side"])}
+                           **(read_unit_health(image, bbox, side=detection["side"]) if include_health else {})}
             if detection["side"] == 1:
                 self.observed_allies.append(observation)
             else:

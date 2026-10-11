@@ -73,7 +73,7 @@ class SliceDatasetTests(unittest.TestCase):
         boxes.xyxyn.cpu.return_value.tolist.return_value = [[.1, .3, .2, .5]]
         image = Image.new('RGB', (640, 640))
         with patch('crbot.slice_detector.unit_card_id', return_value='hog_rider'), \
-             patch('crbot.slice_detector.find_level_badges', return_value=[]), \
+             patch('crbot.slice_detector.find_level_badges', return_value=[]) as level_badges, \
              patch('crbot.slice_detector.associate_badges', return_value={}) as badges:
             self.assertEqual(detector.detect(image), [])
             badges.return_value = {0: dict(side=0, confidence=.9, evidence='level_badge', level=11, bbox=[.1,.2,.2,.3])}
@@ -90,6 +90,11 @@ class SliceDatasetTests(unittest.TestCase):
             detector.fallback = MagicMock()
             detector.fallback.detect.return_value = [{'identity_source':'public_pretrained'}]
             badges.return_value = {}
+            self.assertEqual(detector.detect(image), [])
+            detector.fallback.detect.assert_not_called()
+            self.assertFalse(detector.last_fallback_used)
+            level_badges.return_value = [dict(side=-1, confidence=.9, evidence='level_badge')]
             self.assertEqual(detector.detect(image), [{'identity_source':'public_pretrained'}])
+            detector.fallback.detect.assert_called_once_with(image, level_badges=level_badges.return_value)
             self.assertEqual(detector.last_primary_units, 0)
             self.assertTrue(detector.last_fallback_used)

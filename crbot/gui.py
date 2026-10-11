@@ -1217,6 +1217,9 @@ class RoyalTrainerApp:
 
     def _grid_preview_source(self):
         if self.preview_mode.get()!='推演快照':
+            stream = getattr(self.engine, 'yolo_stream', None) if self.engine else None
+            if stream is not None:
+                return stream.latest() or (self.current_image, None)
             paired=getattr(getattr(self.engine,'policy',None),'yolo_frame',None) if self.engine else None
             return paired if paired is not None else (self.current_image,None)
         stream=getattr(self.engine,'live_grid_stream',None) if self.engine else None
