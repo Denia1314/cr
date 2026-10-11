@@ -1,6 +1,6 @@
 """MuMu offline-AI battle automation reference implementation."""
 
-__version__ = "3.12.13"
+__version__ = "3.12.14"
 
 # Delivered capabilities, not model identities or claims of battle acceptance.
 # Keep chronological order; all release displays derive from this catalog.
@@ -17,6 +17,7 @@ IMPLEMENTED_STAGES = (
     ("V1", "战场单位识别"),
     ("R1", "画面停滞自动恢复"),
     ("MR0", "只读内存诊断"),
+    ("MR1", "本地手动内存采集"),
 )
 
 
