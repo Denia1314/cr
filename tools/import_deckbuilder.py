@@ -61,8 +61,18 @@ def main():
             row['battle_stats'] = details[row['id']]
     else:
         snapshot = json.loads(snapshot_path.read_text(encoding='utf8'))
+    knowledge = json.loads(Path('data/battle_knowledge.json').read_text(encoding='utf8'))
+    if args.refresh:
+        # Recover zero-HP delayed bombs omitted from the original unit roster.
+        content = download(knowledge['source']['urls'][0])
+        if hashlib.sha256(content).hexdigest() != knowledge['source']['sha256']['cards_stats']:
+            raise ValueError('Pinned mechanics hash mismatch; no files updated')
+        raw = json.loads(content)
+        knowledge['death_objects'] = {r['name']: r for kind in ('building', 'characters')
+                                     for r in raw.get(kind, [])
+                                     if not r.get('hitpoints') and r.get('death_damage')}
     catalog, kb = merge_directory(json.loads(Path('data/cards.json').read_text(encoding='utf8')),
-                                  json.loads(Path('data/battle_knowledge.json').read_text(encoding='utf8')), snapshot)
+                                  knowledge, snapshot)
     if args.icons:
         from PIL import Image
         from io import BytesIO

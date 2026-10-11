@@ -77,6 +77,30 @@ class DeckbuilderImportTests(unittest.TestCase):
         self.assertAlmostEqual(spell['damage'] * spell['tower_multiplier'], source['crownTowerDamage'])
         self.assertEqual(kb.spell('lightning')['pattern'], 'highest_hp')
 
+    def test_all_public_fields_reach_both_runtime_databases(self):
+        snapshot, catalog, kb = read('deckbuilder_cards.json'), read('cards.json'), read('battle_knowledge.json')
+        cards = {c['id']: c for c in catalog['cards']}
+        for row in snapshot['cards']:
+            self.assertEqual(cards[row['id']]['detail_stats'], row['battle_stats'])
+            self.assertEqual(kb['cards'][row['id']]['detail_stats'], row['battle_stats'])
+
+    def test_transport_range_lifetime_and_component_levels(self):
+        kb = KnowledgeBase(read('battle_knowledge.json'))
+        self.assertTrue(kb.roster('baby_dragon')[0][0].air)
+        mortar = kb.roster('mortar')[0][0]
+        self.assertEqual((mortar.minimum_range, mortar.reach, mortar.lifetime), (3.5, 11.5, 30))
+        self.assertEqual(kb.roster('elixir_collector')[0][0].lifetime, 86)
+        giant = kb.roster('giant_skeleton')[0][0]
+        self.assertAlmostEqual(giant.death_damage*giant.death_tower_multiplier, 1068)
+        self.assertEqual((giant.splash, giant.death_radius, giant.death_delay), (0, 3, 3))
+        goblin, spear = (u for u, _ in kb.roster('goblin_gang'))
+        self.assertEqual((goblin.hp, goblin.damage, goblin.targets), (202, 120, ('ground',)))
+        self.assertEqual((spear.hp, spear.damage, spear.targets), (133, 81, ('ground', 'air')))
+        witch = kb.roster('witch')[0][0]
+        skeleton = kb.unit(witch.spawn, 11)
+        row = next(r for r in kb.cards['witch']['detail_stats']['levelStats'] if r['level'] == 11)
+        self.assertEqual((skeleton.hp, skeleton.damage), (row['skeletonHp'], row['skeletonDmg']))
+
 
 if __name__ == '__main__':
     unittest.main()

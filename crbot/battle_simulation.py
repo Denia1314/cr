@@ -334,8 +334,8 @@ class Simulator:
                 if e.spec.resource_on_death:
                     s.elixir[e.side]=min(10,s.elixir[e.side]+e.spec.resource_on_death)
                 if e.spec.death_damage:
-                    s.impacts.append((s.time, e.side, None, e.x, e.y, e.spec.death_damage,
-                                      e.spec.death_radius, True, 1.))
+                    s.impacts.append((s.time+e.spec.death_delay, e.side, None, e.x, e.y, e.spec.death_damage,
+                                      e.spec.death_radius, e.spec.death_air, e.spec.death_tower_multiplier))
                 spec = self.kb.unit(e.spec.death_spawn, self.level) if e.spec.death_spawn else None
                 if spec and len(s.entities) < 96:
                     for i in range(min(8, e.spec.death_count)):

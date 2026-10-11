@@ -106,7 +106,7 @@ class CardTacticsTests(unittest.TestCase):
         self.assertEqual(knight.target_coverage(("air",)), 0.0)
         self.assertEqual(giant.attack_targets, ("buildings",))
         self.assertEqual(giant.target_coverage(("ground",)), 0.0)
-        self.assertIsNone(musketeer.target_coverage(("air",)))
+        self.assertEqual(musketeer.target_coverage(("air",)), 1.0)
         self.assertEqual(cannon.attack_targets, ("ground",))
         self.assertEqual(cannon.target_coverage(("air",)), 0.0)
 
@@ -141,7 +141,7 @@ class CardTacticsTests(unittest.TestCase):
         self.assertEqual(decision.card_id, "archers")
         self.assertEqual(decision.threat_unit_layers, ("air",))
         self.assertEqual(decision.card_attack_targets, ("ground", "air"))
-        self.assertEqual(decision.card_targeting_source, "catalog")
+        self.assertEqual(decision.card_targeting_source, "public_detail")
 
     def test_known_capability_beats_unknown_capability_for_air_defense(self) -> None:
         policy = BattlePolicy(formation_config())

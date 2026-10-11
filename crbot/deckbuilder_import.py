@@ -10,6 +10,16 @@ SOURCE_URL = "https://www.clashroyaledeckbuilder.net/zh/clash-royale-cards"
 ALIASES = {"p_e_k_k_a": "pekka", "mini_p_e_k_k_a": "mini_pekka"}
 
 
+def detail_targets(detail: dict) -> tuple[str, ...]:
+    """Explicit attack targets, distinct from movement and death effects."""
+    value = detail.get('targets', '')
+    return {
+        'Ground': ('ground',), 'Air & Ground': ('ground', 'air'),
+        'Buildings': ('buildings',),
+        'Ground (Goblins) / Air & Ground (Spear Goblins)': ('ground', 'air'),
+    }.get(value, ())
+
+
 def parse_details(script: str) -> dict:
     """Decode the static detail object with a literal-only tokenizer, not eval."""
     start = script.index('let m={') + len('let m=')
@@ -112,9 +122,16 @@ def merge_directory(catalog: dict, knowledge: dict, snapshot: dict) -> tuple[dic
         entry['metadata_source'] = snapshot['source']
         detail = row.get('battle_stats')
         if detail is not None:
+            card['detail_stats'] = copy.deepcopy(detail)
+            card['combat_metadata_source'] = snapshot['source']
+            targets = detail_targets(detail)
+            if targets:
+                card['targets'] = list(targets)
             entry['detail_stats'] = detail
             # A mixed roster has separate entities: one table cannot describe all of them.
             summons = entry.get('summons', [])
+            if cid == 'elixir_collector' and not summons:
+                summons = [dict(unit='ElixirCollector', count=1)]
             if len(summons) == 1 and card['kind'] != 'spell' and detail.get('levelStats'):
                 original = knowledge['units'][summons[0]['unit']]
                 base_name = original.get('_base_unit_name', summons[0]['unit'])
@@ -129,12 +146,24 @@ def merge_directory(catalog: dict, knowledge: dict, snapshot: dict) -> tuple[dic
                     unit['_detail_source'] = snapshot['source']
                     for source, target, scale in [('hitSpeed', 'hit_speed', 1000),
                             ('firstHitSpeed', 'load_time', 1000), ('deployTime', 'deploy_time', 1000),
-                            ('splashRadius', 'area_damage_radius', 1000)]:
+                            ('splashRadius', 'area_damage_radius', 1000),
+                            ('lifetime', 'life_time', 1000), ('spawnSpeed', 'spawn_pause_time', 1000)]:
                         if source in detail:
                             unit[target] = detail[source] * scale
                     reach = re.search(r'\(([\d.]+)\)|^([\d.]+)$', str(detail.get('range', '')))
                     if reach:
                         unit['range'] = float(reach.group(1) or reach.group(2)) * 1000
+                    interval = re.fullmatch(r'([\d.]+)-([\d.]+)', str(detail.get('range', '')))
+                    if interval:
+                        unit['minimum_range'], unit['range'] = (float(v)*1000 for v in interval.groups())
+                    if 'transport' in detail:
+                        unit['flying_height'] = 1 if detail['transport'] == 'Air' else 0
+                    if 'projectileSpeed' in detail:
+                        unit['_detail_projectile_speed'] = detail['projectileSpeed']
+                    if (unit.get('death_spawn_character') in knowledge.get('death_objects', {})
+                            and not any('areaDamage' in r for r in levels)):
+                        # A bomb's radius is not the parent's ordinary attack radius.
+                        unit['area_damage_radius'] = original.get('area_damage_radius', 0)
                     if detail.get('speed') in {'Slow', 'Medium', 'Fast', 'Very Fast'}:
                         unit['speed'] = {'Slow': 45, 'Medium': 60, 'Fast': 90, 'Very Fast': 120}[detail['speed']]
                     if 'targets' in detail:
@@ -142,7 +171,37 @@ def merge_directory(catalog: dict, knowledge: dict, snapshot: dict) -> tuple[dic
                         unit['attacks_ground'] = 'Ground' in detail['targets'] or 'Buildings' in detail['targets']
                         unit['target_only_buildings'] = detail['targets'] == 'Buildings'
                     knowledge['units'][name] = unit
-                    entry['summons'] = [dict(unit=name, count=detail.get('count', summons[0]['count']))]
+                    entry['summons'] = [dict(unit=name, count=summons[0]['count'] if card['kind'] == 'building'
+                                           else detail.get('count', summons[0]['count']))]
+            if cid == 'goblin_gang' and len(summons) == 2:
+                # The source labels each member's stats explicitly. Preserve their
+                # separate target rules and attack periods, never reuse one table.
+                components = {'Goblin': 'goblin', 'SpearGoblin': 'spearGoblin'}
+                imported = []
+                for summon in summons:
+                    original = knowledge['units'][summon['unit']]
+                    base = original.get('_base_unit_name', summon['unit'])
+                    prefix = components[base]
+                    unit = copy.deepcopy(knowledge['units'][base])
+                    name = 'deckbuilder:' + cid + ':' + base
+                    unit.update(name=name, _base_unit_name=base, _detail_source=snapshot['source'],
+                        _detail_levels={str(r['level']): dict(level=r['level'],
+                            hitpoints=r[prefix+'Hitpoints'], damage=r[prefix+'Damage'],
+                            damagePerSecond=r[prefix+'Dps']) for r in detail['levelStats']})
+                    knowledge['units'][name] = unit
+                    imported.append(dict(unit=name, count=summon['count']))
+                entry['summons'] = imported
+            if cid == 'witch' and len(entry.get('summons', [])) == 1:
+                parent = knowledge['units'][entry['summons'][0]['unit']]
+                base = parent.get('spawn_character')
+                if base and all('skeletonHp' in r and 'skeletonDmg' in r for r in detail['levelStats']):
+                    name = 'deckbuilder:witch:Skeleton'
+                    unit = copy.deepcopy(knowledge['units']['Skeleton'])
+                    unit.update(name=name, _base_unit_name='Skeleton', _detail_source=snapshot['source'],
+                        _detail_levels={str(r['level']): dict(level=r['level'], hitpoints=r['skeletonHp'],
+                            damage=r['skeletonDmg']) for r in detail['levelStats']})
+                    knowledge['units'][name] = unit
+                    parent['spawn_character'] = name
             if entry.get('spell') and detail.get('levelStats') and card['kind'] == 'spell':
                 entry['spell']['_detail_levels'] = {str(r['level']): r for r in detail['levelStats']}
                 if 'radius' in detail:

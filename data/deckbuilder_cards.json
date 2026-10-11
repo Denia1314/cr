@@ -2,13 +2,25 @@
   "schema_version": 1,
   "source": {
     "url": "https://www.clashroyaledeckbuilder.net/zh/clash-royale-cards",
-    "asset_url": "https://www.clashroyaledeckbuilder.net/_next/static/chunks/51314-08b94dca2436e4d0.js?dpl=dpl_EtDfczE67CSwbLwvcxy7jSYswZdZ",
-    "detail_asset_url": "https://www.clashroyaledeckbuilder.net/_next/static/chunks/app/%5Blocale%5D/(marketing)/clash-royale-cards/%5Bid%5D/page-f16095d504131033.js?dpl=dpl_EtDfczE67CSwbLwvcxy7jSYswZdZ",
-    "retrieved_at": "2026-09-13T08:26:51.307970+00:00",
-    "page_sha256": "28fc9dd671d4dfce223d314184c9145b9804081d9924b794b8715616da826d03",
-    "asset_sha256": "389dc74bc7c1b0cef5b46ea599eb3616d05007f9381e57a793f7abec4072acaf",
-    "detail_asset_sha256": "884ce295e7efa7e093f88cfdf4747dbf5d1a173c747ed7c9b0942a1495795409",
-    "status": "public_detail_stats_unvalidated_balance"
+    "asset_url": "https://www.clashroyaledeckbuilder.net/_next/static/chunks/42922-ee24228f026e33b6.js",
+    "retrieved_at": "2026-10-11T14:39:47.775293+00:00",
+    "page_sha256": "d8c92f57d616a0a5c1df3d0280bd2712ab1729fdf96e49e1c4e80c8dda96a599",
+    "asset_sha256": "9c48eb25e65427af96589a41b55326f8a31de560bea7a24cb8fe01c68bebee99",
+    "status": "public_detail_stats_unvalidated_balance",
+    "fields": [
+      "name",
+      "cost",
+      "rarity",
+      "type",
+      "arena",
+      "icon",
+      "tags",
+      "evolution",
+      "champion",
+      "battle_stats"
+    ],
+    "detail_asset_url": "https://www.clashroyaledeckbuilder.net/_next/static/chunks/app/%5Blocale%5D/(marketing)/clash-royale-cards/%5Bid%5D/page-1bfad14a7ef23d35.js",
+    "detail_asset_sha256": "4f184c33c6349d566ada71d2693470e583f4926d1b16ac7d4a331c5b884ef024"
   },
   "cards": [
     {

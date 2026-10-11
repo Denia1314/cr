@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ class CardDefinition:
     synergies: tuple[str, ...]
     notes: str = ""
     description: str = ""
+    detail_stats: dict[str, Any] = field(default_factory=dict)
 
 
 class CardCatalog:
@@ -90,6 +91,7 @@ class CardCatalog:
                     synergies=tuple(str(value) for value in raw.get("synergies", [])),
                     notes=str(raw.get("notes", "")),
                     description=str(raw.get("description", "")),
+                    detail_stats=dict(raw.get("detail_stats", {})),
                 )
             )
         return cls(

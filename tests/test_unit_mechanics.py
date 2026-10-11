@@ -148,6 +148,7 @@ class UnitMechanicTests(unittest.TestCase):
         self.assertAlmostEqual(sum(10000-v.hp for v in victims),3*spec.damage)
 
     def test_missing_death_bomb_definition_is_never_claimed_as_implemented(self):
+        self.kb.payload.pop('death_objects', None)
         status=mechanism_status(self.kb,'giant_skeleton')
         self.assertIn('death_spawn_missing_definition',status['pending'])
         self.assertNotIn('death_spawn',status['implemented'])

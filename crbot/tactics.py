@@ -37,6 +37,8 @@ class CardTactics:
         does not contain enough verified mechanics to make a hard claim.
         """
         required = {value for value in unit_layers if value in {"ground", "air"}}
+        if self.attack_targets == ('buildings',):
+            return 0.0
         if not required or not self.targeting_known:
             return None
         supported = set(self.attack_targets).intersection({"ground", "air"})
@@ -179,6 +181,8 @@ def _attack_target_profile(
 def card_tactics(card: CardDefinition) -> CardTactics:
     """Derive a deck-independent formation role from catalog knowledge."""
     roles = set(card.roles)
+    from .deckbuilder_import import detail_targets
+    explicit_targets = detail_targets(card.detail_stats)
     description = f"{card.name_en} {card.description} {card.notes}".casefold()
     building_target = bool(
         "buildings" in card.targets
@@ -191,6 +195,8 @@ def card_tactics(card: CardDefinition) -> CardTactics:
         description,
         building_target=building_target,
     )
+    if explicit_targets:
+        attack_targets, targeting_source = explicit_targets, 'public_detail'
 
     splash_strength = 0.0
     if "splash" in roles:
@@ -204,6 +210,15 @@ def card_tactics(card: CardDefinition) -> CardTactics:
     if card.kind == "spell" and "splash" in roles:
         splash_strength = max(splash_strength, 1.0)
     splash_strength = min(1.2, splash_strength)
+    # Direct area attacks are not interchangeable with an on-death explosion.
+    levels = card.detail_stats.get('levelStats', [])
+    if levels and any('damage' in row or 'areaDamage' in row for row in levels):
+        # These detail pages give the delayed bomb's radius, not a melee/bomb-drop splash.
+        death_only = card.card_id in {'giant_skeleton', 'balloon'}
+        direct_area = (float(card.detail_stats.get('splashRadius', 0)) > 0 and not death_only) or any('areaDamage' in row for row in levels)
+        splash_strength = 1.0 if direct_area else 0.0
+    if attack_targets == ('buildings',):
+        splash_strength = 0.0
 
     heavy_counter_strength = 0.0
     if "tank_killer" in roles:

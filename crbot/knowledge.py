@@ -66,6 +66,9 @@ class UnitSpec:
     reflected_stun: float = 0
     chain_count: int = 1
     chain_radius: float = 0
+    death_tower_multiplier: float = 1
+    death_delay: float = 0
+    death_air: bool = True
 
 
 class KnowledgeBase:
@@ -132,6 +135,8 @@ class KnowledgeBase:
         if not damage and projectile:
             damage = self.value(projectile, "damage", level)
         hp = self.value(raw, "hitpoints", level)
+        detail_row = raw.get('_detail_levels', {}).get(str(level), {})
+        bomb = self.payload.get('death_objects', {}).get(raw.get('death_spawn_character'), {})
         scale = hp / max(1, float(raw.get("hitpoints") or hp))
         unsupported = []
         # These mechanisms are retained in source, but are not silently simulated as ordinary attacks.
@@ -159,7 +164,7 @@ class KnowledgeBase:
         for field in ('projectile_range','spawn_projectile','pingpong_visual_time'):
             if projectile.get(field):unsupported.append('projectile:'+field)
         if raw.get('hide_time_ms'):unsupported.append('invisibility')
-        if raw.get('death_spawn_character') and not self.units.get(raw['death_spawn_character'],{}).get('hitpoints_per_level'):
+        if raw.get('death_spawn_character') and not bomb and not self.units.get(raw['death_spawn_character'],{}).get('hitpoints_per_level'):
             unsupported.append('death_spawn_missing_definition')
         buff_key = projectile.get("buff_on_damage") or raw.get("buff_on_damage")
         buff = self.buffs.get(buff_key, {})
@@ -177,13 +182,13 @@ class KnowledgeBase:
             building_only=bool(raw.get("target_only_buildings") or raw.get("target_only_towers")),
             building=bool(raw.get("_building")),
             splash=float(raw.get("area_damage_radius") or projectile.get("radius") or 0) / 1000,
-            projectile_speed=float(projectile.get("speed") or 0) / 60,
+            projectile_speed=float(raw.get('_detail_projectile_speed', projectile.get("speed") or 0)) / 60,
             deploy=float(raw.get("deploy_time") or 0) / 1000,
             lifetime=float(raw.get("life_time") or 0) / 1000,
             shield=self.value(raw, 'shield_hitpoints', level) if 'shieldHitpoints' in raw.get('_detail_levels', {}).get(str(level), {}) else float(raw.get("shield_hitpoints") or 0) * scale,
             death_damage=self.value(raw, 'death_damage', level) if 'deathDamage' in raw.get('_detail_levels', {}).get(str(level), {}) else float(raw.get("death_damage") or 0) * scale,
-            death_radius=float(raw.get("death_damage_radius") or 0) / 1000,
-            death_spawn=raw.get("death_spawn_character"), death_count=int(raw.get("death_spawn_count") or 0),
+            death_radius=float(bomb.get('death_damage_radius') or raw.get("death_damage_radius") or 0) / 1000,
+            death_spawn=None if bomb else raw.get("death_spawn_character"), death_count=int(raw.get("death_spawn_count") or 0),
             spawn=raw.get("spawn_character"), spawn_count=int(raw.get("spawn_number") or 0),
             spawn_period=float(raw.get("spawn_pause_time") or 0) / 1000,
             spawn_start=float(raw.get("spawn_start_time") or 0) / 1000,
@@ -217,6 +222,10 @@ class KnowledgeBase:
                 if self.buffs.get(raw.get('reflected_attack_buff'),{}).get('hit_speed_multiplier') == -100 else 0,
             chain_count=max(1,int(projectile.get('chained_hit_count') or 1)),
             chain_radius=float(projectile.get('chained_hit_radius') or 0)/1000,
+            death_tower_multiplier=(float(detail_row['crownTowerDeathDamage']) / float(detail_row['deathDamage'])
+                if detail_row.get('deathDamage') and 'crownTowerDeathDamage' in detail_row else 1.),
+            death_delay=float(bomb.get('deploy_time') or 0)/1000,
+            death_air=bool(bomb.get('attacks_air', True)),
         )
         self._cache[key] = spec
         return spec
@@ -233,7 +242,7 @@ class KnowledgeBase:
 
     def roster(self, card_id: str, level: int = 11) -> list[tuple[UnitSpec, int]]:
         card = self.cards.get(card_id, {})
-        if card_id == 'elixir_collector':
+        if card_id == 'elixir_collector' and not card.get('summons'):
             unit=self.unit('ElixirCollector',level)
             return [(unit,1)] if unit else []
         if card_id == 'berserker' and card.get('detail_stats'):
@@ -361,4 +370,6 @@ def build_knowledge(catalog: dict, raw: dict, rarities: list, source: dict) -> d
             "relative_levels": {v["name"]: v["relative_level"] for v in rarities},
             "cards": cards, "units": units, "projectiles": projectiles,
             "effects": {v["name"]: v for v in raw.get("spell", [])},
+            "death_objects": {v['name']: v for kind in ('building', 'characters') for v in raw.get(kind, [])
+                              if not v.get('hitpoints') and v.get('death_damage')},
             "buffs": {v["name"]: v for v in raw.get("character_buff", [])}}
