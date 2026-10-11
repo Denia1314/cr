@@ -60,12 +60,16 @@ internal static class Launcher {
                 length < 0 || offset > file.Length - 56 || length != file.Length - 56 - offset)
                 throw new InvalidDataException("EXE 文件不完整，请重新复制。");
             string id = BitConverter.ToString(expected).Replace("-", "").ToLowerInvariant();
-            string cacheBase = Path.Combine(home, "runtime");
+            string cacheBase = Environment.GetEnvironmentVariable("CRBOT_RUNTIME_DIR");
+            if (String.IsNullOrEmpty(cacheBase)) cacheBase = Path.Combine(home, "runtime");
+            if (!Path.IsPathRooted(cacheBase)) throw new InvalidDataException("CRBOT_RUNTIME_DIR 必须是绝对路径。");
+            cacheBase = Path.GetFullPath(cacheBase);
             Directory.CreateDirectory(cacheBase);
+            logPath = Path.Combine(cacheBase, "launcher.log");
             string cache = Path.Combine(cacheBase, id);
             // Per-user lock prevents simultaneous first launches from seeing a partial install.
             string user = System.Security.Principal.WindowsIdentity.GetCurrent().User.Value;
-            using (var mutex = new Mutex(false, "Local\\RoyalLab-" + user + "-" + id)) {
+            using (var mutex = new Mutex(false, "Local\\RoyalLab-cache-" + user)) {
                 Status = "正在准备启动…";
                 try { mutex.WaitOne(); } catch (AbandonedMutexException) { }
                 try {
@@ -81,6 +85,7 @@ internal static class Launcher {
                             Install(payload, cache, id);
                         }
                     }
+                    Prune(cacheBase, cache);
                     Status = "正在打开 Royal Lab…";
                     var start = new ProcessStartInfo(Path.Combine(cache, "RoyalLab.exe"),
                                                      String.Join(" ", args.Select(Quote))) {
@@ -97,6 +102,7 @@ internal static class Launcher {
                             new[] { "TCL_LIBRARY", "TK_LIBRARY", "PYTHONHOME", "PYTHONPATH" }.Contains(key.ToUpperInvariant()))
                             start.EnvironmentVariables.Remove(key);
                     }
+                    using (var lease = File.Open(Path.Combine(cache, ".in-use"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite))
                     using (var child = Process.Start(start)) {
                         File.AppendAllText(logPath, DateTime.Now.ToString("s") + " cache=" + (reused ? "reuse" : "prepared") +
                             " dispatch_ms=" + clock.ElapsedMilliseconds + " runtime=" + cache + Environment.NewLine);
@@ -105,6 +111,8 @@ internal static class Launcher {
                         child.WaitForExit();
                         exitCode = child.ExitCode;
                     }
+                    try { mutex.WaitOne(); } catch (AbandonedMutexException) { }
+                    Prune(cacheBase, cache);
                 } finally {
                     // Release on preparation failure as well; after dispatch it is already released.
                     try { mutex.ReleaseMutex(); } catch (ApplicationException) { }
@@ -148,10 +156,58 @@ internal static class Launcher {
         } catch { return false; }
     }
 
+    // Delete only launcher-owned runtimes. Unknown folders and user data are never candidates.
+    static void Prune(string cacheBase, string current) {
+        foreach (string candidate in Directory.GetDirectories(cacheBase)) {
+            if (String.Equals(candidate, current, StringComparison.OrdinalIgnoreCase)) continue;
+            try {
+                string name = Path.GetFileName(candidate);
+                string id = name.Split('.')[0];
+                if (id.Length != 64 || id.Any(c => !"0123456789abcdef".Contains(c))) continue;
+                bool preparing = name.StartsWith(id + ".preparing-") && name.Length == 107 &&
+                    name.Substring(75).All(c => "0123456789abcdef".Contains(c));
+                if (name != id && !preparing && !(name.StartsWith(id + ".replaced-") && name.Length == 106 &&
+                    name.Substring(74).All(c => "0123456789abcdef".Contains(c)))) continue;
+                string marker = Path.Combine(candidate, preparing ? ".runtime-owner" : ".ready");
+                if (!File.Exists(marker) || File.ReadLines(marker).FirstOrDefault() != id) continue;
+                if (HasLinks(candidate) || RunningFrom(candidate)) continue;
+                // Held throughout the child lifetime; an idle cache can be opened exclusively.
+                using (File.Open(Path.Combine(candidate, ".in-use"), FileMode.OpenOrCreate,
+                                 FileAccess.ReadWrite, FileShare.None)) { }
+                Directory.Delete(candidate, true);
+                File.AppendAllText(logPath, DateTime.Now.ToString("s") + " retired_runtime=" + name + Environment.NewLine);
+            } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    static bool HasLinks(string root) {
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0) return true;
+        foreach (string path in Directory.GetFileSystemEntries(root)) {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) return true;
+            if ((attributes & FileAttributes.Directory) != 0 && HasLinks(path)) return true;
+        }
+        return false;
+    }
+
+    static bool RunningFrom(string root) {
+        string prefix = Path.GetFullPath(root) + Path.DirectorySeparatorChar;
+        foreach (var process in Process.GetProcessesByName("RoyalLab")) {
+            using (process) {
+                try {
+                    if (process.MainModule.FileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+                } catch (InvalidOperationException) { }
+                  catch (System.ComponentModel.Win32Exception) { return true; }
+            }
+        }
+        return false;
+    }
+
     static void Install(Stream payload, string cache, string id) {
         string staging = cache + ".preparing-" + Guid.NewGuid().ToString("N");
         Directory.CreateDirectory(staging);
         try {
+            File.WriteAllText(Path.Combine(staging, ".runtime-owner"), id);
             var manifest = new StringBuilder(id + "\n");
             using (var archive = new ZipArchive(payload, ZipArchiveMode.Read, true)) {
                 long total = archive.Entries.Sum(entry => entry.Length), done = 0;
@@ -178,6 +234,10 @@ internal static class Launcher {
             File.WriteAllText(Path.Combine(staging, ".ready"), manifest.ToString());
             string retired = cache + ".replaced-" + Guid.NewGuid().ToString("N");
             bool replacing = Directory.Exists(cache);
+            if (replacing) {
+                if (RunningFrom(cache)) throw new IOException("运行环境正在使用，请关闭其他 Royal Lab 实例后重试。");
+                using (File.Open(Path.Combine(cache, ".in-use"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) { }
+            }
             if (replacing) Directory.Move(cache, retired);
             try { Directory.Move(staging, cache); }
             catch {

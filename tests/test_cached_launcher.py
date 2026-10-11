@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 import uuid
+import time
+from unittest.mock import patch
 
 from tools.build_bundle import build_bundle, compiler, TRAILER
 
@@ -16,6 +18,12 @@ class CachedLauncherTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='royal launcher 中文 ')
         self.root = Path(self.temporary.name)
+        self.environment = patch.dict(os.environ, {
+            'LOCALAPPDATA': str(self.root / 'appdata'),
+            'CRBOT_RUNTIME_DIR': str(self.root / 'appdata/RoyalLab/runtime'),
+        })
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
         self.runtime = self.root / 'runtime'
         self.runtime.mkdir()
         source = self.root / 'fixture.cs'
@@ -26,6 +34,7 @@ class Fixture { static int Main(string[] args) {
         Environment.GetEnvironmentVariable("TCL_LIBRARY") ?? "",
         Environment.GetEnvironmentVariable("PYTHONPATH") ?? ""
     }).Select(x => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(x))));
+    while (File.Exists(args[0] + ".hold")) System.Threading.Thread.Sleep(50);
     return 7;
 }}''', encoding='utf-8')
         subprocess.run([str(compiler()), '/nologo', '/target:winexe',
@@ -86,6 +95,70 @@ class Fixture { static int Main(string[] args) {
             self.assertEqual(process.wait(timeout=30), 7)
         self.assertTrue(all(report.exists() for report in reports))
         self.assertTrue((self.cache / '.ready').exists())
+
+    def rebuild(self):
+        (self.runtime / 'resource.txt').write_text(str(uuid.uuid4()))
+        self.exe = self.root / ('RoyalLab-' + uuid.uuid4().hex + '.exe')
+        build_bundle(self.runtime, self.exe)
+
+    def test_upgrade_removes_idle_build_but_preserves_unknown_and_data(self):
+        self.run_app()
+        unknown = self.cache.parent / ('a' * 64)
+        unknown.mkdir()
+        (unknown / 'personal.txt').write_text('keep')
+        data = self.cache.parent.parent / 'config.json'
+        data.write_text('keep settings')
+        self.rebuild()
+        self.run_app()
+        self.assertFalse(self.cache.exists())
+        self.assertEqual((unknown / 'personal.txt').read_text(), 'keep')
+        self.assertEqual(data.read_text(), 'keep settings')
+
+    def test_interrupted_owned_preparation_is_reclaimed(self):
+        self.run_app()
+        abandoned = self.cache.parent / (self.cache.name + '.preparing-' + uuid.uuid4().hex)
+        abandoned.mkdir()
+        (abandoned / '.runtime-owner').write_text(self.cache.name)
+        (abandoned / 'partial.dll').write_text('partial')
+        unknown = self.cache.parent / (self.cache.name + '.preparing-' + uuid.uuid4().hex)
+        unknown.mkdir()
+        (unknown / 'keep.txt').write_text('unknown')
+        self.run_app()
+        self.assertFalse(abandoned.exists())
+        self.assertTrue(unknown.exists())
+
+    def test_upgrade_preserves_running_build_then_reclaims_it(self):
+        report = self.root / 'live.txt'
+        hold = Path(str(report) + '.hold')
+        hold.touch()
+        process = subprocess.Popen([str(self.exe), str(report)])
+        try:
+            deadline = time.monotonic() + 20
+            while not report.exists() and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertTrue(report.exists())
+            self.rebuild()
+            self.run_app()
+            self.assertTrue(self.cache.exists())
+        finally:
+            hold.unlink(missing_ok=True)
+            process.wait(timeout=30)
+        self.run_app()
+        self.assertFalse(self.cache.exists())
+
+    def test_upgrade_preserves_runtime_containing_directory_link(self):
+        self.run_app()
+        outside = self.root / 'personal'
+        outside.mkdir()
+        (outside / 'keep.txt').write_text('keep')
+        subprocess.run(['cmd', '/c', 'mklink', '/J', str(self.cache / 'linked'), str(outside)], check=True, capture_output=True)
+        try:
+            self.rebuild()
+            self.run_app()
+            self.assertTrue(self.cache.exists())
+            self.assertEqual((outside / 'keep.txt').read_text(), 'keep')
+        finally:
+            os.rmdir(self.cache / 'linked')
 
 
 if __name__ == '__main__':
