@@ -190,7 +190,9 @@ class PredictivePlanner:
             entity.observed_vx, entity.observed_vy = t.vx*18/(self.sim.geometry.bounds[2]-self.sim.geometry.bounds[0]), t.vy*32/(self.sim.geometry.bounds[3]-self.sim.geometry.bounds[1])
             if t.variant != "base":
                 s.uncertainties.add("variant_unknown")
-        for event in world.confirmed_placements:
+        from .unconfirmed_units import deployment_positions
+        located_deployments=deployment_positions(world,self.sim)
+        for event_index,event in enumerate(world.confirmed_placements):
             # No duplicate units when a detector has supplied allies of this card.
             if any(t.side == 1 and t.card_id == event["card_id"] for t in world.tracks):
                 continue
@@ -200,11 +202,16 @@ class PredictivePlanner:
             for spec, count in roster:
                 x, y = self.sim.xy(event["x"], event["y"])
                 y = max(16., y - spec.speed * max(0, age - spec.deploy))
+                visual_position=located_deployments.get(event_index)
+                if visual_position is not None:
+                    x,y=visual_position
+                    s.uncertainties.add('unconfirmed_ally_position_hypothesis')
                 # This is a declining survival hypothesis, never a claim of detection.
                 fraction = max(.15, .8 - age * .08)
                 for i in range(min(20, count)):
-                    self.sim.add(s, spec, 1, x + (i % 3) * .3, y, hp_fraction=fraction,
+                    entity=self.sim.add(s, spec, 1, x + (i % 3) * .3, y, hp_fraction=fraction,
                                  value=float(self.kb.cards[event["card_id"]].get("elixir") or 0) / max(1, total))
+                    entity.position_evidence='unconfirmed_visual_candidate' if visual_position is not None else 'deployment_motion_estimate'
             if roster:
                 s.uncertainties.add("unobserved_ally_survival_hypothesis")
         seen = list(world.enemy_seen)

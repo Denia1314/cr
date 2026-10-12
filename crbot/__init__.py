@@ -1,6 +1,6 @@
 """MuMu offline-AI battle automation reference implementation."""
 
-__version__ = "3.16.1"
+__version__ = "3.17.0"
 
 # Delivered capabilities, not model identities or claims of battle acceptance.
 # Keep chronological order; all release displays derive from this catalog.
@@ -27,6 +27,7 @@ IMPLEMENTED_STAGES = (
     ("UI3", "卡牌与切片库"),
     ("P2", "GPU 批量战斗推演 · 实验版"),
     ("P3", "完整机制 GPU 推演 · 实验版"),
+    ("V5", "未确认目标补偿"),
 )
 
 

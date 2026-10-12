@@ -47,7 +47,9 @@ class SliceBattlefield:
         arena_model = self.metadata.get('training_dataset_kind') == 'real_battle_bootstrap'
         bottom = round(image.height * .8) if arena_model else image.height
         source = image.crop((0, 0, image.width, bottom)) if arena_model else image
-        prediction = self.model.predict(source, conf=float(self.config.get('runtime_confidence', .7)),
+        threshold=float(self.config.get('runtime_confidence', .7))
+        candidate_threshold=max(.1,min(threshold,float(self.config.get('unconfirmed_unit_confidence',.25))))
+        prediction = self.model.predict(source, conf=candidate_threshold,
                                         imgsz=int(self.config.get('image_size', 640)),
                                         device=self.device, verbose=False)[0]
         primary_finished = time.perf_counter()
@@ -64,11 +66,23 @@ class SliceBattlefield:
                     candidates.append((card_id, name, confidence, box))
         level_badges = find_level_badges(image)
         badges_finished = time.perf_counter()
-        badges = associate_badges([c[3] for c in candidates], level_badges)
+        strong=[i for i,c in enumerate(candidates) if c[2]>=threshold]
+        badges={strong[i]:badge for i,badge in associate_badges([candidates[i][3] for i in strong],level_badges).items()}
         result = []
+        self.unconfirmed_units=[]
+        self.last_rejections={'low_confidence':0,'team_badge_missing':0}
         for i, (card_id, name, confidence, box) in enumerate(candidates):
             badge = badges.get(i)
-            if badge is None:
+            reason='low_confidence' if confidence<threshold else 'team_badge_missing' if badge is None else ''
+            if reason:
+                if confidence<threshold:self.last_rejections['low_confidence']+=1
+                if confidence<threshold:badge=associate_badges([box],level_badges).get(0)
+                if badge is None:self.last_rejections['team_badge_missing']+=1
+                if len(self.unconfirmed_units)<64:
+                    self.unconfirmed_units.append(dict(bbox=box,confidence=float(confidence),
+                        candidate_card_id=card_id,candidate_unit_name=name,side=badge['side'] if badge else None,
+                        observation_status='unconfirmed',reason=reason,team_badge_missing=badge is None,
+                        identity_source='external_slice_candidate'))
                 continue
             result.append(dict(card_id=card_id, unit_name=name, bbox=box, side=badge['side'],
                                confidence=min(confidence, badge['confidence']),
@@ -89,6 +103,8 @@ class SliceBattlefield:
             except Exception as exc:
                 self.fallback_error = str(exc)
         self.last_accepted_units = len(result)
+        from .unconfirmed_units import box_overlap
+        self.unconfirmed_units=[c for c in self.unconfirmed_units if not any(len(d.get('bbox',()))==4 and box_overlap(c['bbox'],d['bbox'])>.3 for d in result)]
         self.last_primary_ms = (primary_finished-started)*1000
         self.last_badges_ms = (badges_finished-primary_finished)*1000
         self.last_fallback_ms = getattr(self.fallback, 'last_ms', 0.) if self.last_fallback_used else 0.
@@ -103,6 +119,8 @@ class SliceBattlefield:
                     raw_boxes=getattr(self, 'last_raw_boxes', 0),
                     primary_units=getattr(self, 'last_primary_units', 0),
                     accepted_units=getattr(self, 'last_accepted_units', 0),
+                    unconfirmed_units=len(getattr(self,'unconfirmed_units',[])),
+                    rejected=getattr(self,'last_rejections',{}),
                     fallback_loaded=getattr(self, 'fallback', None) is not None,
                     fallback_used=getattr(self, 'last_fallback_used', False),
                     fallback_error=getattr(self, 'fallback_error', ''),

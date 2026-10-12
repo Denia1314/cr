@@ -37,6 +37,7 @@ class LearnedBattlefieldDetector:
         self.error = ""
         self.observed_allies: list[dict[str, Any]] = []
         self.observed_enemies: list[dict[str, Any]] = []
+        self.unconfirmed_units: list[dict[str,Any]] = []
         self.last_detection_succeeded = False
         self.allies_observed = False
         model_path = self.registry.champion_model_path()
@@ -91,6 +92,7 @@ class LearnedBattlefieldDetector:
     ) -> dict[str, LaneThreat]:
         self.observed_allies = []
         self.observed_enemies = []
+        self.unconfirmed_units = []
         self.last_detection_succeeded = False
         self.allies_observed = False
         if not self.available:
@@ -100,6 +102,8 @@ class LearnedBattlefieldDetector:
         try:
             if baseline is not None:
                 detections = baseline.detect(image)
+                candidates=getattr(baseline,'unconfirmed_units',())
+                self.unconfirmed_units=[dict(c) for c in candidates[:64]] if isinstance(candidates,(list,tuple)) else []
                 result = None
             else:
                 result = self.model.predict(

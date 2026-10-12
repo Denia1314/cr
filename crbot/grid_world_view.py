@@ -135,24 +135,27 @@ def compose_yolo(screenshot, packet, w, h, mode):
     left=(pane-size[0])//2;top=(h-size[1])//2
     marked=Image.new('RGB',(pane,h),'#F8FAFD');marked.paste(shot,(left,top))
     draw=ImageDraw.Draw(marked);boxes=[]
-    for index, observation in enumerate((packet or {}).get('detections', [])):
+    observations=list((packet or {}).get('detections', []))+list((packet or {}).get('unconfirmed_units', []))
+    for index, observation in enumerate(observations):
         bbox=observation.get('bbox')
         if not bbox or len(bbox)!=4:continue
         x1,y1,x2,y2=[max(0,min(1,float(v))) for v in bbox]
         if x2<=x1 or y2<=y1:continue
         box=(left+x1*size[0],top+y1*size[1],left+x2*size[0],top+y2*size[1])
         ally=observation.get('side')==1
-        color='#2563EB' if ally else '#E34455'
+        unconfirmed=observation.get('observation_status')=='unconfirmed'
+        color='#B7791F' if unconfirmed else '#2563EB' if ally else '#E34455'
         draw.rectangle(box,outline=color,width=2)
         source=' · 回退' if observation.get('identity_source')=='public_pretrained' else ''
         label=f"{'我方' if ally else '敌方'} {observation.get('name_zh') or observation.get('card_id','未知')} {observation.get('confidence',0):.0%}{source}"
+        if unconfirmed:label=f"未确认单位 {observation.get('confidence',0):.0%}"
         face=font(10 if pane<300 else 12)
         width=min(pane,round(draw.textlength(label,font=face))+6)
         tx=min(box[0],pane-width);ty=max(0,box[1]-18)
         draw.rectangle((tx,ty,tx+width,ty+18),fill=color)
         draw.text((tx+3,ty),label,font=face,fill='white')
         boxes.append((box,dict(observation,id=f"yolo:{(packet or {}).get('revision',0)}:{index}")))
-    if packet is None or not packet.get('detections'):
+    if not observations:
         draw.rectangle((0,0,pane,23),fill='#F8FAFD')
         draw.text((4,3),'当前帧无有效 YOLO 单位' if packet else '等待 YOLO 识别结果',font=font(11),fill='#536478')
     offset=pane if halves==2 else 0
@@ -312,7 +315,9 @@ class GridWorldWindow:
                 model=self.packet.get('model',{})
                 speed = (f"识别 {self.packet['recognition_fps']:.1f} FPS · 单帧 {self.packet['inference_ms']:.0f} ms · "
                          if 'recognition_fps' in self.packet else '')
-                self.label.configure(text=f"YOLO 识别 · {speed}更新 {self.source_fps:.1f} FPS · {len(self.packet.get('detections',[]))} 个单位 · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方",wraplength=max(80,self.canvas.winfo_width()))
+                pending=len(self.packet.get('unconfirmed_units',[]))
+                evidence=f" · {pending} 个未确认" if pending else ''
+                self.label.configure(text=f"YOLO 识别 · {speed}更新 {self.source_fps:.1f} FPS · {len(self.packet.get('detections',[]))} 个确认单位{evidence} · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方 黄=未确认",wraplength=max(80,self.canvas.winfo_width()))
                 return
             self.label.configure(text=f"目标 30 FPS · 新数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型" +
                 ('' if self.embedded else '\n'+self.packet.get('decision','')[:65]),wraplength=max(80,self.canvas.winfo_width()))
@@ -343,6 +348,8 @@ class GridWorldWindow:
     def show_details(self,hit):
         names={'card_id':'单位','side':'敌我（1我方/-1敌方）','hp':'模拟血量','hp_fraction':'血量比例',
                'hp_estimated':'血量为估计','identity_estimated':'身份为假设','source':'数据来源',
+               'candidate_card_id':'未确认类别候选','candidate_unit_name':'模型类别候选','observation_status':'观测状态',
+               'position_evidence':'位置证据','reason':'未确认原因',
                'destroyed':'已摧毁','level':'观测等级','side_evidence':'敌我判断依据',
                'simulated_hp':'推演假设血量','simulated_hp_fraction':'推演假设血量比例',
                'confidence':'识别置信度','target_uid':'目标编号','attributes':'属性','path':'预测路径',

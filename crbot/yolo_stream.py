@@ -57,6 +57,7 @@ class YoloStream:
                     self.finished_times.append(finished)
                     packet = dict(revision=self.processed, capture_sequence=frame.sequence,
                         at=frame.started, finished_at=finished, detections=observations,
+                        unconfirmed_units=[dict(c) for c in getattr(detector,'unconfirmed_units',[])],
                         model=detector.status(), inference_ms=round(self.work_s * 1000, 3),
                         recognition_fps=self._fps(finished), source='continuous_yolo')
                     self.result = (frame.image, packet)

@@ -1251,6 +1251,7 @@ class BattlePolicy:
             detector = self.learned_detector
             packet = dict(revision=getattr(self, '_yolo_revision', 0)+1,
                 at=now, detections=[dict(o) for o in getattr(detector,'observed_enemies',[]) + getattr(detector,'observed_allies',[])],
+                unconfirmed_units=[dict(c) for c in getattr(detector,'unconfirmed_units',[])],
                 model=detector.status())
             for observation in packet['detections']:
                 card=self.catalog.get(observation.get('card_id')) if self.catalog else None

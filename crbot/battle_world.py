@@ -44,6 +44,7 @@ class WorldSnapshot:
     enemy_elixir_estimate: float = 5.0
     confirmed_placements: tuple[dict, ...] = ()
     observation_delay_s: float = 0.
+    unconfirmed_units: tuple[dict, ...] = ()
 
 
 class BattleWorld:

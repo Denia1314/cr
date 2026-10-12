@@ -22,6 +22,8 @@ class Detector:
         self.include_health = include_health
         self.calls += 1
         self.observed_allies = [dict(card_id='knight', side=1, bbox=[.2,.3,.4,.5], pixel=image.getpixel((0,0))[0])]
+        self.unconfirmed_units=[dict(bbox=[.6,.4,.8,.5],confidence=.36,side=None,
+            observation_status='unconfirmed',pixel=image.getpixel((0,0))[0])]
 
     def status(self):
         return dict(inference_calls=self.calls, version='fixture')
@@ -47,6 +49,7 @@ class YoloStreamTests(unittest.TestCase):
             self.wait_for(lambda: worker.processed >= 6)
             image, packet = worker.latest()
             self.assertEqual(packet['detections'][0]['pixel'], image.getpixel((0,0))[0])
+            self.assertEqual(packet['unconfirmed_units'][0]['pixel'],image.getpixel((0,0))[0])
             self.assertEqual(packet['model']['inference_calls'], packet['revision'])
             self.assertGreater(packet['capture_sequence'], packet['revision'])
             self.assertGreater(worker.status()['skipped_capture_frames'], 0)

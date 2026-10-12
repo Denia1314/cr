@@ -152,6 +152,7 @@ class PredictiveBattlePolicy(BattlePolicy):
                                      elixir=elixir, hand=hand, costs=costs,
                                      seconds_per_elixir=float(self.policy.get("seconds_per_elixir", 2.8)) / self._elixir_rate_multiplier,
                                      uncertain=uncertain,tower_health=tower_health)
+        snapshot=replace(snapshot,unconfirmed_units=tuple(dict(c) for c in getattr(detector,'unconfirmed_units',[])))
         if self.pending_action_id is not None or now < self.next_action_at:
             return None
         if not hand or self.last_hand_image is not current:
