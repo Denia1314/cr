@@ -33,6 +33,21 @@ class PlacementBatch:
             spec = SimpleNamespace(reach=3.,radius=.5,hp=1000.,shield=0.,damage=100.,period=1.,first_hit=.5,speed=1.,building=True)
             self._compute([[1.,20.]], [[2.,18.,.5,1.,1.,2.,1.,500.,100.,4.,5.,6.,1.,1.,.5,.5]],
                           [[3.,28.,8.,100.]], [[1.]], spec)
+            tensor=self._compute([[1.,20.]], [[2.,18.,.5,1.,1.,2.,1.,500.,100.,4.,5.,6.,1.,1.,.5,.5]],
+                          [[3.,28.,8.,100.]], [[1.]], spec,return_tensor=True)
+            if self.device!='cpu':((tensor*2+tensor)/3).cpu().tolist()
+            # Legal/spell/quiet screens use additional CUDA operations. Their
+            # first launch must also happen before the first decision deadline.
+            warm_enemy=SimpleNamespace(x=3.,y=20.,hp=1000.,shield=0.,value=1.,tower=False,
+                spec=SimpleNamespace(radius=.5,air=False,damage=100.,building=True))
+            warm_tower=SimpleNamespace(x=3.,y=28.,hp=1000.,tower=True,spec=warm_enemy.spec)
+            warm_state=SimpleNamespace(entities=[warm_tower])
+            warm_sim=SimpleNamespace(geometry=SimpleNamespace(bounds=(.05,.18,.95,.82)),
+                kb=SimpleNamespace(cards={'warm':{'kind':'troop'}}))
+            self.legal_points(warm_sim,warm_state,'warm',1,[(.3,.6),(.6,.7)])
+            self.spell_score([(3.,20.)],[warm_enemy],[(3.,20.)],dict(air=True,radius=2.,damage=100.))
+            self.quiet_score([(3.,20.)],[warm_tower],1)
+            self.calls=self.positions=self.domain_points=self.spell_positions=self.quiet_positions=0
 
     def status(self):
         return dict(device=self.device, calls=self.calls, positions=self.positions, error=self.error,

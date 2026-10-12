@@ -54,8 +54,25 @@ class PredictivePlanner:
         self.combat_pool = None
         self.gpu_combat = None
         self._urgent_recovery = False
+        self._placement_warmed = False
+        self._runtime_warmed = False
 
     def warm_pool(self):
+        batch=getattr(self.sim,'placement_batch',None)
+        if batch is not None and batch.device!='cpu' and not self._placement_warmed:
+            # Warm the complete placement path, including NumPy host merging
+            # and the full legal domain, before charging the first frame.
+            saved={k:getattr(batch,k) for k in ('calls','positions','domain_points','spell_positions','quiet_positions')}
+            warm=SimState()
+            tower=self.kb.unit('PrincessTower',self.sim.level)
+            knight=self.kb.unit('Knight',self.sim.level)
+            if tower is not None and knight is not None:
+                for x in (3.,15.):self.sim.add(warm,tower,1,x,28.,tower=True)
+                self.sim.add(warm,knight,-1,3.,18.)
+                for cid in ('knight','musketeer','cannon','fireball'):
+                    if cid in self.kb.cards:placement_points(self.sim,warm,cid,1,limit=None)
+            for k,v in saved.items():setattr(batch,k,v)
+            self._placement_warmed=True
         if self.config.get('gpu_combat', False) and self.gpu_combat is None:
             from .gpu_combat import GPUCombat
             self.gpu_combat = GPUCombat(self.sim,str(self.config.get('compute_device','auto')),
@@ -64,6 +81,14 @@ class PredictivePlanner:
                 and (self.gpu_combat is None or not self.gpu_combat.available)):
             from .parallel_combat import CombatPool
             self.combat_pool = CombatPool(self.kb.payload, self.config)
+        if not self._runtime_warmed:
+            if ((self.gpu_combat is not None and self.gpu_combat.available)
+                    or (batch is not None and batch.device!='cpu')):
+                # CUDA imports create many long-lived Python objects. Collect
+                # once outside the frame budget; leave normal GC enabled.
+                import gc
+                gc.collect()
+            self._runtime_warmed=True
 
     def advance_state(self,state,duration,*,deadline,clock):
         if self.gpu_combat is not None and self.gpu_combat.available and self.gpu_combat.supports(state):
