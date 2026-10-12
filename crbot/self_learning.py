@@ -50,7 +50,7 @@ def code_identity(root: Path) -> str:
     if frozen():
         return json.loads((resource_root() / 'build-info.json').read_text(encoding='utf-8'))['code_hash']
     return digest({p.name: hashlib.sha256(p.read_text(encoding="utf-8-sig").encode()).hexdigest()
-                   for p in sorted((root / "crbot").glob("*.py"))})
+                   for p in sorted((root / "crbot").glob('*')) if p.suffix in {'.py','.cu','.cuh'}})
 
 
 def request_config(root: Path, config: dict) -> dict:

@@ -68,11 +68,13 @@ class GPUCombatTests(unittest.TestCase):
         self.gpu.advance([b],3,time.perf_counter()+10)
         self.assert_state(a,b)
 
-    def test_unsupported_mechanics_never_simplified(self):
+    def test_all_known_mechanics_supported_unknown_effect_not_simplified(self):
         state=SimState()
         self.sim.add(state,self.sim.kb.roster('witch',11)[0][0],1,3,20)
-        self.assertFalse(self.gpu.supports(state))
+        self.assertTrue(self.gpu.supports(state))
         state=SimState(effects=[{'pattern':'unit_pulse'}])
+        self.assertTrue(self.gpu.supports(state))
+        state.effects=[{'pattern':'future_unimplemented_mechanism'}]
         self.assertFalse(self.gpu.supports(state))
 
     def test_many_positions_and_target_locks_match_reference(self):
@@ -125,7 +127,7 @@ class GPUCombatTests(unittest.TestCase):
         self.assertEqual({r['label']:r for r in actual if r},{r['label']:r for r in expected if r})
         self.assertGreater(gpu.completed,0)
 
-    def test_special_root_uses_complete_reference_and_reports_cpu(self):
+    def test_special_root_uses_complete_cuda_and_matches_reference(self):
         self.require_gpu()
         from tests.test_prediction import world
         from crbot.predictive_planner import PredictivePlanner
@@ -136,7 +138,7 @@ class GPUCombatTests(unittest.TestCase):
         root=SimAction('witch',0,.3,.7)
         expected=planner.evaluate_root(w,root,scenarios,6.,'legacy',time.perf_counter()+20,states)
         rows=list(gpu.rows(planner,w,[root],scenarios,6.,'legacy',time.perf_counter()+20,states))
-        self.assertEqual(rows,[expected]);self.assertEqual(gpu.completed,0);self.assertEqual(gpu.fallbacks,1)
+        self.assertEqual(rows,[expected]);self.assertEqual(gpu.completed,1);self.assertEqual(gpu.fallbacks,0)
 
     def test_planner_uses_real_cuda_and_keeps_action_and_fair_coverage(self):
         self.require_gpu()
@@ -173,9 +175,6 @@ class GPUCombatTests(unittest.TestCase):
         states=[]
         for card in ('electro_spirit','electro_wizard'):
             state=self.scene(card,3.,21.,'knight')
-            # Isolate ongoing chain/bolt combat after deployment; the wizard's
-            # separate spawn pulse remains an explicitly unsupported effect.
-            state.effects=[]
             state.entities[-1].x,state.entities[-1].y=3.,20.
             for x,y in ((4.,20.),(5.,20.),(5.5,21.)):
                 self.sim.add(state,self.sim.kb.roster('knight')[0][0],-1,x,y)

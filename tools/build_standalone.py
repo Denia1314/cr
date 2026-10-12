@@ -35,7 +35,7 @@ def main():
     install_assets(resources/'defaults')
     from crbot.learning_store import digest
     manifest = {p.name: hashlib.sha256(p.read_text(encoding='utf-8-sig').encode()).hexdigest()
-                for p in sorted((source/'crbot').iterdir()) if p.suffix in {'.py','.cu'}}
+                for p in sorted((source/'crbot').iterdir()) if p.suffix in {'.py','.cu','.cuh'}}
     (resources/'build-info.json').write_text(json.dumps({
         'code_hash': digest(manifest),
         'modules': manifest,
@@ -61,7 +61,7 @@ def main():
                     '--distpath',str(source/'build/standalone-runtime'),'--workpath',str(source/'build/standalone'),
                     str(source/'packaging/RoyalLab.spec')],env=env,cwd=source,check=True)
     current = {p.name: hashlib.sha256(p.read_text(encoding='utf-8-sig').encode()).hexdigest()
-               for p in sorted((source/'crbot').iterdir()) if p.suffix in {'.py','.cu'}}
+               for p in sorted((source/'crbot').iterdir()) if p.suffix in {'.py','.cu','.cuh'}}
     if current != manifest:
         raise SystemExit('Application sources changed during packaging. Rebuild before publishing.')
     from build_bundle import build_bundle

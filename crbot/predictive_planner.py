@@ -60,9 +60,22 @@ class PredictivePlanner:
             from .gpu_combat import GPUCombat
             self.gpu_combat = GPUCombat(self.sim,str(self.config.get('compute_device','auto')),
                                        int(self.config.get('gpu_combat_batch_size',128)))
-        if self.config.get('parallel_combat', False) and self.combat_pool is None:
+        if (self.config.get('parallel_combat', False) and self.combat_pool is None
+                and (self.gpu_combat is None or not self.gpu_combat.available)):
             from .parallel_combat import CombatPool
             self.combat_pool = CombatPool(self.kb.payload, self.config)
+
+    def advance_state(self,state,duration,*,deadline,clock):
+        if self.gpu_combat is not None and self.gpu_combat.available and self.gpu_combat.supports(state):
+            try:
+                self.gpu_combat.advance([state],duration,deadline)
+                return
+            except (RuntimeError,ValueError) as exc:
+                # Failed CUDA packets are atomic; restart this phase from its
+                # unchanged host state with the complete reference simulator.
+                self.gpu_combat.error=str(exc)
+                self.gpu_combat.available=False
+        self.sim.advance(state,duration,deadline=deadline,clock=clock)
 
     def candidates(self, s: SimState, side: int, *, limit=12, bounded=False) -> list[SimAction]:
         result = [SimAction(wait_s=.4)]
@@ -179,7 +192,7 @@ class PredictivePlanner:
 
     def plan(self, world: WorldSnapshot, *, action_scorer=None, learning_status=None) -> PlanResult:
         self.warm_pool()
-        gpu_before = (self.gpu_combat.completed,self.gpu_combat.fallbacks) if self.gpu_combat is not None else (0,0)
+        gpu_before = (self.gpu_combat.completed,self.gpu_combat.fallbacks,self.gpu_combat.completed_combinations) if self.gpu_combat is not None else (0,0,0)
         combat_mode = 'serial'
         fast = bool(self.config.get("fast_defense", False))
         started = self.clock()
@@ -355,7 +368,7 @@ class PredictivePlanner:
                     s = self.initial(world, enemy_cost, hp)
                     if not self.sim.apply(s, root, 1):
                         continue
-                    self.sim.advance(s, 1.5, deadline=deadline, clock=self.clock)
+                    self.advance_state(s, 1.5, deadline=deadline, clock=self.clock)
                     response = SimAction()
                     if responds:
                         # Enemy chooses its best short-horizon response, including holding resources.
@@ -364,20 +377,20 @@ class PredictivePlanner:
                             trial = s.clone()
                             if not self.sim.apply(trial, enemy, -1):
                                 continue
-                            self.sim.advance(trial, 2, deadline=deadline, clock=self.clock)
+                            self.advance_state(trial, 2, deadline=deadline, clock=self.clock)
                             value, _ = self.sim.evaluate(trial)
                             result.nodes += 1
                             if value < best_enemy:
                                 best_enemy, response = value, enemy
                     self.sim.apply(s, response, -1)
-                    self.sim.advance(s, 2, deadline=deadline, clock=self.clock)
+                    self.advance_state(s, 2, deadline=deadline, clock=self.clock)
                     # Own second move is conditional on the response, not an unconditional macro.
                     best, best_parts, follow = float("-inf"), {}, SimAction()
                     for action in self.candidates(s, 1, limit=5):
                         trial = s.clone()
                         if not self.sim.apply(trial, action, 1):
                             continue
-                        self.sim.advance(trial, horizon - 3.5, deadline=deadline, clock=self.clock)
+                        self.advance_state(trial, horizon - 3.5, deadline=deadline, clock=self.clock)
                         score, parts = self.sim.evaluate(trial)
                         if result.tactical_phase != 'legacy':
                             score = score_action(score, parts, world, self.kb, root, result.tactical_phase,
@@ -552,14 +565,17 @@ class PredictivePlanner:
             result.compute['gpu_combat'] = self.gpu_combat.status()
             gpu_roots=self.gpu_combat.completed-gpu_before[0]
             cpu_roots=self.gpu_combat.fallbacks-gpu_before[1]
-            result.compute['gpu_combat'].update(frame_gpu_roots=gpu_roots,frame_cpu_fallback_roots=cpu_roots)
+            gpu_combinations=self.gpu_combat.completed_combinations-gpu_before[2]
+            result.compute['gpu_combat'].update(frame_gpu_roots=gpu_roots,frame_cpu_fallback_roots=cpu_roots,
+                                                frame_gpu_combinations=gpu_combinations)
             result.compute['combat_device']='cuda_with_cpu_fallback' if gpu_roots and cpu_roots else self.gpu_combat.device if gpu_roots else 'cpu'
             if gpu_roots:
-                result.simulation_version='spatial_v7_cuda_supported_mechanics'
+                result.simulation_version='spatial_v8_full_cuda_mechanics'
             if combat_mode!='cuda_batched' and self.gpu_combat.available:
                 cpu_roots=len(result.candidates)
                 result.compute['gpu_combat']['frame_cpu_fallback_roots']=cpu_roots
             result.reason+=f'；CUDA 完整精算 {gpu_roots} / 特殊机制 CPU 回退 {cpu_roots}'
+            if gpu_combinations:result.reason+=f'；CUDA 条件式后续 {gpu_combinations}'
         result.compute["arena_geometry"]=asdict(self.sim.geometry)
         result.compute["grid_step_tiles"] = self.sim.placement_grid_step
         result.compute["all_placement_points"] = bool(self.config.get("all_placement_points",False)) and not bounded_recovery
@@ -623,14 +639,14 @@ class PredictivePlanner:
                 raise TimeoutError()
             state = initial_scenarios[index].clone()
             pipeline=max(0.,min(1.,float(self.config.get('defense_pipeline_s',0))))
-            if pipeline:self.sim.advance(state,pipeline,deadline=deadline,clock=self.clock)
+            if pipeline:self.advance_state(state,pipeline,deadline=deadline,clock=self.clock)
             if not self.sim.apply(state, root, 1):
                 return None
-            self.sim.advance(state, 1.5, deadline=deadline, clock=self.clock)
+            self.advance_state(state, 1.5, deadline=deadline, clock=self.clock)
             response = (self.attack_response(state) if fast and phase in {'develop','counterpush','prepare'} and root.card_id
                         else self.prior_response(state) if responds else SimAction())
             self.sim.apply(state, response, -1)
-            self.sim.advance(state, horizon-1.5-pipeline, deadline=deadline, clock=self.clock)
+            self.advance_state(state, horizon-1.5-pipeline, deadline=deadline, clock=self.clock)
             score, parts = self.sim.evaluate(state)
             if phase != 'legacy':
                 score = score_action(score, parts, world, self.kb, root, phase,
@@ -690,7 +706,10 @@ class PredictivePlanner:
                 shortlist.append(SimAction(**row['action']));counts[cid]=counts.get(cid,0)+1
         result.compute['combination_search']=dict(root_positions=len(shortlist),complete=False,
             followup_positions_per_card=max(1,min(4,int(self.config.get('combo_positions_per_card',2)))))
-        if self.combat_pool is not None and self.combat_pool.available:
+        if self.gpu_combat is not None and self.gpu_combat.available:
+            result.compute['combination_search']['mode']='cuda_batched'
+            source=self.gpu_combat.combination_rows(self,world,shortlist,scenarios,horizon,result.tactical_phase,deadline)
+        elif self.combat_pool is not None and self.combat_pool.available:
             from concurrent.futures import wait
             wait(self.combat_pool.pending,timeout=min(.01,max(0,deadline-self.clock())))
             if all(f.done() for f in self.combat_pool.pending):
@@ -723,9 +742,9 @@ class PredictivePlanner:
             if self.clock()>=deadline:raise TimeoutError()
             state=self.initial(world,enemy_cost,hp)
             pipeline=max(0.,min(1.,float(self.config.get('defense_pipeline_s',0))))
-            if pipeline:self.sim.advance(state,pipeline,deadline=deadline,clock=self.clock)
+            if pipeline:self.advance_state(state,pipeline,deadline=deadline,clock=self.clock)
             if not self.sim.apply(state,root,1):raise ValueError('invalid tactical root')
-            self.sim.advance(state,1.5,deadline=deadline,clock=self.clock)
+            self.advance_state(state,1.5,deadline=deadline,clock=self.clock)
             response=self.attack_response(state) if phase in {'develop','counterpush','prepare'} and root.card_id else SimAction()
             self.sim.apply(state,response,-1)
             # Recompute locations from the actual simulated survivors, health and elixir.
@@ -743,7 +762,7 @@ class PredictivePlanner:
                 second_response=SimAction()
                 if follow.card_id and phase in {'develop','counterpush','prepare'}:
                     second_response=self.attack_response(trial);self.sim.apply(trial,second_response,-1)
-                self.sim.advance(trial,max(0,horizon-1.5),deadline=deadline,clock=self.clock)
+                self.advance_state(trial,max(0,horizon-1.5),deadline=deadline,clock=self.clock)
                 score,parts=self.sim.evaluate(trial)
                 score=score_action(score,parts,world,self.kb,root,phase,float(self.config.get('attack_reserve',3)),self.sim.geometry)
                 spent=sum(float(self.kb.cards[c]['elixir']) for c in (root.card_id,follow.card_id) if c)

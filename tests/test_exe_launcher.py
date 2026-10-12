@@ -42,4 +42,18 @@ class PackagedPathsTests(unittest.TestCase):
             with patch.object(app_paths,'frozen',return_value=True),patch.object(app_paths,'resource_root',return_value=root):
                 self.assertEqual(code_identity(root/'no-source'),'release-specific-hash')
 
+    def test_source_identity_includes_cuda_kernels_and_headers(self):
+        from crbot.self_learning import code_identity
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);sources=root/'crbot';sources.mkdir()
+            (sources/'engine.py').write_text('value=1')
+            for name in ('engine.cu','mechanics.cuh'):
+                original=code_identity(root)
+                path=sources/name;path.write_text('first')
+                changed=code_identity(root);self.assertNotEqual(original,changed)
+                path.write_text('second');self.assertNotEqual(changed,code_identity(root))
+            original=code_identity(root)
+            (sources/'local-report.json').write_text('{}')
+            self.assertEqual(original,code_identity(root))
+
 if __name__=='__main__':unittest.main()

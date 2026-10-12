@@ -18,6 +18,8 @@ datas = [(str(source/'config.json'), 'defaults'),
          (os.environ['ROYAL_BUILD_GH'], 'vendor/gh')]
 datas += collect_data_files('ultralytics')
 datas += [(str(source/'crbot/gpu_combat.cu'), 'crbot')]
+datas += [(str(source/'crbot/gpu_combat_mechanics.cuh'), 'crbot')]
+datas += [(str(source/'crbot/gpu_placement.cu'), 'crbot')]
 for distribution in ('torch', 'torchvision', 'ultralytics', 'numpy', 'Pillow', 'opencv-python-headless', 'onnxruntime-gpu'):
     datas += copy_metadata(distribution)
 hiddenimports = collect_submodules('crbot') + collect_submodules('ultralytics') + ['onnxruntime']

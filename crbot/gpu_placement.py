@@ -1,6 +1,7 @@
 """Batched position/enemy/tower ranking; detailed combat remains in Simulator."""
 from __future__ import annotations
 import numpy as np
+from pathlib import Path
 from .gpu import resolve_device
 
 
@@ -17,7 +18,16 @@ class PlacementBatch:
         self.domain_points = 0
         self.spell_positions = 0
         self.quiet_positions = 0
+        self.fused_kernel = None
         if self.device != 'cpu':
+            try:
+                import cupy as cp
+                cp.cuda.Device(int(self.device.split(':')[-1])).use()
+                self.fused_kernel=cp.RawKernel(Path(__file__).with_suffix('.cu').read_text(encoding='utf-8'),
+                    'rank_points',options=('--std=c++17','--fmad=false'))
+                self.fused_kernel.compile()
+            except Exception as exc:
+                self.error=str(exc)
             from types import SimpleNamespace
             # Warm every ranking operation before the first battle's time budget starts.
             spec = SimpleNamespace(reach=3.,radius=.5,hp=1000.,shield=0.,damage=100.,period=1.,first_hit=.5,speed=1.,building=True)
@@ -26,6 +36,7 @@ class PlacementBatch:
 
     def status(self):
         return dict(device=self.device, calls=self.calls, positions=self.positions, error=self.error,
+                    ranking_backend='cuda_fused' if self.device!='cpu' and self.fused_kernel is not None else 'cpu' if self.device=='cpu' else 'cuda_tensor',
                     scope="placement_ranking_and_dps_trajectory" if self.trajectory else "placement_ranking",
                     domain_points=self.domain_points, spell_positions=self.spell_positions,
                     quiet_positions=self.quiet_positions,
@@ -166,6 +177,24 @@ class PlacementBatch:
         return result
 
     def _compute(self, points, rows, cover, eligible, spec, *, return_tensor=False):
+        if self.device != 'cpu' and self.fused_kernel is not None:
+            import cupy as cp
+            cp.cuda.Device(int(self.device.split(':')[-1])).use()
+            # Torch roster aggregation can consume the result through DLPack;
+            # only the complete card's scores are transferred back to the host.
+            if hasattr(points,'__dlpack__') and not isinstance(points,np.ndarray):
+                p=cp.from_dlpack(points)
+            else:p=cp.asarray(points,dtype=cp.float64)
+            out=cp.empty(len(points),cp.float64)
+            self.fused_kernel(((len(points)+127)//128,),(128,),
+                (p,cp.asarray(rows,cp.float64),cp.asarray(cover,cp.float64),cp.asarray(eligible,cp.float64),out,
+                 np.int32(len(points)),np.int32(len(rows)),np.int32(len(cover)),
+                 *map(np.float64,(spec.radius,spec.reach,spec.speed,spec.damage,spec.period,spec.hp,spec.shield,spec.first_hit)),
+                 np.int32(spec.building),np.int32(self.trajectory),np.int32(self.trajectory_steps),np.float64(self.trajectory_step)))
+            if return_tensor:
+                import torch
+                return torch.from_dlpack(out)
+            return out.get().tolist()
         if self.device == 'cpu':
             xp = np
             arr = lambda a: np.asarray(a,dtype=np.float64)
