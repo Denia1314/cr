@@ -63,6 +63,12 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(latest_completed_model(old),old)
         meta['model_sha256']=hashlib.sha256(b'new').hexdigest()
         (new.parent.parent/'manifest.json').write_text(json.dumps(meta))
+        # No scores means keep the configured model.
+        self.assertEqual(latest_completed_model(old),old)
+        (old.parent.parent/'results.csv').write_text('epoch,metrics/mAP50-95(B)\n1,0.3\n2,0.2\n')
+        (new.parent.parent/'results.csv').write_text('epoch,metrics/mAP50-95(B)\n1,0.29\n')
+        self.assertEqual(latest_completed_model(old),old)
+        (new.parent.parent/'results.csv').write_text('epoch,metrics/mAP50-95(B)\n1,0.31\n2,0.1\n')
         self.assertEqual(latest_completed_model(old),new)
         new.write_bytes(b'bad')
         with self.assertRaisesRegex(ValueError,'checksum'):

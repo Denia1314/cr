@@ -43,11 +43,33 @@ def latest_completed_model(path):
             metadata.get('revision') == anchor.get('revision') and
             metadata.get('kind') == 'external_slice_candidate' and best.is_file()):
             options.append((best, metadata))
-    for best, metadata in sorted(options,key=lambda item:item[0].stat().st_mtime_ns,reverse=True):
+    # Start with the configured model; missing comparable evidence never upgrades it.
+    selected = path
+    score = validation_score(path.parent.parent)
+    for best, metadata in sorted(options, key=lambda item:item[0].stat().st_mtime_ns):
         if hashlib.sha256(best.read_bytes()).hexdigest() != metadata.get('model_sha256'):
-            raise ValueError('Latest completed model checksum failed')
-        return best
-    return path
+            raise ValueError('Completed model checksum failed')
+        candidate_score = validation_score(best.parent.parent)
+        if score is not None and candidate_score is not None and candidate_score > score:
+            selected, score = best, candidate_score
+    return selected
+
+
+def validation_score(run):
+    """Best finite mAP50-95 from the run's validation history, not its last epoch."""
+    import math
+    results = Path(run)/'results.csv'
+    if not results.is_file():
+        return None
+    try:
+        with results.open(encoding='utf-8') as handle:
+            rows = csv.DictReader(handle)
+            scores = [float(row.get('metrics/mAP50-95(B)', 'nan'))
+                      for raw in rows for row in [{k.strip():v for k,v in raw.items()}]]
+        return max((s for s in scores if math.isfinite(s) and 0 <= s <= 1), default=None)
+    except (ValueError, TypeError):
+        return None
+
 
 
 def choose_start(source, output, base_model, *, fresh=False, inspect=inspect_checkpoint):
