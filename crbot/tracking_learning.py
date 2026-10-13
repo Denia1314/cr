@@ -138,6 +138,19 @@ def load_model(path):
     return model
 
 
+def refresh_review(path):
+    """Replace only the generated UI, preserving its embedded frames/labels."""
+    path=Path(path)
+    source=path.read_text(encoding='utf-8')
+    packets,_=json.JSONDecoder().raw_decode(source.split('const rows=',1)[1])
+    from .tracking_cards import illustrated_cards
+    template=(Path(__file__).parent/'tracking_review.html').read_text(encoding='utf-8')
+    page=template.replace('__DATA__',json.dumps(packets,ensure_ascii=False).replace('</','<\\/'))
+    page=page.replace('__CARDS__',json.dumps(illustrated_cards(),ensure_ascii=False).replace('</','<\\/'))
+    atomic_write(path,page.encode())
+    return len(packets)
+
+
 def prepare(runs,output,captures='training/tracking-capture'):
     rows=[]
     logs=sorted(Path(captures).glob('*/*/frames.jsonl'),key=lambda p:p.stat().st_mtime)[-3:]
@@ -176,7 +189,10 @@ def prepare(runs,output,captures='training/tracking-capture'):
             image.thumbnail((600,1000));buffer=io.BytesIO();image.convert('RGB').save(buffer,format='JPEG',quality=80)
         packets.append(dict(row,preview='data:image/jpeg;base64,'+base64.b64encode(buffer.getvalue()).decode()))
     template=(Path(__file__).parent/'tracking_review.html').read_text(encoding='utf-8')
-    atomic_write(output/'review.html',template.replace('__DATA__',json.dumps(packets,ensure_ascii=False).replace('</','<\\/')).encode())
+    from .tracking_cards import illustrated_cards
+    page=template.replace('__DATA__',json.dumps(packets,ensure_ascii=False).replace('</','<\\/'))
+    page=page.replace('__CARDS__',json.dumps(illustrated_cards(),ensure_ascii=False).replace('</','<\\/'))
+    atomic_write(output/'review.html',page.encode())
     return dict(frames=len(rows),battles=len(groups),review=str((output/'review.html').resolve()),ready_for_training=False)
 
 
