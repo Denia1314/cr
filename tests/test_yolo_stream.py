@@ -86,6 +86,36 @@ class YoloStreamTests(unittest.TestCase):
         worker.error = 'capture stopped'
         self.assertIsNone(worker.latest())
 
+    def test_continuous_identity_binding_keeps_current_frame_and_raw_model_data(self):
+        from crbot.own_unit_tracking import OwnUnitTracker
+        from crbot.predictive_planner import PredictivePlanner
+        from tests.test_prediction import knowledge
+        counter=0
+        def capture():
+            nonlocal counter
+            counter=(counter+1)%255
+            return Image.new('RGB',(8,8),(counter,0,0))
+        event=dict(id='confirmed-stream',card_id='mega_knight',x=.7,y=.45,at=time.monotonic()-.02)
+        frames=LatestFrameStream(capture,.01).start()
+        detector=Detector()
+        tracker=OwnUnitTracker(PredictivePlanner(knowledge(),{}).sim)
+        worker=YoloStream(frames,lambda:detector,None,20,identity_tracker=tracker,
+            deployment_source=lambda:(1,(event,))).start()
+        try:
+            self.wait_for(lambda:worker.processed>=4)
+            image,packet=worker.latest()
+            bound=next(d for d in packet['detections'] if d.get('identity_lock_id'))
+            self.assertEqual(bound['card_id'],'mega_knight')
+            self.assertEqual(bound['pixel'],image.getpixel((0,0))[0])
+            key=bound['identity_lock_id']
+            self.assertEqual(detector.observed_allies[0]['card_id'],'knight')
+            self.assertEqual(len(detector.unconfirmed_units),1)
+            previous=packet['revision']
+            self.wait_for(lambda:worker.processed>=previous+2)
+            self.assertEqual(worker.latest()[1]['identity_tracks'][0]['identity_lock_id'],key)
+        finally:
+            worker.close();frames.close()
+
     def test_gui_uses_continuous_actual_results_instead_of_decision_snapshots(self):
         from crbot.gui import RoyalTrainerApp
         app = RoyalTrainerApp.__new__(RoyalTrainerApp)

@@ -136,6 +136,7 @@ def compose_yolo(screenshot, packet, w, h, mode):
     marked=Image.new('RGB',(pane,h),'#F8FAFD');marked.paste(shot,(left,top))
     draw=ImageDraw.Draw(marked);boxes=[]
     observations=list((packet or {}).get('detections', []))+list((packet or {}).get('unconfirmed_units', []))
+    observations += [dict(t,observation_status='occluded_identity') for t in (packet or {}).get('identity_tracks',[]) if t.get('position_state')=='occluded']
     for index, observation in enumerate(observations):
         bbox=observation.get('bbox')
         if not bbox or len(bbox)!=4:continue
@@ -145,16 +146,21 @@ def compose_yolo(screenshot, packet, w, h, mode):
         ally=observation.get('side')==1
         unconfirmed=observation.get('observation_status')=='unconfirmed'
         color='#B7791F' if unconfirmed else '#2563EB' if ally else '#E34455'
+        if observation.get('position_state')=='occluded':color='#7655AD'
         draw.rectangle(box,outline=color,width=2)
         source=' · 回退' if observation.get('identity_source')=='public_pretrained' else ''
         label=f"{'我方' if ally else '敌方'} {observation.get('name_zh') or observation.get('card_id','未知')} {observation.get('confidence',0):.0%}{source}"
         if unconfirmed:label=f"未确认单位 {observation.get('confidence',0):.0%}"
+        if observation.get('identity_ambiguous'):label+=' · 身份待关联'
+        if observation.get('identity_lock_id'):
+            color='#7655AD' if observation.get('position_state')=='occluded' else '#2563EB'
+            label=f"我方 {observation.get('name_zh') or observation.get('card_id')} · 出牌绑定" + (' · 暂估' if observation.get('position_state')=='occluded' else '')
         face=font(10 if pane<300 else 12)
         width=min(pane,round(draw.textlength(label,font=face))+6)
         tx=min(box[0],pane-width);ty=max(0,box[1]-18)
         draw.rectangle((tx,ty,tx+width,ty+18),fill=color)
         draw.text((tx+3,ty),label,font=face,fill='white')
-        boxes.append((box,dict(observation,id=f"yolo:{(packet or {}).get('revision',0)}:{index}")))
+        boxes.append((box,dict(observation,id=observation.get('identity_lock_id') or f"yolo:{(packet or {}).get('revision',0)}:{index}")))
     if not observations:
         draw.rectangle((0,0,pane,23),fill='#F8FAFD')
         draw.text((4,3),'当前帧无有效 YOLO 单位' if packet else '等待 YOLO 识别结果',font=font(11),fill='#536478')
@@ -317,7 +323,10 @@ class GridWorldWindow:
                          if 'recognition_fps' in self.packet else '')
                 pending=len(self.packet.get('unconfirmed_units',[]))
                 evidence=f" · {pending} 个未确认" if pending else ''
-                self.label.configure(text=f"YOLO 识别 · {speed}更新 {self.source_fps:.1f} FPS · {len(self.packet.get('detections',[]))} 个确认单位{evidence} · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方 黄=未确认",wraplength=max(80,self.canvas.winfo_width()))
+                locks=self.packet.get('identity_tracks',[])
+                if locks:evidence+=f" · {len(locks)} 个出牌绑定（{sum(t.get('position_state')=='occluded' for t in locks)} 个暂估）"
+                recognized=sum(not d.get('identity_lock_id') for d in self.packet.get('detections',[]))
+                self.label.configure(text=f"YOLO 识别 · {speed}更新 {self.source_fps:.1f} FPS · {recognized} 个识别单位{evidence} · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方 黄=未确认 紫=暂估",wraplength=max(80,self.canvas.winfo_width()))
                 return
             self.label.configure(text=f"目标 30 FPS · 新数据 {self.source_fps:.1f} FPS · 第 {self.packet['revision']} 帧 · 同帧截图与模型" +
                 ('' if self.embedded else '\n'+self.packet.get('decision','')[:65]),wraplength=max(80,self.canvas.winfo_width()))
@@ -350,6 +359,9 @@ class GridWorldWindow:
                'hp_estimated':'血量为估计','identity_estimated':'身份为假设','source':'数据来源',
                'candidate_card_id':'未确认类别候选','candidate_unit_name':'模型类别候选','observation_status':'观测状态',
                'position_evidence':'位置证据','reason':'未确认原因',
+               'identity_lock_id':'身份跟踪编号','deployment_id':'已确认出牌编号',
+               'identity_source':'身份来源','position_state':'位置状态','visual_card_id':'模型当前类别',
+               'visual_confidence':'模型身体置信度','age_s':'距最后看见秒数',
                'destroyed':'已摧毁','level':'观测等级','side_evidence':'敌我判断依据',
                'simulated_hp':'推演假设血量','simulated_hp_fraction':'推演假设血量比例',
                'confidence':'识别置信度','target_uid':'目标编号','attributes':'属性','path':'预测路径',

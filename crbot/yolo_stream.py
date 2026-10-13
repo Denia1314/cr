@@ -7,8 +7,9 @@ from .battle_perception import LaneThreat
 
 
 class YoloStream:
-    def __init__(self, frames, detector_factory, catalog, target_fps=20):
+    def __init__(self, frames, detector_factory, catalog, target_fps=20, *, identity_tracker=None, deployment_source=None):
         self.frames, self.factory, self.catalog = frames, detector_factory, catalog
+        self.identity_tracker, self.deployment_source = identity_tracker, deployment_source
         self.period = 1 / max(10., min(60., float(target_fps)))
         self.stopped, self.lock = Event(), Lock()
         self.result, self.error = None, ''
@@ -38,6 +39,10 @@ class YoloStream:
                 if self.stopped.is_set():
                     break
                 started = time.monotonic()
+                generation,events=self.deployment_source() if self.deployment_source is not None else (0,())
+                setter=getattr(detector,'set_identity_tracking',None)
+                if setter and self.identity_tracker is not None:
+                    setter(bool(self.identity_tracker.locks) or any(0<=frame.started-e['at']<=6 for e in events))
                 # YOLO outputs identities, boxes and team evidence. Health-bar
                 # reading remains in the decision path, rather than serializing
                 # several extra CPU scans ahead of every preview publication.
@@ -46,7 +51,12 @@ class YoloStream:
                 if not detector.last_detection_succeeded:
                     raise RuntimeError(detector.error or 'YOLO inference failed')
                 observations = [dict(o) for o in detector.observed_enemies + detector.observed_allies]
-                for observation in observations:
+                candidates=[dict(c) for c in list(getattr(detector,'unconfirmed_units',[]))+list(getattr(detector,'tracking_units',[]))]
+                identity_tracks=[]
+                if self.identity_tracker is not None and self.deployment_source is not None:
+                    observations,candidates,identity_tracks=self.identity_tracker.update(
+                        observations,candidates,events,now=frame.started,generation=generation)
+                for observation in observations+identity_tracks:
                     card = self.catalog.get(observation.get('card_id')) if self.catalog else None
                     if card:
                         observation['name_zh'] = card.name_zh or card.name_en
@@ -57,7 +67,7 @@ class YoloStream:
                     self.finished_times.append(finished)
                     packet = dict(revision=self.processed, capture_sequence=frame.sequence,
                         at=frame.started, finished_at=finished, detections=observations,
-                        unconfirmed_units=[dict(c) for c in getattr(detector,'unconfirmed_units',[])],
+                        unconfirmed_units=candidates,identity_tracks=identity_tracks,
                         model=detector.status(), inference_ms=round(self.work_s * 1000, 3),
                         recognition_fps=self._fps(finished), source='continuous_yolo')
                     self.result = (frame.image, packet)

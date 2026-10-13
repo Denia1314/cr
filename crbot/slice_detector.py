@@ -11,6 +11,9 @@ from .unit_badges import associate_badges, find_level_badges
 
 
 class SliceBattlefield:
+    def set_identity_tracking(self, active):
+        self.identity_tracking_active=bool(active)
+
     def __init__(self, root, catalog, config):
         from ultralytics import YOLO
         path = Path(config['slice_model_path'])
@@ -49,10 +52,12 @@ class SliceBattlefield:
         source = image.crop((0, 0, image.width, bottom)) if arena_model else image
         threshold=float(self.config.get('runtime_confidence', .7))
         candidate_threshold=max(.1,min(threshold,float(self.config.get('unconfirmed_unit_confidence',.25))))
-        prediction = self.model.predict(source, conf=candidate_threshold,
+        tracking_active=getattr(self,'identity_tracking_active',False)
+        prediction = self.model.predict(source, conf=.1 if tracking_active else candidate_threshold,
                                         imgsz=int(self.config.get('image_size', 640)),
                                         device=self.device, verbose=False)[0]
         primary_finished = time.perf_counter()
+        self.tracking_units=[]
         self.last_raw_boxes = len(prediction.boxes.cls.cpu().tolist()) if prediction.boxes is not None else 0
         candidates = []
         if prediction.boxes is not None:
@@ -72,6 +77,12 @@ class SliceBattlefield:
         self.unconfirmed_units=[]
         self.last_rejections={'low_confidence':0,'team_badge_missing':0}
         for i, (card_id, name, confidence, box) in enumerate(candidates):
+            if confidence < candidate_threshold:
+                if tracking_active:
+                    badge=associate_badges([box],level_badges).get(0)
+                    self.tracking_units.append(dict(bbox=box,confidence=float(confidence),candidate_card_id=card_id,
+                        side=badge['side'] if badge else None,tracking_only=True,observation_status='unconfirmed'))
+                continue
             badge = badges.get(i)
             reason='low_confidence' if confidence<threshold else 'team_badge_missing' if badge is None else ''
             if reason:

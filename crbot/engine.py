@@ -1225,9 +1225,13 @@ class BotEngine:
             if self.frame_stream is not None and self.config.get('automation', {}).get('continuous_yolo', True) and getattr(self.policy, 'learned_detector', None) is not None:
                 from .learned_perception import LearnedBattlefieldDetector
                 from .yolo_stream import YoloStream
+                from .own_unit_tracking import OwnUnitTracker
+                planner=getattr(self.policy,'planner',None)
+                tracker=OwnUnitTracker(planner.sim) if planner is not None else None
                 self.yolo_stream = YoloStream(self.frame_stream,
                     lambda: LearnedBattlefieldDetector(self.project_root, self.policy.catalog, self.config.get('training', {})),
-                    self.policy.catalog, self.config.get('automation', {}).get('yolo_target_fps', 20)).start()
+                    self.policy.catalog, self.config.get('automation', {}).get('yolo_target_fps', 20),
+                    identity_tracker=tracker,deployment_source=(lambda:self.policy.world.placement_state() if self.in_battle else (-1,())) if tracker else None).start()
             if self.frame_stream is not None and self.config.get('automation',{}).get('continuous_perception',False):
                 from .live_grid import LiveGridStream
                 self.live_grid_stream=LiveGridStream(self.frame_stream,

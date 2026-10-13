@@ -163,7 +163,8 @@ class PredictivePlanner:
         for t in world.tracks:
             if world.at - t.last_seen > 1.5:
                 s.uncertainties.add("occluded_entity")
-                continue
+                if not t.identity_lock_id or world.at-t.last_seen > 3:
+                    continue
             if t.hp_fraction == 0:
                 continue
             cid = t.card_id
@@ -193,6 +194,8 @@ class PredictivePlanner:
         from .unconfirmed_units import deployment_positions
         located_deployments=deployment_positions(world,self.sim)
         for event_index,event in enumerate(world.confirmed_placements):
+            if event.get('identity_bound'):
+                continue
             # No duplicate units when a detector has supplied allies of this card.
             if any(t.side == 1 and t.card_id == event["card_id"] for t in world.tracks):
                 continue

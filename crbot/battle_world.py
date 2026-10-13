@@ -26,6 +26,11 @@ class Track:
     identity_observed_at: float | None = None
     level: int | None = None
     side_evidence: str | None = None
+    identity_lock_id: str | None = None
+    deployment_id: str | None = None
+    identity_source: str | None = None
+    visual_card_id: str | None = None
+    bbox: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,7 @@ class BattleWorld:
         self.reset()
 
     def reset(self):
+        self.battle_generation = getattr(self, 'battle_generation', 0) + 1
         self.revision = 0
         self.at: float | None = None
         self.tracks: dict[int, Track] = {}
@@ -62,7 +68,9 @@ class BattleWorld:
         self.events: list[dict] = []
         self._event_keys: set[str] = set()
         self.confirmed: set[str] = set()
+        self.confirmed_cards: dict[str,str] = {}
         self.tower_health=(None,)*4
+        self._placement_state=(self.battle_generation,())
 
     def update(self, detections: list[dict], *, now: float, elapsed: float, elixir: float,
                hand: list[tuple[int, str]], costs: dict[str, float], seconds_per_elixir: float,
@@ -82,18 +90,27 @@ class BattleWorld:
         self.revision += 1
         claimed: set[int] = set()
         for d in sorted(detections, key=lambda v: -float(v.get("confidence", 0))):
+            if d.get('identity_ambiguous'):
+                continue
             cid, side = str(d["card_id"]), int(d.get("side", -1))
             x, y, confidence = float(d["x"]), float(d["y"]), float(d.get("confidence", 0))
-            if not all(math.isfinite(v) for v in (x, y, confidence)) or confidence < .45:
+            bound = (d.get('identity_source') == 'confirmed_deployment_tracking' and bool(d.get('identity_lock_id'))
+                     and self.confirmed_cards.get(d.get('deployment_id'))==cid)
+            if not all(math.isfinite(v) for v in (x, y, confidence)) or confidence < (.1 if bound else .45):
                 continue
             def identity_matches(t):
+                if bound:
+                    return (t.identity_lock_id == d['identity_lock_id'] or
+                            (not t.identity_lock_id and t.first_seen >= d.get('deployment_at', now)))
+                if t.identity_lock_id:
+                    return False
                 return t.card_id == cid or t.card_id.startswith('unknown:') or cid.startswith('unknown:')
             def separation(t):
                 age=min(.75,max(0,now-t.last_seen))
                 return math.hypot(t.x+t.vx*age-x,t.y+t.vy*age-y)
             options = [t for t in self.tracks.values() if t.track_id not in claimed and identity_matches(t)
                        and t.side == side and now - t.last_seen <= 3
-                       and separation(t) <= .07 + min(.18, dt * .06)]
+                       and ((bound and t.identity_lock_id==d['identity_lock_id']) or separation(t) <= .07 + min(.18, dt * .06))]
             if options:
                 t = min(options, key=lambda t: (separation(t),t.card_id != cid))
                 age = now - t.last_seen
@@ -113,6 +130,16 @@ class BattleWorld:
             claimed.add(t.track_id)
             t.level=d.get('level')
             t.side_evidence=d.get('side_evidence')
+            if bound:
+                t.identity_lock_id=d['identity_lock_id']
+                t.deployment_id=d['deployment_id']
+                t.identity_source=d['identity_source']
+                t.visual_card_id=d.get('visual_card_id')
+                t.bbox=tuple(d.get('bbox',()))
+                t.hypotheses=()
+                for event in self.events:
+                    if event['id']==t.deployment_id:
+                        event['identity_bound']=True
             if not cid.startswith('unknown:'):
                 t.identity_observed_at=now
             elif not t.card_id.startswith('unknown:') and t.identity_observed_at is not None and now-t.identity_observed_at > 2:
@@ -153,12 +180,14 @@ class BattleWorld:
         self.enemy_elixir = low, high
         self.tracks = {k: t for k, t in self.tracks.items() if now - t.last_seen <= 3}
         for track in self.tracks.values():
-            if track.hp_observed_at is not None and now - track.hp_observed_at > .6:
+            if track.hp_fraction != 0 and track.hp_observed_at is not None and now - track.hp_observed_at > .6:
                 track.hp_fraction = None
                 track.hp_confidence = 0.
         self.events = self.events[-128:]
         recent = tuple(e["card_id"] for e in self.events[-8:] if e["kind"] == "deployment")
         reasons = list(uncertain or [])
+        if any(d.get('identity_ambiguous') for d in detections):
+            reasons.append('ally_identity_association_ambiguous')
         if high - low > 2:
             reasons.append("enemy_elixir_interval")
         if any(t.hp_fraction is None for t in self.tracks.values()):
@@ -171,13 +200,16 @@ class BattleWorld:
                              self.tower_health, self.enemy_elixir_estimate,
                              tuple(dict(e) for e in self.events if e["kind"] == "ally_deployment" and now - e["at"] < 8))
 
-    def confirm(self, action_id: str, card_id: str, x: float, y: float, now: float):
+    def confirm(self, action_id: str, card_id: str, x: float, y: float, now: float, *, issued_at=None):
         if action_id in self.confirmed:
             return
         self.confirmed.add(action_id)
+        self.confirmed_cards[action_id]=card_id
         # Confirmed placement is an event, not an invented alive-unit observation.
         self.events.append({"id": action_id, "card_id": card_id, "at": now,
-                            "kind": "ally_deployment", "x": x, "y": y})
+                            "kind": "ally_deployment", "x": x, "y": y,
+                            "issued_at": now if issued_at is None else min(now,issued_at)})
+        self._placement_state=(self.battle_generation,tuple(dict(e) for e in self.events if e['kind']=='ally_deployment'))
 
     def status(self) -> dict:
         return {"revision": self.revision, "enemy_elixir_interval": list(self.enemy_elixir),
@@ -188,3 +220,9 @@ class BattleWorld:
                 "observations": [asdict(t) for t in self.tracks.values()],
                 "unit_health": [{"track_id": t.track_id, "side": t.side, "hp_fraction": t.hp_fraction,
                                  "observed_at": t.hp_observed_at} for t in self.tracks.values()]}
+
+    def placement_state(self):
+        # Generation and events are published together in one assignment.
+        # Stream consumers never mutate policy tracks or events.
+        generation,events=self._placement_state
+        return generation,tuple(dict(e) for e in events)

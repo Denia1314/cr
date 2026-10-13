@@ -38,6 +38,7 @@ class LearnedBattlefieldDetector:
         self.observed_allies: list[dict[str, Any]] = []
         self.observed_enemies: list[dict[str, Any]] = []
         self.unconfirmed_units: list[dict[str,Any]] = []
+        self.tracking_units: list[dict[str,Any]] = []
         self.last_detection_succeeded = False
         self.allies_observed = False
         model_path = self.registry.champion_model_path()
@@ -84,6 +85,10 @@ class LearnedBattlefieldDetector:
                 "last_detection_succeeded": self.last_detection_succeeded,
                 "observed_enemies": len(self.observed_enemies), "observed_allies": len(self.observed_allies)}
 
+    def set_identity_tracking(self, active):
+        setter=getattr(self.pretrained,'set_identity_tracking',None)
+        if setter:setter(active)
+
     def detect(
         self,
         image: Image.Image,
@@ -93,6 +98,7 @@ class LearnedBattlefieldDetector:
         self.observed_allies = []
         self.observed_enemies = []
         self.unconfirmed_units = []
+        self.tracking_units = []
         self.last_detection_succeeded = False
         self.allies_observed = False
         if not self.available:
@@ -104,6 +110,7 @@ class LearnedBattlefieldDetector:
                 detections = baseline.detect(image)
                 candidates=getattr(baseline,'unconfirmed_units',())
                 self.unconfirmed_units=[dict(c) for c in candidates[:64]] if isinstance(candidates,(list,tuple)) else []
+                self.tracking_units=[dict(c) for c in getattr(baseline,'tracking_units',[])[:64]]
                 result = None
             else:
                 result = self.model.predict(

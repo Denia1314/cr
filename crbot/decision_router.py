@@ -21,6 +21,7 @@ class PredictiveBattlePolicy(BattlePolicy):
         from .tower_observation import TowerHealthTracker
         self.tower_observer = TowerHealthTracker()
         self.planner = None
+        self.own_unit_tracker = None
         self.knowledge_error = ""
         self.last_plan = None
         self.last_execution_engine = "none"
@@ -34,6 +35,8 @@ class PredictiveBattlePolicy(BattlePolicy):
         try:
             kb = KnowledgeBase.load(path)
             self.planner = PredictivePlanner(kb, {**self.policy, **self.planning_config})
+            from .own_unit_tracking import OwnUnitTracker
+            self.own_unit_tracker = OwnUnitTracker(self.planner.sim)
             self.knowledge_audit = kb.audit(int(self.planning_config.get("assumed_level", 11)))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.knowledge_error = str(exc)
@@ -70,6 +73,9 @@ class PredictiveBattlePolicy(BattlePolicy):
         decision_started = time.perf_counter()
         if self.planner is None or not self.reactive_ready:
             return self._fallback(current, previous, now, self.knowledge_error or "perception_unavailable")
+        generation,placements=self.world.placement_state()
+        setter=getattr(self.learned_detector,'set_identity_tracking',None)
+        if setter:setter(bool(self.own_unit_tracker.locks) or any(0<=now-e['at']<=6 for e in placements))
         # Capture observations before either strategy mutates action state.
         already_observed = (self._observed_image is current and self._observed_at == now
                             and self.last_hand_image is current and self._last_hand_observed_at == now)
@@ -148,11 +154,20 @@ class PredictiveBattlePolicy(BattlePolicy):
         elixir = float(self.last_elixir_estimate_value or 0)
         tower_health=self.tower_observer.observe(current,self.planning_config.get("tower_bar_rois",[]),
             self.planner.sim.geometry.tower_points,now=now)
+        candidates=list(getattr(detector,'unconfirmed_units',[]))+list(getattr(detector,'tracking_units',[]))
+        generation,placements=self.world.placement_state()
+        detections,candidates,identity_tracks=self.own_unit_tracker.update(detections,candidates,placements,now=now,generation=generation)
+        if getattr(self,'yolo_frame',None) and self.yolo_frame[0] is current:
+            packet=dict(self.yolo_frame[1],detections=detections,unconfirmed_units=candidates,identity_tracks=identity_tracks)
+            for row in packet['detections']+packet['identity_tracks']:
+                card=self.catalog.get(row.get('card_id'))
+                if card:row['name_zh']=card.name_zh or card.name_en
+            self.yolo_frame=(current,packet)
         snapshot = self.world.update(detections, now=now, elapsed=now-self.battle_started_at,
                                      elixir=elixir, hand=hand, costs=costs,
                                      seconds_per_elixir=float(self.policy.get("seconds_per_elixir", 2.8)) / self._elixir_rate_multiplier,
                                      uncertain=uncertain,tower_health=tower_health)
-        snapshot=replace(snapshot,unconfirmed_units=tuple(dict(c) for c in getattr(detector,'unconfirmed_units',[])))
+        snapshot=replace(snapshot,unconfirmed_units=tuple(dict(c) for c in candidates))
         if self.pending_action_id is not None or now < self.next_action_at:
             return None
         if not hand or self.last_hand_image is not current:
@@ -245,6 +260,12 @@ class PredictiveBattlePolicy(BattlePolicy):
                               hand_confidence=self.hand_history.metadata(now).get(str(action.slot), {}).get("confidence", .5),
                               elixir_confidence=self.last_elixir_confidence)
 
+    def prepare_action(self, decision, snapshot):
+        prepared=super().prepare_action(decision,snapshot)
+        self._proposed_prediction=(decision.card_id,*decision.deploy_point)
+        self._proposed_issued_at=getattr(self,'_observed_at',time.monotonic())
+        return prepared
+
     def resolve_action(self, action_id, status, *, now=None):
         changed = super().resolve_action(action_id, status, now=now)
         if changed and self._proposed_prediction is not None:
@@ -252,7 +273,8 @@ class PredictiveBattlePolicy(BattlePolicy):
                 self.last_plan.setdefault("learning", {})["action_confirmation"] = status
             if status == "confirmed":
                 cid, x, y = self._proposed_prediction
-                self.world.confirm(action_id, cid, x, y, time.monotonic() if now is None else now)
+                self.world.confirm(action_id, cid, x, y, time.monotonic() if now is None else now,
+                                   issued_at=getattr(self,'_proposed_issued_at',None))
             self._proposed_prediction = None
         return changed
 
