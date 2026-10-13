@@ -72,16 +72,22 @@ def validation_score(run):
 
 
 
-def choose_start(source, output, base_model, *, fresh=False, inspect=inspect_checkpoint):
+def choose_start(source, output, base_model, *, fresh=False, safe_finetune=False, inspect=inspect_checkpoint):
     source, output = Path(source).resolve(), Path(output).resolve()
     manifest = json.loads((source/'manifest.json').read_text())
     fingerprint = dataset_fingerprint(source)
     initial = dict(mode='new', model=str(base_model), dataset_fingerprint=fingerprint)
+    if safe_finetune:
+        initial['recipe'] = 'adamw-low-lr-v1'
     if fresh:
         return initial
     checkpoints = sorted(output.glob('candidate*/weights/last.pt'),
                          key=lambda p:p.stat().st_mtime_ns, reverse=True)
     for checkpoint in checkpoints:
+        if safe_finetune:
+            state_file = checkpoint.parent.parent/'training-state.json'
+            if not state_file.is_file() or json.loads(state_file.read_text()).get('recipe') != 'adamw-low-lr-v1':
+                continue
         info = inspect(checkpoint)
         if not info.get('data'):
             continue
@@ -111,8 +117,20 @@ def choose_start(source, output, base_model, *, fresh=False, inspect=inspect_che
                 expected = json.loads(metadata.read_text()).get('model_sha256')
                 if expected != hashlib.sha256(chosen.read_bytes()).hexdigest():
                     raise ValueError('Completed model checksum failed; refusing to reset silently')
-        return dict(mode='resume' if resumable else 'finetune', model=str(chosen),
+        if safe_finetune and not resumable:
+            break
+        return dict(recipe='adamw-low-lr-v1' if safe_finetune else 'legacy', mode='resume' if resumable else 'finetune', model=str(chosen),
                     run=str(checkpoint.parent.parent), completed_epochs=completed_epochs,
                     target_epochs=info['epochs'], dataset_fingerprint=fingerprint,
                     dataset_changed=dataset_changed)
+    if safe_finetune:
+        manifests = sorted(output.glob('candidate*/manifest.json'))
+        compatible = [m for m in manifests if json.loads(m.read_text()).get('classes') == manifest['classes']]
+        if compatible:
+            chosen = latest_completed_model(compatible[0].parent/'weights/best.pt')
+            return dict(mode='finetune', model=str(chosen), run=str(chosen.parent.parent),
+                        completed_epochs=max(0, len((chosen.parent.parent/'results.csv').read_text().splitlines())-1) if (chosen.parent.parent/'results.csv').is_file() else 0,
+                        target_epochs=0, dataset_fingerprint=fingerprint,
+                        dataset_changed=False, recipe='adamw-low-lr-v1')
+        initial['recipe'] = 'adamw-low-lr-v1'
     return initial

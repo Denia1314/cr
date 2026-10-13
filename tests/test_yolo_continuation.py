@@ -73,3 +73,16 @@ class ContinuationTests(unittest.TestCase):
         new.write_bytes(b'bad')
         with self.assertRaisesRegex(ValueError,'checksum'):
             latest_completed_model(old)
+
+    def test_safe_recipe_preserves_legacy_checkpoint_and_uses_best_completed(self):
+        old=self.checkpoint();best=old.parent/'best.pt';best.write_bytes(b'best')
+        meta=dict(classes=['knight'],revision='pin',kind='external_slice_candidate',model_sha256=hashlib.sha256(b'best').hexdigest())
+        (best.parent.parent/'manifest.json').write_text(json.dumps(meta))
+        (best.parent.parent/'results.csv').write_text('epoch,metrics/mAP50-95(B)\n100,0.3\n')
+        plan=choose_start(self.source,self.output,'base.pt',safe_finetune=True,inspect=self.inspect)
+        self.assertEqual(plan['mode'],'finetune');self.assertEqual(plan['model'],str(best))
+        self.inspect.assert_not_called()
+        interrupted=self.checkpoint('candidate-2')
+        (interrupted.parent.parent/'training-state.json').write_text(json.dumps({'recipe':'adamw-low-lr-v1','dataset_fingerprint':dataset_fingerprint(self.source)}))
+        plan=choose_start(self.source,self.output,'base.pt',safe_finetune=True,inspect=self.inspect)
+        self.assertEqual(plan['mode'],'resume');self.assertEqual(plan['model'],str(interrupted))

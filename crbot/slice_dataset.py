@@ -116,6 +116,7 @@ def main(argv=None):
     parser.add_argument('--units-only', action='store_true')
     parser.add_argument('--focus-units', nargs='*', default=[])
     parser.add_argument('--fresh', action='store_true', help='Explicitly start from base weights instead of continuing')
+    parser.add_argument('--safe-finetune', action='store_true', help='Resume only low-rate runs, otherwise fine-tune the best validated completed model')
     parser.add_argument('--plan', action='store_true', help='Show selected checkpoint without training')
     args = parser.parse_args(argv)
     if args.action == 'import':
@@ -138,7 +139,7 @@ def main(argv=None):
         if manifest.get('kind') not in {'synthetic_bootstrap', 'real_battle_bootstrap'}:
             raise ValueError('Train requires an exported slice or real battle dataset')
         from .yolo_continuation import choose_start
-        plan = choose_start(args.source, args.output, args.base_model, fresh=args.fresh)
+        plan = choose_start(args.source, args.output, args.base_model, fresh=args.fresh, safe_finetune=args.safe_finetune)
         print(json.dumps({'training_start':plan},ensure_ascii=False,indent=2),flush=True)
         if plan['mode'] == 'resume':
             print(f"恢复同一轮训练：已保存 {plan['completed_epochs']}/{plan['target_epochs']} 轮；保留优化器状态。", flush=True)
@@ -154,6 +155,9 @@ def main(argv=None):
         model.add_callback('on_train_start',save_training_state)
         kwargs = dict(data=str((args.source / 'data.yaml').resolve()),
                       batch=args.batch, device=vision_device(args.device), workers=0)
+        if args.safe_finetune:
+            kwargs.update(optimizer='AdamW', lr0=0.00005, lrf=0.1, warmup_epochs=1,
+                          warmup_bias_lr=0.0, patience=10, close_mosaic=min(5, args.epochs))
         if plan['mode'] == 'resume':
             model.train(resume=True, **kwargs)
         else:
