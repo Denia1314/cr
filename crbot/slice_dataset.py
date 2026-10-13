@@ -120,8 +120,8 @@ def main(argv=None):
     parser.add_argument('--safe-finetune', action='store_true', help='Resume only low-rate runs, otherwise fine-tune the best validated completed model')
     parser.add_argument('--plan', action='store_true', help='Show selected checkpoint without training')
     args = parser.parse_args(argv)
-    if args.action == 'train' and args.safe_finetune and not 1 <= args.batch <= 32:
-        parser.error("短程微调的 batch 必须为 1～32；本机建议 16。batch 是单批图片数量，过大会耗尽显存。")
+    if args.action == 'train' and args.safe_finetune and not 1 <= args.batch <= 80:
+        parser.error("短程微调的 batch 必须为 1～80。batch 是单批图片数量，过大会耗尽显存。")
     if args.action == 'import':
         result = import_slices(args.source, args.output)
         result = {k: v for k, v in result.items() if k not in {'records', 'auxiliary'}}

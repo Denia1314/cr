@@ -107,6 +107,6 @@ class TrainingArgumentSafetyTests(unittest.TestCase):
         import io
         message=io.StringIO()
         with redirect_stderr(message), self.assertRaises(SystemExit) as error:
-            main(['train','--safe-finetune','--batch','500'])
+            main(['train','--safe-finetune','--batch','81'])
         self.assertEqual(error.exception.code,2)
         self.assertIn('batch',message.getvalue())

@@ -17,12 +17,12 @@ if exist "models\battlefield\katacr-real-units-v2\candidate\weights\best.pt" set
 set "BOT_PLAN="
 if /i "%~1"=="--plan" set "BOT_PLAN=--plan"
 set /a BOT_ROUND=0
-echo Continuous YOLO training: 20 epochs per run, batch 16, low learning rate.
+echo Continuous YOLO training: 20 epochs per run, batch 80, low learning rate.
 echo Press Ctrl+C to stop. Saved checkpoints are preserved.
 :repeat
 set /a BOT_ROUND+=1
 echo Starting run %BOT_ROUND%...
-"%BOT_PY%" -m crbot.slice_dataset train --source training/exports/katacr-real-units-v3 --output models/battlefield/katacr-real-units-v3 --base-model "%BOT_BASE_MODEL%" --safe-finetune --epochs 20 --batch 16 --seed %RANDOM% --device auto %BOT_PLAN%
+"%BOT_PY%" -m crbot.slice_dataset train --source training/exports/katacr-real-units-v3 --output models/battlefield/katacr-real-units-v3 --base-model "%BOT_BASE_MODEL%" --safe-finetune --epochs 20 --batch 80 --seed %RANDOM% --device auto %BOT_PLAN%
 if errorlevel 1 goto failed
 if defined BOT_PLAN exit /b 0
 echo Run complete. Next run starts in 10 seconds. Ctrl+C stops the loop.
