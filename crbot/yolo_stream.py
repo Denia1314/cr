@@ -7,11 +7,12 @@ from .battle_perception import LaneThreat
 
 
 class YoloStream:
-    def __init__(self, frames, detector_factory, catalog, target_fps=20, *, identity_tracker=None, deployment_source=None):
+    def __init__(self, frames, detector_factory, catalog, target_fps=20, *, identity_tracker=None, deployment_source=None, tracking_capture=None):
         self.frames, self.factory, self.catalog = frames, detector_factory, catalog
         self.identity_tracker, self.deployment_source = identity_tracker, deployment_source
         from .enemy_unit_tracking import EnemyUnitTracker
         self.enemy_tracker=EnemyUnitTracker(identity_tracker.sim) if identity_tracker is not None else None
+        self.tracking_capture=tracking_capture
         self.period = 1 / max(10., min(60., float(target_fps)))
         self.stopped, self.lock = Event(), Lock()
         self.result, self.error = None, ''
@@ -54,12 +55,14 @@ class YoloStream:
                     raise RuntimeError(detector.error or 'YOLO inference failed')
                 observations = [dict(o) for o in detector.observed_enemies + detector.observed_allies]
                 candidates=[dict(c) for c in list(getattr(detector,'unconfirmed_units',[]))+list(getattr(detector,'tracking_units',[]))]
+                if self.tracking_capture is not None:
+                    self.tracking_capture.submit(frame.image,frame.started,generation,observations)
                 identity_tracks=[]
                 if self.identity_tracker is not None and self.deployment_source is not None:
                     observations,candidates,identity_tracks=self.identity_tracker.update(
                         observations,candidates,events,now=frame.started,generation=generation)
                 if self.enemy_tracker is not None:
-                    observations,candidates,enemy_tracks=self.enemy_tracker.update(observations,candidates,now=frame.started,generation=generation)
+                    observations,candidates,enemy_tracks=self.enemy_tracker.update(observations,candidates,now=frame.started,generation=generation,image=frame.image)
                     identity_tracks+=enemy_tracks
                 for observation in observations+identity_tracks:
                     card = self.catalog.get(observation.get('card_id')) if self.catalog else None
@@ -102,9 +105,14 @@ class YoloStream:
                 queue_capacity=1, actual_fps=self._fps(now) if active else 0.,
                 inference_ms=None if self.work_s is None else round(self.work_s * 1000, 3),
                 frame_age_s=now - packet['at'] if packet else None,
-                model=packet.get('model'), error=self.error, scope='actual_model_and_unit_postprocessing')
+                model=packet.get('model'), error=self.error, scope='actual_model_and_unit_postprocessing',
+                tracking_capture=dict(enabled=self.tracking_capture is not None,
+                    saved=self.tracking_capture.saved if self.tracking_capture else 0,
+                    dropped=self.tracking_capture.dropped if self.tracking_capture else 0,
+                    error=self.tracking_capture.error if self.tracking_capture else ''))
 
     def close(self):
         self.stopped.set()
         if self.thread.ident is not None:
             self.thread.join(timeout=22)
+        if self.tracking_capture is not None:self.tracking_capture.close()

@@ -15,7 +15,7 @@ class EnemyUnitTracker:
         self.cached_at=None
         self.cached=None
 
-    def update(self, observations, candidates, *, now, generation):
+    def update(self, observations, candidates, *, now, generation, image=None):
         if generation != self.generation or self.cached_at is not None and now < self.cached_at:
             self.reset(generation)
         if now == self.cached_at:
@@ -37,6 +37,10 @@ class EnemyUnitTracker:
                 if not .20<=y<=.80:
                     continue
                 bodies.append(dict(kind=kind,index=index,row=d,x=x,y=y))
+        model=getattr(self.sim,'tracking_association_model',None)
+        if model is not None and image is not None:
+            from .tracking_learning import descriptor
+            for body in bodies:body['row']['appearance']=descriptor(image,body['row']['bbox'])
         def distance(lock,body):
             age=min(.75,max(0.,now-lock['at']))
             a=self.sim.xy(lock['x']+lock['vx']*age,lock['y']+lock['vy']*age)
@@ -47,11 +51,30 @@ class EnemyUnitTracker:
             roster=self.sim.kb.roster(lock['card_id'],self.sim.level)
             speed=max((spec.speed for spec,count in roster),default=1.5)
             radius=min(5.,1.25+max(0.,now-lock['at'])*speed)
+            if model is not None and 'appearance' in lock['row'] and all('appearance' in b['row'] for b in bodies):
+                from .tracking_learning import features,probability
+                scores=[]
+                for i,b in enumerate(bodies):
+                    if distance(lock,b)>radius:continue
+                    row=dict(b['row'],card_id=b['row'].get('card_id',b['row'].get('candidate_card_id','')))
+                    score=probability(model['weights'],features(dict(lock['row'],card_id=lock['card_id']),row,now-lock['at']))
+                    scores.append((score,i))
+                scores.sort(reverse=True)
+                if scores and scores[0][0]>=model['threshold'] and (len(scores)==1 or scores[0][0]-scores[1][0]>=.1):
+                    choices[key]=(distance(lock,bodies[scores[0][1]]),scores[0][1])
+                continue
             if ranked and ranked[0][0]<=radius and (len(ranked)==1 or ranked[1][0]-ranked[0][0]>=.5):
                 choices[key]=ranked[0]
         matched={}
         for key,(dist,index) in choices.items():
             rivals=sorted((distance(lock,bodies[index]),other) for other,lock in self.locks.items())
+            if model is not None and 'appearance' in bodies[index]['row'] and all('appearance' in l['row'] for l in self.locks.values()):
+                from .tracking_learning import features,probability
+                row=dict(bodies[index]['row'],card_id=bodies[index]['row'].get('card_id',bodies[index]['row'].get('candidate_card_id','')))
+                rivals=sorted((-probability(model['weights'],features(dict(l['row'],card_id=l['card_id']),row,now-l['at'])),other)
+                    for other,l in self.locks.items() if distance(l,bodies[index])<=5)
+                if rivals and rivals[0][1]==key and (len(rivals)==1 or rivals[1][0]-rivals[0][0]>=.1):matched[index]=key
+                continue
             if rivals[0][1]==key and (len(rivals)==1 or rivals[1][0]-rivals[0][0]>=.5):
                 matched[index]=key
         consumed_obs=set();consumed_candidates=set();visible=[]

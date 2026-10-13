@@ -59,6 +59,14 @@ class PredictivePlanner:
         from .combat_health import CombatHealth
         self.combat_health = CombatHealth()
         self._configured_pipeline_s = float(config.get('defense_pipeline_s',.35))
+        self.sim.tracking_association_model=None
+        self.tracking_model_error=''
+        if config.get('tracking_association_model'):
+            from .tracking_learning import load_model
+            try:
+                self.sim.tracking_association_model=load_model(config['tracking_association_model'])
+            except (ValueError,KeyError,OSError,TypeError) as error:
+                self.tracking_model_error=str(error)
 
     def update_execution_delay(self, send_s):
         """Use measured click latency, excluding post-action confirmation."""
@@ -274,6 +282,8 @@ class PredictivePlanner:
                            "selected_for_execution": False, "changed_selection": False}
         stage_started = time.perf_counter()
         result.compute['stage_ms'] = {}
+        result.compute['tracking_association']=dict(loaded=self.sim.tracking_association_model is not None,
+            error=self.tracking_model_error,battle_accepted=False)
         initial = None
         result.compute['recovery_budget_ms'] = round((deadline-started)*1000, 2) if bounded_recovery else None
         try:

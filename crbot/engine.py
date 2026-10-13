@@ -1242,10 +1242,17 @@ class BotEngine:
                 from .own_unit_tracking import OwnUnitTracker
                 planner=getattr(self.policy,'planner',None)
                 tracker=OwnUnitTracker(planner.sim) if planner is not None else None
+                capture=None
+                training=self.config.get('training',{})
+                if tracker and training.get('tracking_capture_enabled',False):
+                    from .tracking_capture import TrackingCapture
+                    capture=TrackingCapture(self.project_root/'training/tracking-capture',
+                        training.get('tracking_capture_fps',2),training.get('tracking_capture_limit',600))
                 self.yolo_stream = YoloStream(self.frame_stream,
                     lambda: LearnedBattlefieldDetector(self.project_root, self.policy.catalog, self.config.get('training', {})),
                     self.policy.catalog, self.config.get('automation', {}).get('yolo_target_fps', 20),
-                    identity_tracker=tracker,deployment_source=(lambda:self.policy.world.placement_state() if self.in_battle else (-1,())) if tracker else None).start()
+                    identity_tracker=tracker,deployment_source=(lambda:self.policy.world.placement_state() if self.in_battle else (-1,())) if tracker else None,
+                    tracking_capture=capture).start()
             if self.frame_stream is not None and self.config.get('automation',{}).get('continuous_perception',False):
                 from .live_grid import LiveGridStream
                 self.live_grid_stream=LiveGridStream(self.frame_stream,
