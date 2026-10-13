@@ -109,6 +109,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, default=Path('training/external/katacr-slices'))
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--batch', type=int, default=8)
+    parser.add_argument('--seed', type=int, help='Random seed for a new training run; resume preserves its original seed')
     parser.add_argument('--device', default='auto')
     parser.add_argument('--base-model', default='yolo11n.pt')
     parser.add_argument('--slices', type=Path, default=Path('training/external/katacr-slices'))
@@ -157,6 +158,8 @@ def main(argv=None):
         model.add_callback('on_train_start',save_training_state)
         kwargs = dict(data=str((args.source / 'data.yaml').resolve()),
                       batch=args.batch, device=vision_device(args.device), workers=0)
+        if args.seed is not None and plan['mode'] != 'resume':
+            kwargs['seed'] = args.seed
         if args.safe_finetune:
             kwargs.update(optimizer='AdamW', lr0=0.00005, lrf=0.1, warmup_epochs=1,
                           warmup_bias_lr=0.0, patience=10, close_mosaic=min(5, args.epochs))
