@@ -358,6 +358,8 @@ class Simulator:
         score += 18 * (own_towers - enemy_towers)
         # Penalize imminent damage beyond the horizon, especially at a nearly fallen tower.
         exposure = 0.
+        from .grid_world import target_for
+        targets = {e.uid: target_for(Simulator,s,e) for e in s.entities if e.side == 1 and e.spec.damage > 0}
         for enemy in s.entities:
             if enemy.side != -1 or enemy.tower or enemy.spec.damage <= 0:
                 continue
@@ -367,8 +369,9 @@ class Simulator:
                 continue
             if enemy.target is not None and enemy.target != tower.uid:
                 continue
-            eta = max(0, Simulator.distance(enemy, tower) - enemy.spec.reach) / max(.1, enemy.spec.speed)
-            exposure += enemy.spec.damage / max(.1, enemy.spec.period) * max(0, 3-eta) * (2-tower.hp/tower.spec.hp)
+            from .tower_threat import assess
+            threat = assess(s, enemy, tower, targets=targets)
+            exposure += threat['tower_damage'] * (2-tower.hp/tower.spec.hp)
         score -= exposure / 150
         score -= .08 * len(s.uncertainties)
         return score, {"own_towers_remaining": own_towers, "own_tower_damage": round(own_loss, 1), "enemy_tower_damage": round(enemy_loss, 1),

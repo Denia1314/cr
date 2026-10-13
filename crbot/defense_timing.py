@@ -36,13 +36,15 @@ def forecast(sim, state, hand, pipeline_s=.35):
                 pulls=(not enemy.spec.building_only or spec.building) and ('air' if spec.air else 'ground') in enemy.spec.targets
                 if hits or pulls:leads.append(spec.deploy+spec.first_hit)
         lead=max(0.,pipeline_s)+min(leads,default=1.5)
+        from .tower_threat import assess
+        combat=assess(state,enemy,tower,window=min(12.,max(3.,eta+3.)))
         result.append(dict(unit=enemy.spec.name,track_id=enemy.track_id,x=enemy.x,y=enemy.y,
                            target_x=tower.x,target_y=tower.y,unopposed_tower_eta_s=round(eta,3),
                            defense_lead_s=round(lead,3),intervention_slack_s=round(eta-lead,3),
                            approach_speed_tiles_s=round(speed,3),path=path,
                            observed_velocity=[enemy.observed_vx,enemy.observed_vy],
                            linear_samples=[dict(dt=dt,x=enemy.x+enemy.observed_vx*dt,y=enemy.y+enemy.observed_vy*dt) for dt in (.5,1.,2.)],
-                           status='hypothesis'))
+                           combat=combat,status='hypothesis'))
     return result
 
 

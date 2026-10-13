@@ -19,6 +19,10 @@ def emergency_defense(sim, state):
     for enemy in state.entities:
         if enemy.side != -1 or enemy.tower or enemy.hp <= 0 or enemy.y < 16 or enemy.spec.damage <= 0:
             continue
+        from .tower_threat import assess
+        tower = min(towers,key=lambda t:sim.distance(enemy,t),default=None)
+        if tower is None or assess(state,enemy,tower,window=6.)['tower_damage'] <= 0:
+            continue
         if 'ground' not in enemy.spec.targets:
             continue
         tower = min(towers, key=lambda t: math.dist((enemy.x, enemy.y), (t.x, t.y)), default=None)

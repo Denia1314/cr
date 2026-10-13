@@ -31,6 +31,10 @@ class Track:
     identity_source: str | None = None
     visual_card_id: str | None = None
     bbox: tuple[float, ...] = ()
+    hp_estimate: float | None = None
+    hp_estimate_low: float | None = None
+    hp_estimate_high: float | None = None
+    hp_estimate_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -179,10 +183,8 @@ class BattleWorld:
                                 for i,v in enumerate(incoming))
         self.enemy_elixir = low, high
         self.tracks = {k: t for k, t in self.tracks.items() if now - t.last_seen <= 3}
-        for track in self.tracks.values():
-            if track.hp_fraction != 0 and track.hp_observed_at is not None and now - track.hp_observed_at > .6:
-                track.hp_fraction = None
-                track.hp_confidence = 0.
+        # Retain timestamped visual HP anchors. Stale bars are propagated by
+        # CombatHealth rather than replaced with a full-health hypothesis.
         self.events = self.events[-128:]
         recent = tuple(e["card_id"] for e in self.events[-8:] if e["kind"] == "deployment")
         reasons = list(uncertain or [])

@@ -49,11 +49,11 @@ class DefenseReserveTests(unittest.TestCase):
         self.assertFalse(audit['worst_risk_improved'])
         self.assertTrue(audit['mean_risk_improved'])
 
-    def test_crisis_acts_without_proven_mitigation_but_not_below_threshold(self):
+    def test_crisis_does_not_spend_without_proven_mitigation(self):
         from crbot.battle_world import Track
         from crbot.tactical_objective import emergency_tower_defense
         p=PredictivePlanner(self.kb,{})
-        for enemy,elixir,damage,expected in (('giant',3,3051.4,True),('giant',3,100,False),
+        for enemy,elixir,damage,expected in (('giant',3,3051.4,False),('giant',3,100,False),
                                             ('giant',2,3051.4,False),('balloon',3,3051.4,False)):
             with self.subTest(enemy=enemy,elixir=elixir,damage=damage):
                 w=world(elixir=elixir,hand=((0,'knight'),),tracks=(Track(1,enemy,-1,.3,.6,99,100,.9),))
@@ -62,7 +62,7 @@ class DefenseReserveTests(unittest.TestCase):
                 self.assertEqual(audit['changed'],expected)
                 self.assertIs(result,play if expected else waiting)
 
-    def test_planner_crisis_bypasses_reserve_with_no_proven_reduction(self):
+    def test_planner_crisis_keeps_reserve_with_no_proven_reduction(self):
         from crbot.battle_world import Track
         p=PredictivePlanner(self.kb,dict(fast_defense=True,unified_tactics=True,development_reserve_gate=True))
         p.clock=lambda:0
@@ -72,8 +72,8 @@ class DefenseReserveTests(unittest.TestCase):
              patch.object(p,'evaluate_root',side_effect=lambda w,a,*args:row(a,3051.4)), \
              patch.object(p,'refine_combinations',return_value=[]):
             result=p.plan(w)
-        self.assertEqual(result.status,'ready')
-        self.assertTrue(result.compute['tower_emergency_defense']['reserve_override'])
+        self.assertEqual(result.status,'wait')
+        self.assertEqual(result.compute['tower_emergency_defense']['reason'],'no_completed_effective_defense')
 
     def test_uncertain_balloon_hypothesis_does_not_block_ground_defense(self):
         from crbot.battle_world import Track
@@ -81,7 +81,7 @@ class DefenseReserveTests(unittest.TestCase):
         p=PredictivePlanner(self.kb,{})
         w=world(elixir=3,hand=((0,'knight'),),tracks=(Track(1,'unknown:left:single',-1,.3,.6,99,100,.9,
                 hypotheses=('knight','minions','balloon')),))
-        waiting=row(SimAction(),3051.4);play=row(SimAction('knight',0,.3,.65),3051.4)
+        waiting=row(SimAction(),3051.4);play=row(SimAction('knight',0,.3,.65),2500)
         chosen,audit=emergency_tower_defense(waiting,[waiting,play],w,p.sim,p.initial(w,10,1))
         self.assertIs(chosen,play)
         self.assertTrue(audit['changed'])

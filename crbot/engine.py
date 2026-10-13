@@ -787,6 +787,10 @@ class BotEngine:
             self.replay.observe_action_effect(self.completed_battles + 1, observation)
         policy_snapshot = self.policy.snapshot_state()
         self.policy.prediction_pre_decision_s = time.perf_counter() - cycle_started
+        if hasattr(self.policy,'planner') and self.policy.planner is not None and not self.dry_run:
+            send = self.response_timing.percentile(self.response_timing.samples.get('send', [])[-16:], .95)
+            if send is not None:
+                self.policy.planner.update_execution_delay(send)
         decision_started = time.perf_counter()
         decision = self.policy.decide(image, self.previous_battle_frame, now=now)
         timing["decision_s"] = time.perf_counter() - decision_started
@@ -1035,6 +1039,16 @@ class BotEngine:
             card_pixel = list(self.device.tap_normalized(decision.card_point, image.size))
             if self._sleep(0.09):
                 raise DeviceError("停止请求发生在选牌点击后")
+            if getattr(decision,'decision_engine','legacy') == 'predictive' and time.monotonic() > decision.plan_valid_until:
+                elapsed=time.perf_counter()-send_started
+                self.response_timing.record('send',elapsed)
+                self.response_timing.record('adb',elapsed)
+                if timing is not None:
+                    timing.update(send_s=elapsed,adb_s=elapsed,confirmation_s=0.)
+                self.policy.resolve_action(action_id,'rejected',now=time.monotonic())
+                confirmation=ActionConfirmation(action_id,'rejected',1.,'选牌后推演已过期，取消落点点击',
+                    {'plan_expired':True,'card_selected_only':True},0.,0)
+                return replace(decision,action_status='rejected'),card_pixel,None,confirmation,None,'plan_expired'
             deploy_pixel = list(
                 self.device.tap_normalized(decision.deploy_point, image.size)
             )

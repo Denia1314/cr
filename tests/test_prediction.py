@@ -513,6 +513,29 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(result[0].action_status, "rejected")
         self.assertEqual(self.p.virtual_elixir, before["virtual_elixir"])
 
+    def test_plan_expiring_during_card_tap_never_sends_deployment(self):
+        from crbot.engine import BotEngine
+        from crbot.temporal import TimingStats
+        before=self.p.snapshot_state()
+        with patch.object(self.p.planner,'plan',return_value=self.result()):
+            decision=self.p.decide(self.image,None,now=100)
+        clock=[100.]
+        def tap(*args):
+            clock[0]=200.
+            return (10,20)
+        engine=object.__new__(BotEngine)
+        engine.policy,engine.config=self.p,base_config()
+        engine.recorder,engine.device,engine.dry_run=MagicMock(),MagicMock(),False
+        engine.response_timing=TimingStats()
+        engine.device.tap_normalized.side_effect=tap
+        engine._sleep=lambda s:False
+        with patch('crbot.engine.time.monotonic',side_effect=lambda:clock[0]):
+            result=engine._execute_action(self.image,decision,before)
+        engine.device.tap_normalized.assert_called_once()
+        self.assertEqual(result[0].action_status,'rejected')
+        self.assertIsNone(result[2])
+        self.assertTrue(result[3].evidence['card_selected_only'])
+
 
 class AuditTests(unittest.TestCase):
     def test_audit_reads_real_flat_recorder_format(self):

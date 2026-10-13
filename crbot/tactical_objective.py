@@ -1,5 +1,30 @@
 """Shared attack/defense objective with explicit reserve and response hypotheses."""
 
+
+def avoid_late_defense(best, candidates, world, sim, forecasts):
+    """Do not spend on a local defense whose targets die before it can act."""
+    audit = dict(changed=False, reason='not_applicable')
+    action = best['action']
+    cid = action['card_id']
+    if not cid or world.elixir >= 9.5 or not sim.kb.roster(cid,sim.level):
+        return best,audit
+    waiting = next((r for r in candidates if not r['action']['card_id'] and r.get('branches')),None)
+    if waiting is None or max(b.get('own_tower_damage',0)+b.get('imminent_tower_exposure',0) for b in waiting['branches']) > 30:
+        return best,audit
+    if max(b.get('enemy_tower_damage',0) for b in best['branches']) > max(b.get('enemy_tower_damage',0) for b in waiting['branches'])+30:
+        return best,audit
+    x,y=sim.xy(action['x'],action['y'])
+    near=[f for f in forecasts if (f['x']-x)**2+(f['y']-y)**2 <= 25]
+    if not near:
+        return best,audit
+    lead=sim.defense_pipeline_s+min(spec.deploy+spec.first_hit for spec,count in sim.kb.roster(cid,sim.level))
+    if all(f.get('combat',{}).get('estimated_kill_s') is not None and
+           f['combat']['estimated_kill_s'] <= lead and f['combat']['tower_damage'] == 0 for f in near):
+        audit.update(changed=True,reason='existing_defenders_kill_before_deployment',
+                     track_ids=[f['track_id'] for f in near],defense_lead_s=lead)
+        return waiting,audit
+    return best,audit
+
 def protect_towers_before_wait(best, candidates, world, kb, tolerance=30., minimum_mitigation=30.):
     """Veto a dangerous WAIT using completed immediate-action comparisons only."""
     tolerance = max(0., float(tolerance))
@@ -89,6 +114,14 @@ def emergency_tower_defense(best, candidates, world, sim, initial, threshold=600
                   + b.get('imminent_tower_exposure',0) for b in row['branches']]
         cid = row['action']['card_id']
         return max(losses),sum(losses)/len(losses),sim.kb.cards[cid]['elixir'] if cid else 0,-row['score']
+    # Interacting with an enemy is not proof that this late deployment helps.
+    # Permit equal worst-case risk only when another completed branch improves.
+    wait_rank=rank(waiting)
+    options=[r for r in options if rank(r)[0] <= wait_rank[0] and wait_rank[1]-rank(r)[1] > 30]
+    audit['effective_defenses']=len(options)
+    if not options:
+        audit['reason'] = 'no_completed_effective_defense'
+        return best, audit
     chosen = min(options,key=rank)
     audit.update(changed=True,reason='tower_crisis_defend_despite_uncertain_mitigation',
                  card_id=chosen['action']['card_id'],reserve_override=True,

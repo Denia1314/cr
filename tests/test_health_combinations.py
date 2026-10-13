@@ -50,10 +50,13 @@ class HealthCombinationTests(unittest.TestCase):
         root=SimAction('musketeer',1,.3,.73);scenarios=[(7,1,False)]
         single=p.evaluate_root(snapshot,root,scenarios,8,'defend',100)
         pair=p.evaluate_combination(snapshot,root,scenarios,8,'defend',100)
-        self.assertLess(pair['branches'][0]['own_tower_damage'],single['branches'][0]['own_tower_damage'])
-        self.assertEqual(pair['branches'][0]['followup_action']['card_id'],'fireball')
+        def risk(row):
+            b=row['branches'][0]
+            return b['own_tower_damage']+b['imminent_tower_exposure']
+        self.assertLess(risk(pair),risk(single))
+        self.assertIn(pair['branches'][0]['followup_action']['card_id'],('fireball','knight'))
         self.assertGreater(pair['branches'][0]['followup_candidates'],3)
-        self.assertEqual(pair['planned_cost'],8)
+        self.assertEqual(pair['planned_cost'],4+p.kb.cards[pair['branches'][0]['followup_action']['card_id']]['elixir'])
 
     def test_parallel_combinations_match_serial_including_followup_locations(self):
         kb=knowledge();config=dict(fast_defense=True,unified_tactics=True,combat_workers=2)

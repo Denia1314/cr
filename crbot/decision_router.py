@@ -45,6 +45,8 @@ class PredictiveBattlePolicy(BattlePolicy):
     def reset_battle(self, now=None):
         super().reset_battle(now)
         self.world.reset()
+        if self.planner is not None:
+            self.planner.combat_health.reset()
         self.tower_observer.reset()
         self.last_plan = None
         self.last_execution_engine = "none"
@@ -201,6 +203,7 @@ class PredictiveBattlePolicy(BattlePolicy):
                 self.last_plan['grid_world_error']=str(exc)
         self.last_plan['unit_health'] = [dict(track_id=t.track_id,card_id=t.card_id,side=t.side,
             fraction=t.hp_fraction,observed_at=t.hp_observed_at,confidence=t.hp_confidence,
+            estimate=t.hp_estimate,low=t.hp_estimate_low,high=t.hp_estimate_high,estimate_source=t.hp_estimate_source,
             identity_known=not t.card_id.startswith('unknown:')) for t in snapshot.tracks]
         self.last_plan["frame_age_before_perception_s"] = round(frame_age, 4)
         self.last_plan["pre_decision_s"] = round(pre_decision_s, 4)

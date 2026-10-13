@@ -56,6 +56,15 @@ class PredictivePlanner:
         self._urgent_recovery = False
         self._placement_warmed = False
         self._runtime_warmed = False
+        from .combat_health import CombatHealth
+        self.combat_health = CombatHealth()
+        self._configured_pipeline_s = float(config.get('defense_pipeline_s',.35))
+
+    def update_execution_delay(self, send_s):
+        """Use measured click latency, excluding post-action confirmation."""
+        pipeline=max(self._configured_pipeline_s,min(1.,max(0.,send_s)+float(self.config.get('budget_ms',180))/1000))
+        self.config['defense_pipeline_s']=pipeline
+        self.sim.defense_pipeline_s=pipeline
 
     def warm_pool(self):
         batch=getattr(self.sim,'placement_batch',None)
@@ -184,6 +193,12 @@ class PredictivePlanner:
             x,y=max(0,min(18,x)),max(0,min(32,y))
             observed_hp = t.hp_fraction if t.hp_observed_at is None or world.at-t.hp_observed_at <= .6 else None
             fraction = observed_hp if observed_hp is not None else (health if t.side == -1 else max(.25,1.35-health))
+            if observed_hp is None and t.hp_estimate is not None:
+                fraction = t.hp_estimate_high if t.side == -1 else t.hp_estimate_low
+                s.uncertainties.add('unit_health_combat_interval')
+            elif observed_hp is None and t.hp_fraction is not None and t.hp_observed_at is not None and world.at-t.hp_observed_at <= 3:
+                fraction = min(1., t.hp_fraction+.05*(world.at-t.hp_observed_at))
+                s.uncertainties.add('unit_health_stale_anchor')
             card = self.kb.cards[cid]
             entity = self.sim.add(s, spec, t.side, x, y, hp_fraction=fraction,
                                  value=float(card.get("elixir") or 0) / max(1, sum(n for _, n in roster)))
@@ -262,7 +277,9 @@ class PredictivePlanner:
         initial = None
         result.compute['recovery_budget_ms'] = round((deadline-started)*1000, 2) if bounded_recovery else None
         try:
+            result.compute['combat_health'] = self.combat_health.update(self.sim, world)
             initial = self.initial(world, world.enemy_elixir[1], 1.)
+            self.combat_health.remember(initial, world)
             # After a failed search, the next frame must not pay for the same
             # thousands of grid points before it can defend a tower again.
             if self._urgent_recovery:
@@ -276,7 +293,7 @@ class PredictivePlanner:
             self.sim.tactical_phase=result.tactical_phase
             from .defense_timing import forecast
             result.enemy_forecast=forecast(self.sim,initial,world.hand,float(self.config.get('defense_pipeline_s',.35)))
-            urgent=any(f['intervention_slack_s']<=3 for f in result.enemy_forecast)
+            urgent=any(f['intervention_slack_s']<=3 and f['combat']['tower_damage']>0 for f in result.enemy_forecast)
             if urgent and result.tactical_phase=='prepare':
                 result.tactical_phase='defend'
                 self.sim.tactical_phase='defend'
@@ -563,6 +580,10 @@ class PredictivePlanner:
             baseline, _ = emergency_tower_defense(baseline, result.candidates, world, self.sim, initial,
                 float(self.config.get('tower_emergency_damage', 600)))
             result.compute['tower_emergency_defense'] = emergency
+            from .tactical_objective import avoid_late_defense
+            best, late_defense = avoid_late_defense(best,result.candidates,world,self.sim,result.enemy_forecast)
+            baseline, _ = avoid_late_defense(baseline,result.candidates,world,self.sim,result.enemy_forecast)
+            result.compute['late_defense_guard'] = late_defense
             result.learning.update(changed_selection=best["action"] != baseline["action"],
                                    baseline_action=baseline["action"],
                                    selected_action_supported="learned_value" in best)
@@ -574,6 +595,17 @@ class PredictivePlanner:
                     entry['best_score']=option['score']
                     entry['worst_tower_damage']=max(b['own_tower_damage'] for b in option['branches'])
             result.action = SimAction(**best["action"])
+            if result.action.card_id and result.tactical_phase == 'defend' and (
+                    tower_wait['changed'] or emergency['changed'] or result.placement_mode == 'fast_defense_cost_and_tower_loss'):
+                roster=self.kb.roster(result.action.card_id,self.sim.level)
+                x,y=self.sim.xy(result.action.x,result.action.y)
+                nearby=[f for f in result.enemy_forecast if (f['x']-x)**2+(f['y']-y)**2<=25]
+                if roster and nearby and all(f['combat']['estimated_kill_s'] is not None for f in nearby):
+                    lifetime=max(f['combat']['estimated_kill_s'] for f in nearby)
+                    lead=self.sim.defense_pipeline_s+min(spec.deploy+spec.first_hit for spec,count in roster)
+                    result.valid_until=min(result.valid_until,world.at+max(0.,lifetime-lead))
+                    result.compute['defense_expiry']=dict(target_track_ids=[f['track_id'] for f in nearby],
+                        target_lifetime_s=lifetime,execution_lead_s=lead,valid_until=result.valid_until)
             result.status = "wait" if result.action.card_id is None else "ready"
             responses = "; ".join(f"敌方 {b['enemy_response']} → 我方 {b['own_followup']}" for b in best["branches"])
             result.reason = f"首步比较 {len(result.candidates)} 个方案 / 深度 {result.completed_depth} / {horizon:g} 秒；{responses}"
@@ -582,15 +614,17 @@ class PredictivePlanner:
             if tower_wait['changed']:
                 result.reason += f"；等待将增加皇家塔受伤风险，提前防守（预计减少伤害及暴露 {tower_wait['prevented_damage_and_exposure']:g}）"
             if emergency['changed']:
-                result.reason += f"；皇家塔高危 {emergency['wait_damage_and_exposure']:g}，使用预留费用执行应急防守（不保证最坏场景减伤）"
+                result.reason += f"；皇家塔高危 {emergency['wait_damage_and_exposure']:g}，完整比较证明减伤，使用预留费用防守"
             elif emergency['active']:
-                result.reason += '；已解除高危留费限制，但完整方案中无可支付、合法且能交战的防守'
+                result.reason += '；高危但完整方案未证明有效减伤，不强制浪费防守费用'
             elif best['action']['card_id'] is None and 'wait_damage_and_exposure' in tower_wait:
                 result.reason += f"；立即等待预计塔伤及暴露 {tower_wait['wait_damage_and_exposure']:g}"
                 if tower_wait['reason'] == 'no_completed_effective_defense':
                     result.reason += '，已完成方案中暂无可支付且有效减伤的立即防守'
             if result.combo_candidates:
                 result.reason += f"；条件式后续完整比较 {len(result.combo_candidates)} 个根动作（每牌最佳首步及等待）"
+            if late_defense['changed']:
+                result.reason += '；现有塔与兵种预计在新兵生效前击杀目标，取消过晚防守'
         if getattr(self.sim, "placement_batch", None):
             result.compute.update(self.sim.placement_batch.status())
         if self.combat_pool is not None:

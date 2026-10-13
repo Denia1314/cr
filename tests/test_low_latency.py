@@ -170,6 +170,7 @@ class EngineStreamTests(unittest.TestCase):
         from threading import Event
         engine=object.__new__(BotEngine)
         engine.stop_event=Event()
+        engine.policy=SimpleNamespace(learned_detector=None)
         engine.recognizer=SimpleNamespace(calibrated_names=lambda:{'offline_ai_marker'})
         engine.config={'game':{'package':'test'},'automation':{'latest_frame_capture':True}}
         engine.device=SimpleNamespace(launch_package=Mock(),screenshot=lambda:Image.new('RGB',(2,2)))
