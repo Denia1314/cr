@@ -98,3 +98,5 @@ train_yolo_real.bat 默认 --safe-finetune --epochs 20，固定 AdamW、lr0=0.00
 本机首次导出 train=1155 / val=194，增加 400 张真实训练帧。mega-knight 8→24、giant-skeleton 4→24、baby-dragon 11→45；cannon-cart 仍为 36。9 个类别依然无训练样本，不能从留出对局搬运来填补。新增数据并不保证训练改善。
 
 双击 `train_yolo_rare.bat` 在独立模型目录做低学习率 20 轮实验；已有数据时复用，已有本策略断点时恢复。原机器人模型配置不变；实验必须与同一固定验证集、当前游戏留出标注分别对照后再决定使用。模型、原始图、报告不进入代码 Git。
+
+3.22.5：短程微调限制 batch 为 1～32，默认 16，超过范围在加载模型前提示并退出，避免误设 500 耗尽显存。epochs 是最多轮次，batch 是每批图片数，device auto 自动选择计算设备；safe-finetune 固定低学习率并选择可兼容的起点。

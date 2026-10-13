@@ -98,3 +98,15 @@ class SliceDatasetTests(unittest.TestCase):
             detector.fallback.detect.assert_called_once_with(image, level_badges=level_badges.return_value)
             self.assertEqual(detector.last_primary_units, 0)
             self.assertTrue(detector.last_fallback_used)
+
+
+class TrainingArgumentSafetyTests(unittest.TestCase):
+    def test_oversized_safe_batch_rejected_before_loading_model(self):
+        from crbot.slice_dataset import main
+        from contextlib import redirect_stderr
+        import io
+        message=io.StringIO()
+        with redirect_stderr(message), self.assertRaises(SystemExit) as error:
+            main(['train','--safe-finetune','--batch','500'])
+        self.assertEqual(error.exception.code,2)
+        self.assertIn('batch',message.getvalue())
