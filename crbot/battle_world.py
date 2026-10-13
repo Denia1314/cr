@@ -100,9 +100,15 @@ class BattleWorld:
             x, y, confidence = float(d["x"]), float(d["y"]), float(d.get("confidence", 0))
             bound = (d.get('identity_source') == 'confirmed_deployment_tracking' and bool(d.get('identity_lock_id'))
                      and self.confirmed_cards.get(d.get('deployment_id'))==cid)
+            enemy_bound=(side==-1 and d.get('identity_source')=='enemy_yolo_tracking' and
+                         bool(d.get('identity_lock_id')) and float(d.get('identity_anchor_confidence',0))>=.8)
+            bound=bound or enemy_bound
             if not all(math.isfinite(v) for v in (x, y, confidence)) or confidence < (.1 if bound else .45):
                 continue
             def identity_matches(t):
+                if enemy_bound:
+                    return t.identity_lock_id == d['identity_lock_id'] or (not t.identity_lock_id and
+                        (t.card_id==cid or t.card_id.startswith('unknown:')))
                 if bound:
                     return (t.identity_lock_id == d['identity_lock_id'] or
                             (not t.identity_lock_id and t.first_seen >= d.get('deployment_at', now)))
@@ -136,7 +142,7 @@ class BattleWorld:
             t.side_evidence=d.get('side_evidence')
             if bound:
                 t.identity_lock_id=d['identity_lock_id']
-                t.deployment_id=d['deployment_id']
+                t.deployment_id=d.get('deployment_id')
                 t.identity_source=d['identity_source']
                 t.visual_card_id=d.get('visual_card_id')
                 t.bbox=tuple(d.get('bbox',()))

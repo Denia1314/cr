@@ -153,8 +153,11 @@ def compose_yolo(screenshot, packet, w, h, mode):
         if unconfirmed:label=f"未确认单位 {observation.get('confidence',0):.0%}"
         if observation.get('identity_ambiguous'):label+=' · 身份待关联'
         if observation.get('identity_lock_id'):
-            color='#7655AD' if observation.get('position_state')=='occluded' else '#2563EB'
-            label=f"我方 {observation.get('name_zh') or observation.get('card_id')} · 出牌绑定" + (' · 暂估' if observation.get('position_state')=='occluded' else '')
+            color='#7655AD' if observation.get('position_state')=='occluded' else '#2563EB' if ally else '#E34455'
+            binding='出牌绑定' if ally else 'YOLO 身份锁定'
+            label=f"{'我方' if ally else '敌方'} {observation.get('name_zh') or observation.get('card_id')} · {binding}" + (' · 暂估' if observation.get('position_state')=='occluded' else '')
+            if not ally and observation.get('position_state')!='occluded':
+                label+=f" {observation.get('identity_anchor_confidence',0):.0%} · 当前 {observation.get('visual_confidence',observation.get('confidence',0)):.0%}"
         face=font(10 if pane<300 else 12)
         width=min(pane,round(draw.textlength(label,font=face))+6)
         tx=min(box[0],pane-width);ty=max(0,box[1]-18)
@@ -324,7 +327,10 @@ class GridWorldWindow:
                 pending=len(self.packet.get('unconfirmed_units',[]))
                 evidence=f" · {pending} 个未确认" if pending else ''
                 locks=self.packet.get('identity_tracks',[])
-                if locks:evidence+=f" · {len(locks)} 个出牌绑定（{sum(t.get('position_state')=='occluded' for t in locks)} 个暂估）"
+                if locks:
+                    own=sum(t.get('side')==1 for t in locks)
+                    enemy=sum(t.get('side')==-1 for t in locks)
+                    evidence+=f" · {own} 个出牌绑定 · {enemy} 个敌方锁定（{sum(t.get('position_state')=='occluded' for t in locks)} 个暂估）"
                 recognized=sum(not d.get('identity_lock_id') for d in self.packet.get('detections',[]))
                 self.label.configure(text=f"YOLO 识别 · {speed}更新 {self.source_fps:.1f} FPS · {recognized} 个识别单位{evidence} · 第 {self.packet['revision']} 帧 · {model.get('version','')} · 蓝=我方 红=敌方 黄=未确认 紫=暂估",wraplength=max(80,self.canvas.winfo_width()))
                 return

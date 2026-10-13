@@ -37,6 +37,8 @@ class PredictiveBattlePolicy(BattlePolicy):
             self.planner = PredictivePlanner(kb, {**self.policy, **self.planning_config})
             from .own_unit_tracking import OwnUnitTracker
             self.own_unit_tracker = OwnUnitTracker(self.planner.sim)
+            from .enemy_unit_tracking import EnemyUnitTracker
+            self.enemy_unit_tracker = EnemyUnitTracker(self.planner.sim)
             self.knowledge_audit = kb.audit(int(self.planning_config.get("assumed_level", 11)))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.knowledge_error = str(exc)
@@ -47,6 +49,7 @@ class PredictiveBattlePolicy(BattlePolicy):
         self.world.reset()
         if self.planner is not None:
             self.planner.combat_health.reset()
+            self.enemy_unit_tracker.reset()
         self.tower_observer.reset()
         self.last_plan = None
         self.last_execution_engine = "none"
@@ -159,6 +162,8 @@ class PredictiveBattlePolicy(BattlePolicy):
         candidates=list(getattr(detector,'unconfirmed_units',[]))+list(getattr(detector,'tracking_units',[]))
         generation,placements=self.world.placement_state()
         detections,candidates,identity_tracks=self.own_unit_tracker.update(detections,candidates,placements,now=now,generation=generation)
+        detections,candidates,enemy_tracks=self.enemy_unit_tracker.update(detections,candidates,now=now,generation=generation)
+        identity_tracks+=enemy_tracks
         if getattr(self,'yolo_frame',None) and self.yolo_frame[0] is current:
             packet=dict(self.yolo_frame[1],detections=detections,unconfirmed_units=candidates,identity_tracks=identity_tracks)
             for row in packet['detections']+packet['identity_tracks']:

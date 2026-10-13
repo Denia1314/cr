@@ -30,6 +30,37 @@ class Detector:
 
 
 class YoloStreamTests(unittest.TestCase):
+    def test_enemy_identity_stays_locked_in_continuous_preview(self):
+        from crbot.own_unit_tracking import OwnUnitTracker
+        from crbot.predictive_planner import PredictivePlanner
+        from tests.test_prediction import knowledge
+        class EnemyDetector(Detector):
+            def detect(self,image,fallback,*,include_health=True):
+                self.calls+=1
+                self.observed_allies=[];self.unconfirmed_units=[]
+                self.observed_enemies=[dict(card_id='hog_rider' if self.calls==1 else 'valkyrie',side=-1,
+                    confidence=.8 if self.calls==1 else .72,bbox=[.25,.52,.32,.58],x=.285,y=.55,
+                    pixel=image.getpixel((0,0))[0])]
+        counter=[0]
+        def capture():
+            counter[0]=(counter[0]+1)%255
+            return Image.new('RGB',(8,8),(counter[0],0,0))
+        frames=LatestFrameStream(capture,.01).start()
+        detector=EnemyDetector()
+        tracker=OwnUnitTracker(PredictivePlanner(knowledge(),{}).sim)
+        worker=YoloStream(frames,lambda:detector,None,20,identity_tracker=tracker,deployment_source=lambda:(1,())).start()
+        try:
+            self.wait_for(lambda:worker.processed>=3)
+            image,packet=worker.latest()
+            row=packet['detections'][0]
+            self.assertEqual(row['card_id'],'hog_rider')
+            self.assertEqual(row['visual_card_id'],'valkyrie')
+            self.assertEqual(row['confidence'],.72)
+            self.assertEqual(row['pixel'],image.getpixel((0,0))[0])
+            self.assertEqual(detector.observed_enemies[0]['card_id'],'valkyrie')
+        finally:
+            worker.close();frames.close()
+
     def wait_for(self, check):
         deadline = time.monotonic() + 3
         while not check() and time.monotonic() < deadline:

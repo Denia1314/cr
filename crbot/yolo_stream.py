@@ -10,6 +10,8 @@ class YoloStream:
     def __init__(self, frames, detector_factory, catalog, target_fps=20, *, identity_tracker=None, deployment_source=None):
         self.frames, self.factory, self.catalog = frames, detector_factory, catalog
         self.identity_tracker, self.deployment_source = identity_tracker, deployment_source
+        from .enemy_unit_tracking import EnemyUnitTracker
+        self.enemy_tracker=EnemyUnitTracker(identity_tracker.sim) if identity_tracker is not None else None
         self.period = 1 / max(10., min(60., float(target_fps)))
         self.stopped, self.lock = Event(), Lock()
         self.result, self.error = None, ''
@@ -56,6 +58,9 @@ class YoloStream:
                 if self.identity_tracker is not None and self.deployment_source is not None:
                     observations,candidates,identity_tracks=self.identity_tracker.update(
                         observations,candidates,events,now=frame.started,generation=generation)
+                if self.enemy_tracker is not None:
+                    observations,candidates,enemy_tracks=self.enemy_tracker.update(observations,candidates,now=frame.started,generation=generation)
+                    identity_tracks+=enemy_tracks
                 for observation in observations+identity_tracks:
                     card = self.catalog.get(observation.get('card_id')) if self.catalog else None
                     if card:
